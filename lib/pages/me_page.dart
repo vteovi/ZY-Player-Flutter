@@ -10,13 +10,54 @@ import 'site_page.dart';
 class MePage extends StatelessWidget {
   const MePage({super.key});
 
+  /// 通用的二次确认对话框：红底「确定」+「取消」，返回是否确认。
+  Future<bool> _confirmClear(
+    BuildContext context,
+    String title,
+    String content,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFFF4445),
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    return confirm == true;
+  }
+
   Future<void> _clearHistory(BuildContext context) async {
+    final confirmed = await _confirmClear(
+      context,
+      '清空播放记录',
+      '确定要清空所有播放记录吗？此操作不可恢复。',
+    );
+    if (!confirmed) return;
     final ok = await context.read<AppState>().clearHistories();
     if (!context.mounted) return;
     showToast(context, ok ? '清空播放数据成功' : '清空播放数据失败', success: ok);
   }
 
   Future<void> _clearStar(BuildContext context) async {
+    final confirmed = await _confirmClear(
+      context,
+      '清空收藏夹',
+      '确定要清空收藏夹中的所有内容吗？此操作不可恢复。',
+    );
+    if (!confirmed) return;
     final ok = await context.read<AppState>().clearStars();
     if (!context.mounted) return;
     showToast(context, ok ? '清空收藏夹数据成功' : '清空收藏夹数据失败', success: ok);
@@ -141,7 +182,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.1.1',
+            subtitle: '1.1.2',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
