@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 
 import '../models/site.dart';
 import '../models/video.dart';
-import '../services/tvbox_config.dart';
+import '../services/http_service.dart';
 import '../services/zy_database.dart';
 import '../utils/constants.dart';
 
@@ -134,27 +134,16 @@ class AppState extends ChangeNotifier {
     await loadSites();
   }
 
-  /// 导入视频源，自动识别两种格式：
-  /// - ZY 站点列表（顶层 JSON 数组）→ 覆盖原有源（与 uni-app 版一致）
-  /// - TVBox 配置（`{"sites": [...]}`）→ 与现有源合并（同名 key 更新为新的接口）
-  /// spider 等需要插件支持的源会被自动跳过
-  Future<TvBoxImport> importSites(String url) async {
-    final res = await TvBoxService.instance.resolve(url);
-    if (!res.ok || res.sites.isEmpty) {
-      return const TvBoxImport(ok: false);
-    }
-    if (res.merged) {
-      for (final s in res.sites) {
-        await ZyDatabase.instance.put(DbNames.site, s.toJson());
-      }
-    } else {
-      await ZyDatabase.instance.removeAll(DbNames.site);
-      for (final s in res.sites) {
-        await ZyDatabase.instance.add(DbNames.site, s.toJson());
-      }
+  /// 导入视频源（json 地址），导入成功后覆盖原有源
+  Future<bool> importSites(String url) async {
+    final list = await HttpService.instance.importSites(url);
+    if (list.isEmpty) return false;
+    await ZyDatabase.instance.removeAll(DbNames.site);
+    for (final s in list) {
+      await ZyDatabase.instance.add(DbNames.site, s.toJson());
     }
     await loadSites();
-    return res;
+    return true;
   }
 
   // --------------------------------------------------------------------------
