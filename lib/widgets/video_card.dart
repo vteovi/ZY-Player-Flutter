@@ -3,22 +3,15 @@ import 'package:flutter/material.dart';
 
 import '../models/video.dart';
 
-/// 首页卡片：封面 + 片名 + 分类/备注/年份。
+/// 首页卡片：封面 + 片名 + 分类/备注/年份（图上文下）。
 ///
-/// [landscape] = false：竖向海报（图上文下，网格自适应列数）；
-/// [landscape] = true：横向卡片（左图右文），手机竖屏每行一个、
-/// 平板大屏自适应多列（列数由 VideoGridView 控制）。
+/// 卡片布局在横 / 竖模式下相同，区别只在于网格给的宽高比：
+/// 竖向 = 竖版海报比例；横向 = 横版（约 16:9）海报比例。
 class VideoCard extends StatelessWidget {
   final Video video;
   final VoidCallback onTap;
-  final bool landscape;
 
-  const VideoCard({
-    super.key,
-    required this.video,
-    required this.onTap,
-    this.landscape = false,
-  });
+  const VideoCard({super.key, required this.video, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -30,80 +23,36 @@ class VideoCard extends StatelessWidget {
       color: isDark ? const Color(0xFF1E1E20) : null,
       child: InkWell(
         onTap: onTap,
-        child: landscape ? _buildLandscape(theme, isDark) : _buildPortrait(theme, isDark),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: SizedBox(
+                width: double.infinity,
+                child: _buildCover(isDark),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+              child: Text(
+                video.name.isEmpty ? '未知' : video.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+              child: _buildMetaRow(theme, isDark),
+            ),
+          ],
+        ),
       ),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // 竖向：图上文下
-  // ---------------------------------------------------------------------------
-
-  Widget _buildPortrait(ThemeData theme, bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          flex: 5,
-          child: SizedBox(
-            width: double.infinity,
-            child: _buildCover(isDark),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-          child: Text(
-            _title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-          child: _buildMetaRow(theme, isDark),
-        ),
-      ],
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // 横向：左图右文
-  // ---------------------------------------------------------------------------
-
-  Widget _buildLandscape(ThemeData theme, bool isDark) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(flex: 5, child: _buildCover(isDark)),
-        Expanded(
-          flex: 8,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(fontWeight: FontWeight.w600, height: 1.25),
-                ),
-                const Spacer(),
-                _buildMetaRow(theme, isDark),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  String get _title => video.name.isEmpty ? '未知' : video.name;
-
-  /// 分类 + 备注 + 年份（竖向 / 横向共用）
+  /// 分类 + 备注 + 年份
   Widget _buildMetaRow(ThemeData theme, bool isDark) {
     final subColor = isDark ? const Color(0xFF9CA0A6) : const Color(0xFF909399);
     return Row(

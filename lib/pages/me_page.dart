@@ -182,7 +182,7 @@ class MePage extends StatelessWidget {
           SwitchListTile(
             title: const Text('横向卡片模式'),
             subtitle: const Text(
-                '开启后海报横向显示（左图右文），竖屏手机每行一个，平板自适应多列'),
+                '开启后海报横版显示（图上文下），竖屏手机每行一个，平板自适应多列'),
             value: appState.config.landscapeCard,
             onChanged: (value) =>
                 context.read<AppState>().setLandscapeCard(value),

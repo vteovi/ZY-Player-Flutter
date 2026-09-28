@@ -8,9 +8,9 @@ import 'video_card.dart';
 
 /// 视频网格（首页分类页、搜索结果共用）。
 ///
-/// 竖向模式：列数随屏幕宽度自适应，大屏宽屏多出几列、卡片更大。
-/// 横向模式（设置里开启）：左图右文卡片，手机竖屏每行一个，
-/// 平板大屏自适应多列（每列上限 400 宽）。
+/// 竖向模式：竖版海报，列数随屏幕宽度自适应（2~8 列）。
+/// 横向模式（设置里开启）：海报横版（约 16:9）图上文下，
+/// 手机竖屏每行一个，平板大屏自适应多列（每列上限 420 宽）。
 class VideoGridView extends StatelessWidget {
   final List<Video> videos;
   final ScrollController? scrollController;
@@ -41,9 +41,9 @@ class VideoGridView extends StatelessWidget {
       itemCount: videos.length + (loadingMore ? 1 : 0),
       gridDelegate: landscape
           ? const SliverGridDelegateWithMaxCrossAxisExtent(
-              // 横向卡片：手机竖屏（<800）1 列，平板 2 列，更宽屏幕 3+ 列
-              maxCrossAxisExtent: 400,
-              childAspectRatio: 3.3,
+              // 横版海报卡片：手机竖屏（<420）1 列，平板 2 列，更宽屏幕 3+ 列
+              maxCrossAxisExtent: 420,
+              childAspectRatio: 1.38,
               crossAxisSpacing: 0,
               mainAxisSpacing: 0,
             )
@@ -56,11 +56,7 @@ class VideoGridView extends StatelessWidget {
           );
         }
         final video = videos[index];
-        return VideoCard(
-          video: video,
-          landscape: landscape,
-          onTap: () => onTap(video),
-        );
+        return VideoCard(video: video, onTap: () => onTap(video));
       },
     );
   }
