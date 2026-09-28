@@ -169,7 +169,7 @@ class FilmPageState extends State<FilmPage>
 
   Future<void> _openSearch() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SearchPage(site: _site)),
+      MaterialPageRoute(builder: (_) => SearchPage()),
     );
   }
 

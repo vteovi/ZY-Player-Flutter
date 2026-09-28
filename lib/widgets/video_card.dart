@@ -11,7 +11,15 @@ class VideoCard extends StatelessWidget {
   final Video video;
   final VoidCallback onTap;
 
-  const VideoCard({super.key, required this.video, required this.onTap});
+  /// 来源角标（全站搜索时显示站点名），null 则不显示
+  final String? sourceLabel;
+
+  const VideoCard({
+    super.key,
+    required this.video,
+    required this.onTap,
+    this.sourceLabel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -94,28 +102,57 @@ class VideoCard extends StatelessWidget {
         isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEDEDED);
     final iconColor =
         isDark ? const Color(0xFF5A5A5E) : const Color(0xFFC0C4CC);
+    final Widget image;
     if (video.pic.isEmpty) {
-      return ColoredBox(
+      image = ColoredBox(
         color: bgColor,
         child: Center(child: Icon(Icons.movie, color: iconColor)),
       );
+    } else {
+      image = CachedNetworkImage(
+        imageUrl: video.pic,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        placeholder: (_, __) => ColoredBox(
+          color: bgColor,
+          child: Center(child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )),
+        ),
+        errorWidget: (_, __, ___) => ColoredBox(
+          color: bgColor,
+          child: Center(child: Icon(Icons.broken_image, color: iconColor)),
+        ),
+      );
     }
-    return CachedNetworkImage(
-      imageUrl: video.pic,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.low,
-      placeholder: (_, __) => ColoredBox(
-        color: bgColor,
-        child: Center(child: SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        )),
-      ),
-      errorWidget: (_, __, ___) => ColoredBox(
-        color: bgColor,
-        child: Center(child: Icon(Icons.broken_image, color: iconColor)),
-      ),
+    final label = sourceLabel;
+    if (label == null || label.isEmpty) return image;
+    // 来源角标：贴在海报左上角
+    return Stack(
+      children: [
+        Positioned.fill(child: image),
+        Positioned(
+          left: 0,
+          top: 0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            color: Colors.black45,
+            constraints: const BoxConstraints(maxWidth: 120),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                height: 1.2,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

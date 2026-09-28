@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,12 +12,18 @@ import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 
-/// 搜索页：顶部输入 + 历史搜索记录（可点选/删除/清空）+ 搜索结果网格。
-/// 从首页搜索框点击进入，带入当前选中的视频源。
-class SearchPage extends StatefulWidget {
-  final Site? site;
+/// 一条搜索结果：来自哪个源 + 影片
+class _Hit {
+  final Site site;
+  final Video video;
+  const _Hit(this.site, this.video);
+}
 
-  const SearchPage({super.key, this.site});
+/// 搜索页：顶部输入 + 历史搜索记录（可点选/删除/清空）+ 搜索结果网格。
+/// 从首页搜索框点击进入，搜索范围为**全部启用的视频源**（聚合搜索）：
+/// 分批并发请求，各源结果陆续合并展示，结果卡片带来源角标。
+class SearchPage extends StatefulWidget {
+  const SearchPage({super.key});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -26,17 +34,22 @@ class _SearchPageState extends State<SearchPage> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
 
-  Site? _site;
+  /// 搜索代次：重新搜索 / 清空时 +1，旧请求的回调直接丢弃
+  int _searchGen = 0;
+
   bool _searched = false;
   bool _loading = false;
-  List<Video> _results = <Video>[];
+  int _done = 0;
+  int _total = 0;
+  final List<_Hit> _results = <_Hit>[];
   List<String> _history = <String>[];
+
+  /// 同时请求的源数量
+  static const int _batchSize = 12;
 
   @override
   void initState() {
     super.initState();
-    _site = widget.site ??
-        Provider.of<AppState>(context, listen: false).activeSites.firstOrNull;
     _controller.addListener(_onTextChanged);
     _loadHistory();
     // 进入页面自动聚焦输入框
@@ -47,6 +60,7 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
+    _searchGen++; // 让还在路上的旧搜索结果失效
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _scrollController.dispose();
@@ -72,34 +86,60 @@ class _SearchPageState extends State<SearchPage> {
     final app = Provider.of<AppState>(context, listen: false);
     await app.addSearchKeyword(kw);
     await _loadHistory();
-    if (_site == null) {
-      if (mounted) {
-        setState(() {
-          _searched = true;
-          _loading = false;
-          _results = <Video>[];
-        });
-      }
+
+    final sites = app.activeSites;
+    final gen = ++_searchGen;
+    if (mounted) {
+      setState(() {
+        _searched = true;
+        _loading = true;
+        _done = 0;
+        _total = sites.length;
+        _results.clear();
+      });
+    }
+    if (sites.isEmpty) {
+      if (mounted) setState(() => _loading = false);
       return;
     }
-    if (mounted) setState(() => _loading = true);
-    final list = await HttpService.instance.search(_site!, kw);
-    if (!mounted) return;
+
     final r18 = app.config.r18;
-    setState(() {
-      _results = list.where((v) => !_matchesR18(v, r18)).toList();
-      _loading = false;
-      _searched = true;
-    });
+    // 分批并发：每批完成后立刻合并刷新，结果陆续出现
+    for (var i = 0; i < sites.length; i += _batchSize) {
+      final end = math.min(i + _batchSize, sites.length);
+      final chunk = sites.sublist(i, end);
+      final batches = await Future.wait(
+        chunk.map((site) async {
+          try {
+            final list = await HttpService.instance.search(site, kw);
+            return list
+                .where((v) => !_matchesR18(v, r18))
+                .map((v) => _Hit(site, v))
+                .toList();
+          } catch (_) {
+            return <_Hit>[];
+          }
+        }),
+      );
+      if (!mounted || gen != _searchGen) return;
+      setState(() {
+        _results.addAll(batches.expand((x) => x));
+        _done = end;
+      });
+    }
+    if (mounted && gen == _searchGen) {
+      setState(() => _loading = false);
+    }
   }
 
   /// 清空输入框并回到历史视图
   void _resetToHistory() {
+    _searchGen++; // 作废进行中的搜索
     _controller.clear();
     FocusScope.of(context).unfocus();
     if (mounted) setState(() {
       _searched = false;
-      _results = <Video>[];
+      _results.clear();
       _loading = false;
     });
   }
@@ -116,12 +156,18 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _openDetail(Video video) {
-    if (_site == null) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => DetailPage(siteKey: _site!.key, videoId: video.id),
-      ),
-    );
+    // VideoCard 持有的就是 _results 里的同一对象，按对象身份找回所属源
+    for (final hit in _results) {
+      if (identical(hit.video, video)) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) =>
+                DetailPage(siteKey: hit.site.key, videoId: video.id),
+          ),
+        );
+        return;
+      }
+    }
   }
 
   /// 青少年模式下过滤命中的条目（与首页一致）
@@ -147,7 +193,7 @@ class _SearchPageState extends State<SearchPage> {
           textInputAction: TextInputAction.search,
           onSubmitted: _doSearch,
           decoration: InputDecoration(
-            hintText: '搜索影片',
+            hintText: '搜索全部视频源',
             hintStyle: TextStyle(
               color: isDark ? Colors.white54 : Colors.black54,
             ),
@@ -173,26 +219,76 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Widget _buildResultBody(bool isDark) {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_site == null) {
+    if (_total == 0) {
       return const EmptyHint(
-        message: '请先在首页选择视频源后再搜索',
+        message: '暂无启用的视频源，请先在源管理中开启',
         icon: Icons.video_library_outlined,
+      );
+    }
+    if (_loading && _results.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 12),
+            Text(
+              '正在搜索 $_done/$_total 个源…',
+              style: TextStyle(
+                fontSize: 13,
+                color: isDark ? Colors.white54 : Colors.black54,
+              ),
+            ),
+          ],
+        ),
       );
     }
     if (_results.isEmpty) {
       return const EmptyHint(
-        message: '没有搜索到相关资源',
+        message: '所有源都没有搜到相关资源',
         icon: Icons.search_off,
       );
     }
-    return buildVideoGrid(
-      context: context,
-      videos: _results,
-      scrollController: _scrollController,
-      onTap: _openDetail,
+    return Column(
+      children: [
+        // 搜索进行中的进度条（结果已陆续展示）
+        if (_loading)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: LinearProgressIndicator(
+                    value: _total == 0 ? null : _done / _total,
+                    minHeight: 2,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '$_done/$_total 源',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: isDark ? Colors.white54 : Colors.black54,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: buildVideoGrid(
+            context: context,
+            videos: _results.map((h) => h.video).toList(),
+            scrollController: _scrollController,
+            labelOf: (video) {
+              for (final hit in _results) {
+                if (identical(hit.video, video)) return hit.site.name;
+              }
+              return null;
+            },
+            onTap: _openDetail,
+          ),
+        ),
+      ],
     );
   }
 

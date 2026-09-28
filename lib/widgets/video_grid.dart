@@ -17,12 +17,16 @@ class VideoGridView extends StatelessWidget {
   final bool loadingMore;
   final void Function(Video) onTap;
 
+  /// 可选：结果来源角标（全站搜索时显示站点名），返回 null 则不显示
+  final String? Function(Video)? labelOf;
+
   const VideoGridView({
     super.key,
     required this.videos,
     this.scrollController,
     this.loadingMore = false,
     required this.onTap,
+    this.labelOf,
   });
 
   @override
@@ -56,7 +60,11 @@ class VideoGridView extends StatelessWidget {
           );
         }
         final video = videos[index];
-        return VideoCard(video: video, onTap: () => onTap(video));
+        return VideoCard(
+          video: video,
+          sourceLabel: labelOf?.call(video),
+          onTap: () => onTap(video),
+        );
       },
     );
   }
@@ -91,10 +99,12 @@ Widget buildVideoGrid({
   ScrollController? scrollController,
   bool loadingMore = false,
   required void Function(Video) onTap,
+  String? Function(Video)? labelOf,
 }) =>
     VideoGridView(
       videos: videos,
       scrollController: scrollController,
       loadingMore: loadingMore,
       onTap: onTap,
+      labelOf: labelOf,
     );
