@@ -118,6 +118,35 @@ class MePage extends StatelessWidget {
     }
   }
 
+  /// 主题模式：弹窗单选 跟随系统 / 浅色 / 深色，默认跟随系统。
+  /// 选择后写入设置，home 处的 _AppRoot 实时切换 light / dark / system 主题。
+  Future<void> _showThemeModePicker(BuildContext context) async {
+    const options = [
+      ('system', '跟随系统'),
+      ('light', '浅色'),
+      ('dark', '深色'),
+    ];
+    final current = context.read<AppState>().config.themeMode;
+    final picked = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('主题模式'),
+        children: [
+          for (final (value, label) in options)
+            RadioListTile<String>(
+              title: Text(label),
+              value: value,
+              groupValue: current,
+              onChanged: (v) => Navigator.of(dialogContext).pop(v),
+            ),
+        ],
+      ),
+    );
+    if (picked != null && context.mounted) {
+      await context.read<AppState>().setThemeMode(picked);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
@@ -163,6 +192,18 @@ class MePage extends StatelessWidget {
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showLongPressRatePicker(context),
+          ),
+          ListTile(
+            title: const Text('主题模式'),
+            subtitle: Text(
+              '当前：${const {
+                'system': '跟随系统',
+                'light': '浅色',
+                'dark': '深色',
+              }[appState.config.themeMode] ?? '跟随系统'}',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showThemeModePicker(context),
           ),
           _MenuItem(
             title: '清空播放记录',

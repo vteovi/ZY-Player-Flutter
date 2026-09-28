@@ -202,6 +202,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 显示模式：'system' / 'light' / 'dark'
+  Future<void> setThemeMode(String value) async {
+    final next = value == 'light' || value == 'dark' ? value : 'system';
+    if (_config.themeMode == next) return;
+    _config = _config.copyWith(themeMode: next);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   // --------------------------------------------------------------------------
   // 收藏
   // --------------------------------------------------------------------------

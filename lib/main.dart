@@ -17,38 +17,61 @@ class ZyPlayerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppState()..bootstrap(),
-      child: MaterialApp(
-        title: AppConstants.appName,
-        debugShowCheckedModeBanner: false,
-        theme: _buildTheme(),
-        home: const AppBootstrap(),
-      ),
+      child: const _AppRoot(),
+    );
+  }
+}
+
+/// 监听配置里的主题模式，实时切换浅色 / 深色 / 跟随系统
+class _AppRoot extends StatelessWidget {
+  const _AppRoot();
+
+  static const _themeModeMap = {
+    'system': ThemeMode.system,
+    'light': ThemeMode.light,
+    'dark': ThemeMode.dark,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final mode = context.watch<AppState>().config.themeMode;
+    return MaterialApp(
+      title: AppConstants.appName,
+      debugShowCheckedModeBanner: false,
+      theme: _buildTheme(Brightness.light),
+      darkTheme: _buildTheme(Brightness.dark),
+      themeMode: _themeModeMap[mode] ?? ThemeMode.system,
+      home: const AppBootstrap(),
     );
   }
 
-  ThemeData _buildTheme() {
+  ThemeData _buildTheme(Brightness brightness) {
     const seed = Color(0xFF1E88E5);
-    final colorScheme = ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.light);
+    final colorScheme =
+        ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+    final isDark = brightness == Brightness.dark;
     return ThemeData(
       useMaterial3: true,
       colorScheme: colorScheme,
-      scaffoldBackgroundColor: const Color(0xFFF8F8F8),
-      appBarTheme: const AppBarTheme(
-        backgroundColor: Colors.white,
-        foregroundColor: Color(0xFF303133),
-        surfaceTintColor: Colors.white,
+      scaffoldBackgroundColor:
+          isDark ? const Color(0xFF121212) : const Color(0xFFF8F8F8),
+      appBarTheme: AppBarTheme(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        foregroundColor: isDark ? Colors.white : const Color(0xFF303133),
+        surfaceTintColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         elevation: 0,
         centerTitle: false,
       ),
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: Colors.white,
-        selectedItemColor: Color(0xFF303133),
-        unselectedItemColor: Color(0xFF909399),
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        selectedItemColor: isDark ? Colors.white : const Color(0xFF303133),
+        unselectedItemColor:
+            isDark ? Colors.white70 : const Color(0xFF909399),
         type: BottomNavigationBarType.fixed,
       ),
-      cardTheme: const CardThemeData(
-        color: Colors.white,
-        surfaceTintColor: Colors.white,
+      cardTheme: CardThemeData(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        surfaceTintColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       ),
     );
   }

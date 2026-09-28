@@ -324,6 +324,9 @@ class AppConfig {
   /// 长按期间把播放速度提到该倍率，松手恢复到 1.0。
   final double playerLongPressRate;
 
+  /// 显示模式：'system' 跟随系统 / 'light' 浅色 / 'dark' 深色，默认跟随系统。
+  final String themeMode;
+
   const AppConfig({
     this.id = 0,
     this.key = 'config',
@@ -333,9 +336,11 @@ class AppConfig {
     this.playerFlip = false,
     this.showSpeed = false,
     this.playerLongPressRate = 2.0,
+    this.themeMode = 'system',
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
+    final mode = (json['themeMode'] ?? 'system').toString();
     return AppConfig(
       id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0,
       key: (json['key'] ?? 'config').toString(),
@@ -349,6 +354,7 @@ class AppConfig {
         if (rate == null) return 2.0;
         return rate is num ? rate.toDouble() : double.tryParse('$rate') ?? 2.0;
       }(),
+      themeMode: mode == 'light' || mode == 'dark' ? mode : 'system',
     );
   }
 
@@ -361,6 +367,7 @@ class AppConfig {
         'playerFlip': playerFlip,
         'showSpeed': showSpeed,
         'playerLongPressRate': playerLongPressRate,
+        'themeMode': themeMode,
       };
 
   AppConfig copyWith({
@@ -370,6 +377,7 @@ class AppConfig {
     bool? playerFlip,
     bool? showSpeed,
     double? playerLongPressRate,
+    String? themeMode,
   }) =>
       AppConfig(
         id: id,
@@ -380,5 +388,6 @@ class AppConfig {
         playerFlip: playerFlip ?? this.playerFlip,
         showSpeed: showSpeed ?? this.showSpeed,
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
+        themeMode: themeMode ?? this.themeMode,
       );
 }
