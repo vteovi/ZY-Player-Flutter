@@ -170,4 +170,5 @@ class DbNames {
   static const String setting = 'setting';
   static const String star = 'star';
   static const String history = 'history';
+  static const String search = 'search';
 }

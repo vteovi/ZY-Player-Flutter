@@ -7,8 +7,9 @@ import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
-import '../widgets/video_card.dart';
+import '../widgets/video_grid.dart';
 import 'detail_page.dart';
+import 'search_page.dart';
 
 /// 首页：搜索 + 站点切换（顶部）+ 分类左右滑动分栏 + 资源瀑布流
 class FilmPage extends StatefulWidget {
@@ -22,9 +23,6 @@ class FilmPageState extends State<FilmPage>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   static const _latestClass = VideoClass(tid: '0', name: '最新');
 
-  final TextEditingController _searchController = TextEditingController();
-  final ScrollController _searchScrollController = ScrollController();
-
   Site? _site;
   List<VideoClass> _classes = <VideoClass>[_latestClass];
 
@@ -36,9 +34,6 @@ class FilmPageState extends State<FilmPage>
 
   /// 站点 / 分类还在拉取时，整体先转圈（此时分栏还没出来）
   bool _loading = false;
-
-  bool _isSearchMode = false;
-  final List<Video> _searchVideos = <Video>[];
 
   /// 当前选中的分类（跟随 TabBar 的 index）
   VideoClass get _activeClass {
@@ -64,8 +59,6 @@ class FilmPageState extends State<FilmPage>
   void dispose() {
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
-    _searchScrollController.dispose();
-    _searchController.dispose();
     super.dispose();
   }
 
@@ -113,17 +106,12 @@ class FilmPageState extends State<FilmPage>
         _classes = <VideoClass>[_latestClass];
         _recordCounts.clear();
         _loading = false;
-        _isSearchMode = false;
       });
-      _searchController.clear();
       _initTabs(_classes.length);
       return;
     }
     setState(() {
       _loading = true;
-      _isSearchMode = false;
-      _searchController.clear();
-      _searchVideos.clear();
       _recordCounts.clear();
     });
     _site = sites.first;
@@ -173,39 +161,16 @@ class FilmPageState extends State<FilmPage>
       _site = picked;
       _classes = <VideoClass>[_latestClass];
       _recordCounts.clear();
-      _isSearchMode = false;
-      _searchController.clear();
-      _searchVideos.clear();
     });
     _initTabs(_classes.length);
     await _loadClasses();
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _onSearch(String keyword) async {
-    final kw = keyword.trim();
-    if (kw.isEmpty || _site == null) return;
-    FocusScope.of(context).unfocus();
-    setState(() => _loading = true);
-    final list = await HttpService.instance.search(_site!, kw);
-    if (!mounted) return;
-    final r18 = context.read<AppState>().config.r18;
-    setState(() {
-      _searchVideos
-        ..clear()
-        ..addAll(list.where((v) => !_matchesR18(v, r18)));
-      _isSearchMode = true;
-      _loading = false;
-    });
-  }
-
-  void _clearSearch() {
-    _searchController.clear();
-    if (!_isSearchMode) return;
-    setState(() {
-      _isSearchMode = false;
-      _searchVideos.clear();
-    });
+  Future<void> _openSearch() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SearchPage(site: _site)),
+    );
   }
 
   void _openDetail(Video video) {
@@ -259,9 +224,7 @@ class FilmPageState extends State<FilmPage>
             ),
             const SizedBox(width: 10),
             Text(
-              _isSearchMode
-                  ? '搜索 ${_searchVideos.length}'
-                  : '共: $_activeRecordCount 资源',
+              '共: $_activeRecordCount 资源',
               style: TextStyle(
                 fontSize: 12,
                 color: isDark ? Colors.white70 : const Color(0xFF909399),
@@ -273,45 +236,47 @@ class FilmPageState extends State<FilmPage>
       ),
       body: Column(
         children: [
-          _buildSearchBar(),
-          if (!_isSearchMode && _site != null) _buildCategoryTabBar(),
+          _buildSearchEntry(),
+          if (_site != null) _buildCategoryTabBar(),
           Expanded(
-            child: _isSearchMode
-                ? _buildSearchBody()
-                : _buildCategoryTabs(),
+            child: _buildCategoryTabs(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSearchBar() {
+  /// 搜索入口：点击进入独立搜索页（展示历史记录 + 搜索结果）
+  Widget _buildSearchEntry() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: TextField(
-        controller: _searchController,
-        textInputAction: TextInputAction.search,
-        onSubmitted: _onSearch,
-        decoration: InputDecoration(
-          hintText: '搜索影片',
-          hintStyle: TextStyle(
-            color: isDark ? Colors.white54 : Colors.black54,
-          ),
-          isDense: true,
-          filled: true,
-          fillColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
-          prefixIcon: const Icon(Icons.search, size: 20),
-          suffixIcon: _searchController.text.isEmpty
-              ? null
-              : IconButton(
-                  icon: const Icon(Icons.close, size: 18),
-                  onPressed: _clearSearch,
-                ),
-          contentPadding: const EdgeInsets.symmetric(vertical: 10),
-          border: OutlineInputBorder(
+      child: InkWell(
+        onTap: _openSearch,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
             borderRadius: BorderRadius.circular(24),
-            borderSide: BorderSide.none,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.search,
+                size: 20,
+                color: isDark ? Colors.white54 : Colors.black54,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '搜索影片',
+                style: TextStyle(
+                  color: isDark ? Colors.white54 : Colors.black54,
+                  fontSize: 14,
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -374,22 +339,6 @@ class FilmPageState extends State<FilmPage>
             ),
           )
           .toList(),
-    );
-  }
-
-  Widget _buildSearchBody() {
-    if (_searchVideos.isEmpty && !_loading) {
-      return const EmptyHint(
-        message: '没有搜索到相关资源',
-        icon: Icons.search_off,
-      );
-    }
-    return _buildVideoGrid(
-      context: context,
-      videos: _searchVideos,
-      scrollController: _searchScrollController,
-      loadingMore: false,
-      onTap: _openDetail,
     );
   }
 }
@@ -512,7 +461,7 @@ class CategoryTabState extends State<CategoryTab>
       children: [
         LoadingMask(
           visible: _loading,
-          child: _buildVideoGrid(
+          child: buildVideoGrid(
             context: context,
             videos: _videos,
             scrollController: _scrollController,
@@ -539,51 +488,6 @@ class CategoryTabState extends State<CategoryTab>
   }
 }
 
-/// 视频网格（首页分类页与搜索结果共用）。根据屏幕宽度自适应列数，
-/// 大屏宽屏多出几列、卡片更大，但不会无限变宽（限制每行列数上限）。
-Widget _buildVideoGrid({
-  required BuildContext context,
-  required List<Video> videos,
-  required ScrollController scrollController,
-  required bool loadingMore,
-  required void Function(Video) onTap,
-}) {
-  if (videos.isEmpty) {
-    return const EmptyHint(
-      message: '该分类下暂无资源',
-      icon: Icons.search_off,
-    );
-  }
-  // 列数随宽度递增，宽屏多列、窄屏保底 2 列
-  final w = MediaQuery.of(context).size.width;
-  final columns = switch (w) {
-    >= 1600 => 8,
-    >= 1280 => 6,
-    >= 960 => 5,
-    >= 720 => 4,
-    >= 520 => 3,
-    _ => 2,
-  };
-  final maxExtent = (w / columns).clamp(150.0, 300.0);
-  return GridView.builder(
-    controller: scrollController,
-    padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-    itemCount: videos.length + (loadingMore ? 1 : 0),
-    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: maxExtent,
-      childAspectRatio: 0.62,
-      crossAxisSpacing: 0,
-      mainAxisSpacing: 0,
-    ),
-    itemBuilder: (context, index) {
-      if (index >= videos.length) {
-        return const Padding(
-          padding: EdgeInsets.all(16),
-          child: Center(child: CircularProgressIndicator()),
-        );
-      }
-      final video = videos[index];
-      return VideoCard(video: video, onTap: () => onTap(video));
-    },
-  );
-}
+/// 视频网格已抽到 widgets/video_grid.dart（VideoGridView / buildVideoGrid），
+/// 首页分类页与搜索结果共用。
+

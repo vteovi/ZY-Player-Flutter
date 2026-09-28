@@ -289,6 +289,56 @@ class AppState extends ChangeNotifier {
   }
 
   // --------------------------------------------------------------------------
+  // 搜索历史
+  // --------------------------------------------------------------------------
+
+  static const String _searchHistoryKey = 'history';
+
+  /// 读取搜索历史（最近搜索在前）
+  Future<List<String>> getSearchHistory() async {
+    final item =
+        await ZyDatabase.instance.get(DbNames.search, _searchHistoryKey);
+    if (item == null) return <String>[];
+    final words = item['words'];
+    if (words is List) {
+      return words.map((e) => e.toString()).toList();
+    }
+    return <String>[];
+  }
+
+  /// 新增一条搜索历史：去重并置顶，最多保留 30 条
+  Future<void> addSearchKeyword(String word) async {
+    final w = word.trim();
+    if (w.isEmpty) return;
+    final list = await getSearchHistory();
+    list.remove(w);
+    list.insert(0, w);
+    if (list.length > 30) list.removeRange(30, list.length);
+    await ZyDatabase.instance.put(DbNames.search, {
+      'key': _searchHistoryKey,
+      'words': list,
+    });
+    notifyListeners();
+  }
+
+  /// 删除单条搜索历史
+  Future<void> removeSearchKeyword(String word) async {
+    final list = await getSearchHistory();
+    if (!list.remove(word)) return;
+    await ZyDatabase.instance.put(DbNames.search, {
+      'key': _searchHistoryKey,
+      'words': list,
+    });
+    notifyListeners();
+  }
+
+  /// 清空全部搜索历史
+  Future<void> clearSearchHistory() async {
+    await ZyDatabase.instance.removeAll(DbNames.search);
+    notifyListeners();
+  }
+
+  // --------------------------------------------------------------------------
   // 重置
   // --------------------------------------------------------------------------
 
