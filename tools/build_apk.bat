@@ -91,6 +91,8 @@ echo     %FLUTTER%
 echo     %DART%
 echo.
 
+taskkill /f /im java.exe
+
 :done
 echo ================================================================
 echo   Log: %LOG%
