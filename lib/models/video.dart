@@ -1,0 +1,371 @@
+/// 视频条目。
+///
+/// xml 源里对应 <video> 节点，json 源里对应 list 中的 vod_* 字段，
+/// 两者统一映射成本类后再交给 UI 使用。
+class Video {
+  final String id;
+  final String tid;
+  final String name;
+  final String type;
+  final String pic;
+  final String lang;
+  final String area;
+  final String year;
+  final String note;
+  final String actor;
+  final String director;
+  final String des;
+  final String last;
+
+  const Video({
+    this.id = '',
+    this.tid = '',
+    this.name = '',
+    this.type = '',
+    this.pic = '',
+    this.lang = '',
+    this.area = '',
+    this.year = '',
+    this.note = '',
+    this.actor = '',
+    this.director = '',
+    this.des = '',
+    this.last = '',
+  });
+
+  factory Video.fromJson(Map<dynamic, dynamic> json) {
+    return Video(
+      id: _s(json['id']),
+      tid: _s(json['tid']),
+      name: _s(json['name']),
+      type: _s(json['type']),
+      pic: _s(json['pic']),
+      lang: _s(json['lang']),
+      area: _s(json['area']),
+      year: _s(json['year']),
+      note: _s(json['note']),
+      actor: _s(json['actor']),
+      director: _s(json['director']),
+      des: _s(json['des']),
+      last: _s(json['last']),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'tid': tid,
+        'name': name,
+        'type': type,
+        'pic': pic,
+        'lang': lang,
+        'area': area,
+        'year': year,
+        'note': note,
+        'actor': actor,
+        'director': director,
+        'des': des,
+        'last': last,
+      };
+
+  Video copyWith({
+    String? id,
+    String? tid,
+    String? name,
+    String? type,
+    String? pic,
+    String? lang,
+    String? area,
+    String? year,
+    String? note,
+    String? actor,
+    String? director,
+    String? des,
+    String? last,
+  }) {
+    return Video(
+      id: id ?? this.id,
+      tid: tid ?? this.tid,
+      name: name ?? this.name,
+      type: type ?? this.type,
+      pic: pic ?? this.pic,
+      lang: lang ?? this.lang,
+      area: area ?? this.area,
+      year: year ?? this.year,
+      note: note ?? this.note,
+      actor: actor ?? this.actor,
+      director: director ?? this.director,
+      des: des ?? this.des,
+      last: last ?? this.last,
+    );
+  }
+
+  static String _s(dynamic v) => v == null ? '' : v.toString();
+}
+
+/// 视频详情 = 视频条目 + 播放列表（m3u8List 中每一项的原始写法为「集名$地址」）
+class VideoDetail extends Video {
+  final List<String> m3u8List;
+
+  const VideoDetail({
+    super.id,
+    super.tid,
+    super.name,
+    super.type,
+    super.pic,
+    super.lang,
+    super.area,
+    super.year,
+    super.note,
+    super.actor,
+    super.director,
+    super.des,
+    super.last,
+    this.m3u8List = const [],
+  });
+
+  factory VideoDetail.fromVideo(Video v, {List<String> m3u8List = const []}) {
+    return VideoDetail(
+      id: v.id,
+      tid: v.tid,
+      name: v.name,
+      type: v.type,
+      pic: v.pic,
+      lang: v.lang,
+      area: v.area,
+      year: v.year,
+      note: v.note,
+      actor: v.actor,
+      director: v.director,
+      des: v.des,
+      last: v.last,
+      m3u8List: m3u8List,
+    );
+  }
+
+  factory VideoDetail.fromJson(Map<dynamic, dynamic> json) {
+    final list = json['m3u8List'];
+    return VideoDetail.fromVideo(
+      Video.fromJson(json),
+      m3u8List: list is List ? list.map((e) => e.toString()).toList() : const [],
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    final json = super.toJson();
+    json['m3u8List'] = m3u8List;
+    return json;
+  }
+}
+
+/// 一集可播放项：value 为真实播放地址，label 为「第 n 集」或影片名
+class PlayItem {
+  final String index;
+  final String value;
+  final String label;
+  final String siteKey;
+  final String videoId;
+
+  const PlayItem({
+    required this.index,
+    required this.value,
+    required this.label,
+    required this.siteKey,
+    required this.videoId,
+  });
+}
+
+/// 收藏 / 历史记录条目：视频信息 + 播放位置
+class RecordItem extends Video {
+  /// `${siteKey}-${videoId}`，与 uni-app 版保持一致
+  final String key;
+  /// 最近一次播放的集名
+  final String label;
+  /// 最近一次播放的地址
+  final String url;
+  final double currentTime;
+  final double duration;
+
+  const RecordItem({
+    required this.key,
+    this.label = '',
+    this.url = '',
+    this.currentTime = 0,
+    this.duration = 0,
+    super.id,
+    super.tid,
+    super.name,
+    super.type,
+    super.pic,
+    super.lang,
+    super.area,
+    super.year,
+    super.note,
+    super.actor,
+    super.director,
+    super.des,
+    super.last,
+  });
+
+  factory RecordItem.fromJson(Map<dynamic, dynamic> json) {
+    final v = Video.fromJson(json);
+    return RecordItem(
+      key: (json['key'] ?? '').toString(),
+      label: (json['label'] ?? '').toString(),
+      url: (json['url'] ?? '').toString(),
+      currentTime: _d(json['currentTime']),
+      duration: _d(json['duration']),
+      id: v.id,
+      tid: v.tid,
+      name: v.name,
+      type: v.type,
+      pic: v.pic,
+      lang: v.lang,
+      area: v.area,
+      year: v.year,
+      note: v.note,
+      actor: v.actor,
+      director: v.director,
+      des: v.des,
+      last: v.last,
+    );
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    final json = super.toJson();
+    json.addAll({
+      'key': key,
+      'label': label,
+      'url': url,
+      'currentTime': currentTime,
+      'duration': duration,
+    });
+    return json;
+  }
+
+  /// 解析收藏/历史的 key，返回 (siteKey, videoId)。
+  ///
+  /// ⚠️ 内置源的 key 是 **UUID**（形如 `210d9548-8f89-410c-8ca3-d6b69c0a513c`），
+  /// 本身就带 4 个连字符，所以**不能按第一个连字符切**：
+  /// `split('-')[0]` 只会切出 `210d9548` 这种不存在的站点，详情页随即报
+  /// 「获取详情失败」。这里按**最后一个**连字符切（videoId 是数字，不含连字符）。
+  /// 更精确的拆法见 `AppState.resolveRecordKey()`。
+  static List<String> splitKey(String key) {
+    final idx = key.lastIndexOf('-');
+    if (idx <= 0) return [key, ''];
+    return [key.substring(0, idx), key.substring(idx + 1)];
+  }
+
+  RecordItem copyWithRecord({
+    String? label,
+    String? url,
+    double? currentTime,
+    double? duration,
+  }) {
+    return RecordItem(
+      key: key,
+      label: label ?? this.label,
+      url: url ?? this.url,
+      currentTime: currentTime ?? this.currentTime,
+      duration: duration ?? this.duration,
+      id: id,
+      tid: tid,
+      name: name,
+      type: type,
+      pic: pic,
+      lang: lang,
+      area: area,
+      year: year,
+      note: note,
+      actor: actor,
+      director: director,
+      des: des,
+      last: last,
+    );
+  }
+
+  /// 播放进度百分比（0 ~ 100）
+  int get progress {
+    if (currentTime <= 0 || duration <= 0) return 0;
+    final p = (100 * currentTime / duration).round();
+    return p.clamp(0, 100);
+  }
+
+  static double _d(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0;
+  }
+}
+
+/// 软件配置（对应 setting 库里 key = config 的记录）
+class AppConfig {
+  final int id;
+  final String key;
+  /// 青少年模式：开启后过滤掉命中敏感词的条目
+  final bool r18;
+
+  /// 播放页画面比例，见 `utils/player_options.dart` 的 PlayerAspects
+  final String playerAspect;
+
+  /// 播放页画面大小 / 填充方式，见 PlayerScales
+  final String playerScale;
+
+  /// 手动纠正画面方向：交换宽高。
+  /// 少数视频源上报的分辨率方向与实际画面不符（竖屏视频被当成横屏），
+  /// 打开这个开关就把显示比例的宽高对调，用户改过之后会一直被记住。
+  final bool playerFlip;
+
+  /// 全屏播放时在右上角显示实时下载速度与码率
+  final bool showSpeed;
+
+  const AppConfig({
+    this.id = 0,
+    this.key = 'config',
+    this.r18 = true,
+    this.playerAspect = 'auto',
+    this.playerScale = 'fit',
+    this.playerFlip = false,
+    this.showSpeed = false,
+  });
+
+  factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
+    return AppConfig(
+      id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0,
+      key: (json['key'] ?? 'config').toString(),
+      r18: json['R18'] == null ? true : json['R18'] == true || json['R18'].toString() == 'true',
+      playerAspect: (json['playerAspect'] ?? 'auto').toString(),
+      playerScale: (json['playerScale'] ?? 'fit').toString(),
+      playerFlip: json['playerFlip'] == true || json['playerFlip'].toString() == 'true',
+      showSpeed: json['showSpeed'] == true || json['showSpeed'].toString() == 'true',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'key': key,
+        'R18': r18,
+        'playerAspect': playerAspect,
+        'playerScale': playerScale,
+        'playerFlip': playerFlip,
+        'showSpeed': showSpeed,
+      };
+
+  AppConfig copyWith({
+    bool? r18,
+    String? playerAspect,
+    String? playerScale,
+    bool? playerFlip,
+    bool? showSpeed,
+  }) =>
+      AppConfig(
+        id: id,
+        key: key,
+        r18: r18 ?? this.r18,
+        playerAspect: playerAspect ?? this.playerAspect,
+        playerScale: playerScale ?? this.playerScale,
+        playerFlip: playerFlip ?? this.playerFlip,
+        showSpeed: showSpeed ?? this.showSpeed,
+      );
+}

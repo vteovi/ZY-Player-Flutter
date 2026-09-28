@@ -1,0 +1,50 @@
+name: zy_player
+description: "ZY Player 移动端 APP —— 由 uni-app 版本重写的 Flutter 版本"
+publish_to: 'none'
+
+# 原 uni-app 版本 versionName 0.1.2 / versionCode 102
+# ⚠️ versionCode（+ 后面的数字）必须严格递增，否则 Android 拒绝覆盖安装旧包
+#    （0.1.3 是 103，所以 1.0.0 不能用 100）
+version: 1.0.0+104
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+  # 状态管理
+  provider: ^6.1.4
+  # 本地存储（对应 uni.setStorageSync）
+  shared_preferences: ^2.5.3
+  # 网络请求（对应 uni-ajax）
+  http: ^1.6.0
+  # XML 解析（对应 fast-xml-parser，用于 xml 类型的视频源）
+  xml: ^6.5.0
+  # 封面图缓存
+  cached_network_image: ^3.4.1
+  # 视频播放（Android 侧由 ExoPlayer 解码，原生支持 m3u8/HLS）
+  video_player: ^2.9.5
+
+# 本地修正版 video_player_android：
+# 上游在 Build.VERSION.SDK_INT < 29 时不交换视频宽高，竖屏视频（1920x1080 + 90° 旋转标记）
+# 被上报成横屏比例，Flutter 按 16:9 摆放竖屏纹理 → 画面被横向拉伸。
+# 详见 third_party/video_player_android/.../TextureExoPlayerEventListener.java 中的 FIX 注释。
+dependency_overrides:
+  video_player_android:
+    path: third_party/video_player_android
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/data/init_site.json
+    - assets/data/init_setting.json
+    - assets/images/logo.png
