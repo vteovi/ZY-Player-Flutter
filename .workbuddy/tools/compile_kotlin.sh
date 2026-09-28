@@ -12,7 +12,9 @@
 set -u
 
 PROJ="${PROJ:-$(cd "$(dirname "$0")/../.." && pwd)}"
-OUT="${TMPDIR:-/tmp}/offline_kotlinc"
+# ⚠️ 别用 /tmp：沙箱的 rm 包装器会拒绝「带盘符前缀」的路径，
+#    导致复用时残留上一次的 class。放在 build/ 下（本来就被忽略、也会被 flutter clean 清掉）
+OUT="$PROJ/build/offline_kotlinc"
 
 # ---------- JDK ----------
 JAVA=$(command -v java 2>/dev/null || true)
@@ -38,6 +40,16 @@ fi
 KSTD=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -name "kotlin-stdlib-${KVER}.jar" ! -name "*sources*" 2>/dev/null | head -1)
 KREF=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -name "kotlin-reflect-${KVER}.jar" 2>/dev/null | head -1)
 TROVE=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -name "trove4j-*.jar" 2>/dev/null | head -1)
+# ⚠️ kotlin-compiler-embeddable 自己还要 coroutines（KotlinCoreApplicationEnvironment
+#    初始化时就会 NoClassDefFoundError: kotlinx/coroutines/CoroutineScope）
+KCORO=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -name "kotlinx-coroutines-core-jvm-*.jar" ! -name "*sources*" 2>/dev/null | sort -V | tail -1)
+[ -z "$KCORO" ] && KCORO=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -name "kotlinx-coroutines-core-*.jar" ! -name "*sources*" 2>/dev/null | sort -V | tail -1)
+# ⚠️ 后端 IR 代码生成阶段要给参数写 @NotNull，会反射加载 org.jetbrains.annotations.NotNull。
+#    缺了它前端全过、到 codegen 才抛
+#    「Backend Internal error: Exception during IR lowering」
+#    → Caused by: NoClassDefFoundError: org/jetbrains/annotations/NotNull
+#    极容易被误判成「代码有问题」，其实是编译器自己的 classpath 缺件。
+JANN=$(find /c/Users/*/.gradle/caches "$HOME/.gradle/caches" -path "*/org.jetbrains/annotations/*" -name "annotations-*.jar" ! -name "*sources*" 2>/dev/null | sort -V | tail -1)
 
 # ---------- android.jar / flutter.jar ----------
 ANDROID_JAR=$(ls -1 /c/Android/Sdk/platforms/android-*/android.jar 2>/dev/null | sort -V | tail -1)
@@ -65,18 +77,75 @@ fi
 rm -rf "$OUT"
 mkdir -p "$OUT"
 
-# 编译器自身的 classpath（embeddable 需要 stdlib/reflect/trove）
+# ---------- 解出 FlutterActivity 依赖的 androidx classes.jar ----------
+# FlutterActivity 实现了 androidx 的 LifecycleOwner 等接口，这些类不在 android.jar
+# 里，缺了会报「cannot access 'androidx.lifecycle.LifecycleOwner' which is a
+# supertype of ...」。⚠️ 每个 artifact 只取缓存里的最高版本，混版本会校验错。
+GRADLE_ROOT=$(dirname "$(dirname "$KC")/../../..")
+GCACHE=""
+for c in "$HOME/.gradle/caches" /c/Users/*/.gradle/caches; do
+  [ -d "$c/modules-2/files-2.1" ] && GCACHE="$c/modules-2/files-2.1" && break
+done
+
+extract_group() {
+  local group_dir="$1" label="$2" n=0 art_dir art ver dir aar jar
+  [ -d "$group_dir" ] || { echo "  $label: 0"; return; }
+  for art_dir in "$group_dir"/*/; do
+    [ -d "$art_dir" ] || continue
+    art=$(basename "$art_dir")
+    dir="$OUT/cp/$art"
+    # ⚠️ 两个坑：
+    # 1) 产物在 `版本号/哈希/xxx.aar|jar` 两层下，`-maxdepth 1` 永远找不到 → 必须 2。
+    # 2) 版本目录里常有「只有 .pom/.module 没有产物」的（BOM、-jvm 变体等），
+    #    从高版本往低找，取第一个真有产物的版本。
+    for ver in $(ls -1 "$art_dir" 2>/dev/null | sort -Vr); do
+      aar=$(find "$art_dir/$ver" -maxdepth 2 -name "*.aar" 2>/dev/null | head -1)
+      if [ -n "$aar" ]; then
+        mkdir -p "$dir"
+        if (cd "$dir" && unzip -o -q "$aar" classes.jar 2>/dev/null); then
+          n=$((n + 1)); break
+        fi
+        continue
+      fi
+      # ⚠️ 有些构件是纯 jar 不是 aar —— 比如 `androidx.lifecycle.LifecycleOwner`
+      #    其实在 lifecycle-common(.jar) 里。只解 aar 会报
+      #    「cannot access LifecycleOwner which is a supertype of FlutterActivity」，
+      #    进而级联出一堆假的 unresolved / syntax error。
+      jar=$(find "$art_dir/$ver" -maxdepth 2 -name "*.jar" ! -name "*sources*" 2>/dev/null | head -1)
+      if [ -n "$jar" ]; then
+        mkdir -p "$dir"
+        if cp "$jar" "$dir/deps.jar"; then n=$((n + 1)); break; fi
+      fi
+    done
+  done
+  echo "  $label: $n"
+}
+
+echo "=== 解出 androidx classes.jar ==="
+for g in androidx.lifecycle androidx.annotation androidx.core androidx.activity androidx.savedstate androidx.window; do
+  extract_group "$GCACHE/$g" "$g"
+done
+
+# ---------- 编译器自身的 classpath ----------
+# ⚠️ kotlin-compiler-embeddable 还需要 coroutines：KotlinCoreApplicationEnvironment
+#    初始化时就会 NoClassDefFoundError: kotlinx/coroutines/CoroutineScope
 CPC="$KC"
-[ -n "$KSTD" ] && CPC="$CPC:$KSTD"
-[ -n "$KREF" ] && CPC="$CPC:$KREF"
-[ -n "$TROVE" ] && CPC="$CPC:$TROVE"
+for j in "$KSTD" "$KREF" "$TROVE" "$KCORO" "$JANN"; do
+  [ -n "$j" ] && CPC="$CPC:$j"
+done
 
-# 被编译代码的 classpath
+# ---------- 被编译代码的 classpath ----------
+# ⚠️ 必须带上 kotlin-stdlib，否则满屏
+#    「cannot access built-in declaration 'kotlin.Unit'. Ensure that you have a
+#      dependency on the Kotlin standard library」
 CPD="$ANDROID_JAR"
-[ -n "$FLUTTER_JAR" ] && CPD="$CPD:$FLUTTER_JAR"
+for j in "$FLUTTER_JAR" "$KSTD"; do
+  [ -n "$j" ] && [ -f "$j" ] && CPD="$CPD:$j"
+done
+for f in "$OUT"/cp/*/*.jar; do
+  [ -f "$f" ] && CPD="$CPD:$f"
+done
 
-# ⚠️ 不要加 -no-stdlib：Flutter 的 embedding jar 里没有 kotlin 标准库，
-#    加了会满屏「unresolved reference: String / Unit / Boolean」
 "$JAVA" -Dfile.encoding=UTF-8 -cp "$CPC" org.jetbrains.kotlin.cli.jvm.K2JVMCompiler \
   -nowarn -cp "$CPD" -jvm-target 17 -d "$OUT" $SOURCES > "$OUT/kotlinc_raw.txt" 2>&1
 RC=$?

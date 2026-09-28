@@ -49,10 +49,16 @@ class MainActivity : FlutterActivity() {
      * 为什么不用现成的 url_launcher：它走的是「浏览器式」ACTION_VIEW，
      * 遇到 m3u8 直链多半只会弹浏览器，用户要的是「选播放器」。
      *
+     * ⚠️ 注释里千万别写「斜杠+星号」或「星号+斜杠」的字面量。
+     *    Kotlin 的块注释是**可嵌套**的：多写一个「斜杠+星号」就多开一层，
+     *    后面的「星号+斜杠」只关掉内层，外层一直不闭合，
+     *    整个文件后半段被当成注释吞掉，报一堆假的 unresolved reference
+     *    外加结尾一句 Unclosed comment。这次就是这么翻车的。
+     *
      * m3u8 直链没有能识别的文件扩展名，各家播放器的 intent-filter 写法不一
-     * （有的按 `video/*` 收，有的按 `application/x-mpegURL` 收，MX Player 这类
-     * 还要求 mime 非空），所以这里按「最可能被接住」的顺序挑第一个能解析到的
-     * 组合，再交给系统选择器，避免出现「一无匹配直接闪退/无反应」。
+     * （有的按 video 通配（video 斜杠星号）收，有的按 application/x-mpegURL 收，
+     * MX Player 这类还要求 mime 非空），所以这里按「最可能被接住」的顺序挑第一个
+     * 能解析到的组合，再交给系统选择器，避免出现「一无匹配直接闪退/无反应」。
      */
     private fun openWithExternalPlayer(url: String, title: String): String {
         if (url.isBlank()) return "no_url"
