@@ -90,6 +90,19 @@ class SystemControl {
     }
   }
 
+  /// 播放时保持屏幕常亮。开启会给当前窗口加 FLAG_KEEP_SCREEN_ON，
+  /// 关闭（暂停 / 退出播放页）则清掉。失败静默降级。
+  static Future<void> setKeepScreenOn(bool on) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'setKeepScreenOn',
+        <String, dynamic>{'value': on},
+      );
+    } catch (_) {
+      // 忽略
+    }
+  }
+
   static double _clamp(double value) {
     if (value.isNaN) return 0;
     if (value < 0) return 0;

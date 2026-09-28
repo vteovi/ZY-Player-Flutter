@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -37,6 +38,10 @@ class MainActivity : FlutterActivity() {
                             call.argument<String>("title").orEmpty()
                         )
                     )
+                    "setKeepScreenOn" -> {
+                        setKeepScreenOn(call.argument<Boolean>("value") ?: false)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -148,5 +153,17 @@ class MainActivity : FlutterActivity() {
         if (max <= 0) return
         val index = (value.coerceIn(0f, 1f) * max).roundToInt().coerceIn(0, max)
         manager.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+    }
+
+    /**
+     * 播放时保持屏幕常亮：加/清当前窗口的 FLAG_KEEP_SCREEN_ON。
+     * 这是播放器通行做法，只影响本窗口，退出播放页后由 Dart 侧主动关闭。
+     */
+    private fun setKeepScreenOn(on: Boolean) {
+        if (on) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 }

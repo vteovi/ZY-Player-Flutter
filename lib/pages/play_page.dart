@@ -138,6 +138,9 @@ class _PlayPageState extends State<PlayPage> {
   String _currentUrl = '';
   bool _starred = false;
 
+  /// 当前是否已通知系统保持常亮，避免重复调用 setKeepScreenOn
+  bool _awake = false;
+
   String get _recordKey => '${widget.siteKey}-${widget.videoId}';
 
   @override
@@ -171,6 +174,11 @@ class _PlayPageState extends State<PlayPage> {
     _statsTimer?.cancel();
     _hideTimer?.cancel();
     _updateHistory();
+    // 兜底关闭常亮：避免播放中直接退出页面时监听器没机会把屏幕唤醒标志清掉
+    if (_awake) {
+      _awake = false;
+      SystemControl.setKeepScreenOn(false);
+    }
     _controller.removeListener(_onControllerUpdate);
     _controller.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -219,6 +227,12 @@ class _PlayPageState extends State<PlayPage> {
 
   void _onControllerUpdate() {
     if (!mounted) return;
+    // 播放状态变化时保持/放开屏幕常亮（播放中不熄屏，暂停/结束即恢复）
+    final playing = _controller.value.isPlaying;
+    if (playing != _awake) {
+      _awake = playing;
+      SystemControl.setKeepScreenOn(playing);
+    }
     // 播放中出错时刷新一次
     if (_controller.value.hasError && !_hasError) {
       setState(() => _hasError = true);
