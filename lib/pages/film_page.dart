@@ -373,6 +373,7 @@ class FilmPageState extends State<FilmPage>
       );
     }
     return _buildVideoGrid(
+      context: context,
       videos: _searchVideos,
       scrollController: _searchScrollController,
       loadingMore: false,
@@ -500,6 +501,7 @@ class CategoryTabState extends State<CategoryTab>
         LoadingMask(
           visible: _loading,
           child: _buildVideoGrid(
+            context: context,
             videos: _videos,
             scrollController: _scrollController,
             loadingMore: _loadingMore,
@@ -525,8 +527,10 @@ class CategoryTabState extends State<CategoryTab>
   }
 }
 
-/// 视频网格（首页分类页与搜索结果共用）
+/// 视频网格（首页分类页与搜索结果共用）。根据屏幕宽度自适应列数，
+/// 大屏宽屏多出几列、卡片更大，但不会无限变宽（限制每行列数上限）。
 Widget _buildVideoGrid({
+  required BuildContext context,
   required List<Video> videos,
   required ScrollController scrollController,
   required bool loadingMore,
@@ -538,12 +542,23 @@ Widget _buildVideoGrid({
       icon: Icons.search_off,
     );
   }
+  // 列数随宽度递增，宽屏多列、窄屏保底 2 列
+  final w = MediaQuery.of(context).size.width;
+  final columns = switch (w) {
+    >= 1600 => 8,
+    >= 1280 => 6,
+    >= 960 => 5,
+    >= 720 => 4,
+    >= 520 => 3,
+    _ => 2,
+  };
+  final maxExtent = (w / columns).clamp(150.0, 300.0);
   return GridView.builder(
     controller: scrollController,
     padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
     itemCount: videos.length + (loadingMore ? 1 : 0),
-    gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: 200,
+    gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: maxExtent,
       childAspectRatio: 0.62,
       crossAxisSpacing: 0,
       mainAxisSpacing: 0,

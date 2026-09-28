@@ -58,8 +58,46 @@ class _MainPageState extends State<MainPage> {
     SystemNavigator.pop();
   }
 
+  /// 宽屏（平板 / 桌面）阈值：超过则用左侧导航栏，否则底部导航
+  static const double _wideThreshold = 600;
+
+  List<NavigationRailDestination> get _railDestinations => const [
+        NavigationRailDestination(
+          icon: Icon(Icons.home_outlined),
+          selectedIcon: Icon(Icons.home),
+          label: Text('首页'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.star_border),
+          selectedIcon: Icon(Icons.star),
+          label: Text('收藏'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.settings_outlined),
+          selectedIcon: Icon(Icons.settings),
+          label: Text('设置'),
+        ),
+      ];
+
+  List<BottomNavigationBarItem> get _barItems => const [
+        BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined), label: '首页'),
+        BottomNavigationBarItem(icon: Icon(Icons.star_border), label: '收藏'),
+        BottomNavigationBarItem(
+            icon: Icon(Icons.settings_outlined), label: '设置'),
+      ];
+
   @override
   Widget build(BuildContext context) {
+    final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
+    final body = IndexedStack(
+      index: _index,
+      children: [
+        FilmPage(key: _filmKey),
+        const StarPage(),
+        const MePage(),
+      ],
+    );
     return PopScope(
       // 根路由始终拦下系统返回，改由 `_onBackPressed` 决定是切回首页还是退出
       canPop: false,
@@ -68,25 +106,27 @@ class _MainPageState extends State<MainPage> {
         _onBackPressed();
       },
       child: Scaffold(
-        body: IndexedStack(
-          index: _index,
-          children: [
-            FilmPage(key: _filmKey),
-            const StarPage(),
-            const MePage(),
-          ],
-        ),
-        bottomNavigationBar: BottomNavigationBar(
-          currentIndex: _index,
-          onTap: _onTap,
-          items: const [
-            BottomNavigationBarItem(
-                icon: Icon(Icons.home_outlined), label: '首页'),
-            BottomNavigationBarItem(icon: Icon(Icons.star_border), label: '收藏'),
-            BottomNavigationBarItem(
-                icon: Icon(Icons.settings_outlined), label: '设置'),
-          ],
-        ),
+        body: isWide
+            ? Row(
+                children: [
+                  NavigationRail(
+                    selectedIndex: _index,
+                    onDestinationSelected: _onTap,
+                    labelType: NavigationRailLabelType.all,
+                    destinations: _railDestinations,
+                  ),
+                  const VerticalDivider(thickness: 1, width: 1),
+                  Expanded(child: body),
+                ],
+              )
+            : body,
+        bottomNavigationBar: isWide
+            ? null
+            : BottomNavigationBar(
+                currentIndex: _index,
+                onTap: _onTap,
+                items: _barItems,
+              ),
       ),
     );
   }
