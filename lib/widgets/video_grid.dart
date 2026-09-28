@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../models/video.dart';
+import '../providers/app_state.dart';
 import 'common_widgets.dart';
 import 'video_card.dart';
 
-/// 视频网格（首页分类页、搜索结果共用）。根据屏幕宽度自适应列数，
-/// 大屏宽屏多出几列、卡片更大，但不会无限变宽（限制每行列数上限）。
+/// 视频网格（首页分类页、搜索结果共用）。
+///
+/// 竖向模式：列数随屏幕宽度自适应，大屏宽屏多出几列、卡片更大。
+/// 横向模式（设置里开启）：左图右文卡片，手机竖屏每行一个，
+/// 平板大屏自适应多列（每列上限 400 宽）。
 class VideoGridView extends StatelessWidget {
   final List<Video> videos;
   final ScrollController? scrollController;
@@ -28,7 +33,42 @@ class VideoGridView extends StatelessWidget {
         icon: Icons.search_off,
       );
     }
-    // 列数随宽度递增，宽屏多列、窄屏保底 2 列
+    final landscape =
+        context.watch<AppState>().config.landscapeCard;
+    return GridView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+      itemCount: videos.length + (loadingMore ? 1 : 0),
+      gridDelegate: landscape
+          ? const SliverGridDelegateWithMaxCrossAxisExtent(
+              // 横向卡片：手机竖屏（<800）1 列，平板 2 列，更宽屏幕 3+ 列
+              maxCrossAxisExtent: 400,
+              childAspectRatio: 3.3,
+              crossAxisSpacing: 0,
+              mainAxisSpacing: 0,
+            )
+          : _portraitDelegate(context),
+      itemBuilder: (context, index) {
+        if (index >= videos.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final video = videos[index];
+        return VideoCard(
+          video: video,
+          landscape: landscape,
+          onTap: () => onTap(video),
+        );
+      },
+    );
+  }
+
+  /// 竖向卡片：列数随宽度递增，宽屏多列、窄屏保底 2 列
+  SliverGridDelegateWithMaxCrossAxisExtent _portraitDelegate(
+    BuildContext context,
+  ) {
     final w = MediaQuery.of(context).size.width;
     final columns = switch (w) {
       >= 1600 => 8,
@@ -39,26 +79,11 @@ class VideoGridView extends StatelessWidget {
       _ => 2,
     };
     final maxExtent = (w / columns).clamp(150.0, 300.0);
-    return GridView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-      itemCount: videos.length + (loadingMore ? 1 : 0),
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: maxExtent,
-        childAspectRatio: 0.62,
-        crossAxisSpacing: 0,
-        mainAxisSpacing: 0,
-      ),
-      itemBuilder: (context, index) {
-        if (index >= videos.length) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final video = videos[index];
-        return VideoCard(video: video, onTap: () => onTap(video));
-      },
+    return SliverGridDelegateWithMaxCrossAxisExtent(
+      maxCrossAxisExtent: maxExtent,
+      childAspectRatio: 0.62,
+      crossAxisSpacing: 0,
+      mainAxisSpacing: 0,
     );
   }
 }

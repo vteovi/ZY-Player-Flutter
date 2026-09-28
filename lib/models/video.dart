@@ -327,6 +327,10 @@ class AppConfig {
   /// 显示模式：'system' 跟随系统 / 'light' 浅色 / 'dark' 深色，默认跟随系统。
   final String themeMode;
 
+  /// 首页卡片横向模式：开启后海报横向（左图右文），
+  /// 手机竖屏每行一个，平板大屏自适应多列；关闭为竖向海报（默认）。
+  final bool landscapeCard;
+
   const AppConfig({
     this.id = 0,
     this.key = 'config',
@@ -337,6 +341,7 @@ class AppConfig {
     this.showSpeed = false,
     this.playerLongPressRate = 2.0,
     this.themeMode = 'system',
+    this.landscapeCard = false,
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
@@ -355,6 +360,8 @@ class AppConfig {
         return rate is num ? rate.toDouble() : double.tryParse('$rate') ?? 2.0;
       }(),
       themeMode: mode == 'light' || mode == 'dark' ? mode : 'system',
+      landscapeCard:
+          json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
     );
   }
 
@@ -368,6 +375,7 @@ class AppConfig {
         'showSpeed': showSpeed,
         'playerLongPressRate': playerLongPressRate,
         'themeMode': themeMode,
+        'landscapeCard': landscapeCard,
       };
 
   AppConfig copyWith({
@@ -378,6 +386,7 @@ class AppConfig {
     bool? showSpeed,
     double? playerLongPressRate,
     String? themeMode,
+    bool? landscapeCard,
   }) =>
       AppConfig(
         id: id,
@@ -389,5 +398,6 @@ class AppConfig {
         showSpeed: showSpeed ?? this.showSpeed,
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
         themeMode: themeMode ?? this.themeMode,
+        landscapeCard: landscapeCard ?? this.landscapeCard,
       );
 }

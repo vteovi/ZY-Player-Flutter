@@ -180,6 +180,14 @@ class MePage extends StatelessWidget {
             onTap: () => _push(context, const SitePage()),
           ),
           SwitchListTile(
+            title: const Text('横向卡片模式'),
+            subtitle: const Text(
+                '开启后海报横向显示（左图右文），竖屏手机每行一个，平板自适应多列'),
+            value: appState.config.landscapeCard,
+            onChanged: (value) =>
+                context.read<AppState>().setLandscapeCard(value),
+          ),
+          SwitchListTile(
             title: const Text('显示实时下载速度'),
             subtitle: const Text('全屏播放时在右上角显示实时网速'),
             value: appState.config.showSpeed,
