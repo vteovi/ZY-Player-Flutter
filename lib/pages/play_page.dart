@@ -424,6 +424,15 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
+  /// 播放下一集：在当前播放列表里找「正在播放这一集」的下一项，找不到（已是最后一集
+  /// 或列表不足两集）就不动。当前集用播放地址匹配，切集后 _currentUrl 已更新。
+  void _playNextEpisode() {
+    if (_playList.length < 2) return;
+    final idx = _playList.indexWhere((e) => e.value == _currentUrl);
+    if (idx < 0 || idx >= _playList.length - 1) return;
+    _switchEpisode(_playList[idx + 1]);
+  }
+
   // --------------------------------------------------------------------------
   // 全屏：控制层自动隐藏 + 实时网速
   // --------------------------------------------------------------------------
@@ -1212,6 +1221,13 @@ class _PlayPageState extends State<PlayPage> {
             onTap: () =>
                 value.isPlaying ? _controller.pause() : _controller.play(),
           ),
+          // 下一集：仅多集视频显示，放在播放/暂停右边
+          if (_playList.length > 1)
+            _controlButton(
+              icon: Icons.skip_next_rounded,
+              label: '下一集',
+              onTap: _playNextEpisode,
+            ),
           _controlButton(
             icon: Icons.aspect_ratio_rounded,
             label: _aspect.label,
