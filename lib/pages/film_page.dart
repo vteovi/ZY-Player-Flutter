@@ -227,6 +227,7 @@ class FilmPageState extends State<FilmPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(
         // 「首页」文字已去掉，原位改放网站切换 + 资源统计
@@ -243,8 +244,11 @@ class FilmPageState extends State<FilmPage>
                   overflow: TextOverflow.ellipsis,
                 ),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF303133),
-                  side: const BorderSide(color: Color(0xFFDCDFE6)),
+                  foregroundColor:
+                      isDark ? Colors.white70 : const Color(0xFF303133),
+                  side: BorderSide(
+                    color: isDark ? Colors.white24 : const Color(0xFFDCDFE6),
+                  ),
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   minimumSize: const Size(0, 36),
                   shape: RoundedRectangleBorder(
@@ -258,9 +262,9 @@ class FilmPageState extends State<FilmPage>
               _isSearchMode
                   ? '搜索 ${_searchVideos.length}'
                   : '共: $_activeRecordCount 资源',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                color: Color(0xFF909399),
+                color: isDark ? Colors.white70 : const Color(0xFF909399),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -282,6 +286,7 @@ class FilmPageState extends State<FilmPage>
   }
 
   Widget _buildSearchBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
       child: TextField(
@@ -290,9 +295,12 @@ class FilmPageState extends State<FilmPage>
         onSubmitted: _onSearch,
         decoration: InputDecoration(
           hintText: '搜索影片',
+          hintStyle: TextStyle(
+            color: isDark ? Colors.white54 : Colors.black54,
+          ),
           isDense: true,
           filled: true,
-          fillColor: Colors.white,
+          fillColor: isDark ? const Color(0xFF2A2A2A) : Colors.white,
           prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: _searchController.text.isEmpty
               ? null
@@ -313,22 +321,26 @@ class FilmPageState extends State<FilmPage>
   /// 分类分栏：可横向滑动（分类多时滚动），也可点选
   Widget _buildCategoryTabBar() {
     if (_classes.isEmpty) return const SizedBox.shrink();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      color: Colors.white,
+      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       child: TabBar(
         controller: _tabController,
         isScrollable: true,
         tabAlignment: TabAlignment.start,
         splashFactory: NoSplash.splashFactory,
         overlayColor: WidgetStateProperty.all(Colors.transparent),
-        labelColor: const Color(0xFF1E88E5),
-        unselectedLabelColor: const Color(0xFF606266),
+        labelColor: isDark ? Colors.white : const Color(0xFF1E88E5),
+        unselectedLabelColor: isDark ? Colors.white70 : const Color(0xFF606266),
         labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         unselectedLabelStyle:
             const TextStyle(fontSize: 14, fontWeight: FontWeight.w400),
         indicatorSize: TabBarIndicatorSize.label,
-        indicator: const UnderlineTabIndicator(
-          borderSide: BorderSide(width: 2, color: Color(0xFF1E88E5)),
+        indicator: UnderlineTabIndicator(
+          borderSide: BorderSide(
+            width: 2,
+            color: isDark ? Colors.white : const Color(0xFF1E88E5),
+          ),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         tabs: _classes.map((c) => Tab(text: c.name)).toList(),

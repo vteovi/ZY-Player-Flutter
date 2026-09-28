@@ -407,6 +407,7 @@ class _DetailPageState extends State<DetailPage> {
   static const double _actionLane = 76;
 
   Widget _buildInfoSection(VideoDetail detail) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -420,7 +421,9 @@ class _DetailPageState extends State<DetailPage> {
           right: 116,
           child: _actionButton(
             icon: _starred ? Icons.star : Icons.star_border,
-            color: _starred ? const Color(0xFFFF4445) : const Color(0xFF606266),
+            color: _starred
+                ? const Color(0xFFFF4445)
+                : (isDark ? Colors.white70 : const Color(0xFF606266)),
             onTap: _toggleStar,
           ),
         ),
@@ -440,11 +443,12 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget _buildInfoCard(VideoDetail detail) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
       padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
       child: Column(
@@ -516,15 +520,18 @@ class _DetailPageState extends State<DetailPage> {
     required VoidCallback onTap,
     double size = 30,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: isDark ? const Color(0xFF303030) : Colors.white,
           shape: BoxShape.circle,
-          border: Border.all(color: const Color(0xFFF8F8F8)),
+          border: Border.all(
+            color: isDark ? Colors.white24 : const Color(0xFFF8F8F8),
+          ),
           boxShadow: const [
             BoxShadow(color: Color(0x22000000), blurRadius: 6),
           ],
