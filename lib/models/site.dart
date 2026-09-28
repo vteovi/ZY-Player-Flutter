@@ -59,12 +59,21 @@ class Site {
       key: (json['key'] ?? '').toString(),
       name: (json['name'] ?? '').toString(),
       api: (json['api'] ?? '').toString(),
-      type: (json['type'] ?? 'xml').toString(),
+      type: _typeString(json['type']),
       download: (json['download'] ?? '').toString(),
       group: (json['group'] ?? '默认').toString(),
       isActive: _toBool(json['isActive']),
       status: (json['status'] ?? '可用').toString(),
     );
+  }
+
+  /// 接口类型归一化：兼容 TVBox 的数字 type（0 = xml，1 = json）
+  static String _typeString(dynamic v) {
+    if (v is num) return v == 1 ? 'json' : 'xml';
+    final s = v?.toString() ?? '';
+    if (s == '0') return 'xml';
+    if (s == '1') return 'json';
+    return s.isEmpty ? 'xml' : s;
   }
 
   Map<String, dynamic> toJson() {

@@ -27,13 +27,22 @@ class _SitePageState extends State<SitePage> {
     final url = _urlController.text.trim();
     if (url.isEmpty) return;
     setState(() => _importing = true);
-    final ok = await context.read<AppState>().importSites(url);
+    final res = await context.read<AppState>().importSites(url);
     if (!mounted) return;
     setState(() {
       _importing = false;
-      _showImport = !ok;
+      _showImport = !res.ok;
     });
-    showToast(context, ok ? '导入成功' : '导入失败，请检查地址是否为可直接访问的 JSON', success: ok);
+    if (res.ok) {
+      final skip = res.skipped > 0 ? '，跳过 ${res.skipped} 个需插件的源' : '';
+      final merge = res.merged ? '（已合并到现有源）' : '';
+      showToast(context, '导入成功：${res.sites.length} 个源$skip$merge', success: true);
+    } else {
+      showToast(
+        context,
+        '导入失败，请检查网络或地址（配置内的源可能都需要插件支持）',
+      );
+    }
   }
 
   void _toggleImport() {
@@ -59,12 +68,14 @@ class _SitePageState extends State<SitePage> {
                   Expanded(
                     child: TextField(
                       controller: _urlController,
-                      decoration: const InputDecoration(
-                        hintText: '请输入 JSON 后缀的网址',
+                      decoration: InputDecoration(
+                        hintText: '输入采集站 JSON 或 TVBox 配置地址',
                         isDense: true,
                         filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
+                        fillColor: Theme.of(context).brightness == Brightness.dark
+                            ? Colors.grey[900]
+                            : Colors.white,
+                        border: const OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(8)),
                           borderSide: BorderSide.none,
                         ),
