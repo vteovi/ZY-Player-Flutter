@@ -186,10 +186,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 全屏播放时是否在右上角显示实时下载速度与码率
+  /// 全屏播放时是否在右上角显示实时下载速度
   Future<void> setShowSpeed(bool value) async {
     if (_config.showSpeed == value) return;
     _config = _config.copyWith(showSpeed: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
+  /// 全屏长按加速倍率（2.0 / 4.0 / 8.0），默认 2.0
+  Future<void> setPlayerLongPressRate(double value) async {
+    if (_config.playerLongPressRate == value) return;
+    _config = _config.copyWith(playerLongPressRate: value);
     await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
     notifyListeners();
   }

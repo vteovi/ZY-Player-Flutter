@@ -82,6 +82,32 @@ class _PlayPageState extends State<PlayPage> {
   Timer? _statsTimer;
   PlayerNetworkStats? _netStats;
 
+  // ---- 全屏左右滑动快进 / 快退 ----
+
+  /// 滑动 seek 进行中
+  bool _seekActive = false;
+
+  /// seek 预览目标进度（0~1），用于 HUD 显示
+  double _seekPreviewFraction = 0;
+
+  /// 相对起点的偏移秒数（正=快进，负=快退），用于 HUD 显示
+  double _seekDeltaSeconds = 0;
+
+  double _seekBaseFraction = 0;
+  double _seekStartDx = 0;
+  double _seekTrackWidth = 0;
+
+  /// 左右滑满整屏宽度对应的快进 / 快退秒数
+  static const double _seekSpanSeconds = 120;
+
+  // ---- 全屏长按加速 ----
+
+  /// 长按加速进行中
+  bool _longPressActive = false;
+
+  /// 长按加速倍率，进入页面时从设置读一次，默认 2.0
+  double _longPressRate = 2.0;
+
   // ---- 全屏控制层自动隐藏 ----
 
   /// 控制层（进度条 + 按钮行）是否可见
@@ -122,6 +148,7 @@ class _PlayPageState extends State<PlayPage> {
     _scaleMode = PlayerScales.byKey(config.playerScale);
     _flip = config.playerFlip;
     _showSpeed = config.showSpeed;
+    _longPressRate = config.playerLongPressRate;
 
     _title = widget.title;
     _currentUrl = widget.url;
@@ -332,6 +359,9 @@ class _PlayPageState extends State<PlayPage> {
       _hasError = false;
       _title = item.label;
       _currentUrl = item.value;
+      // 新控制器默认速度 1.0，长按加速标记复位，避免卡在加速态
+      _longPressActive = false;
+      _seekActive = false;
     });
     await _controller.pause();
     _controller.removeListener(_onControllerUpdate);
@@ -462,6 +492,10 @@ class _PlayPageState extends State<PlayPage> {
   }
 
   Future<void> _toggleFullscreen() async {
+    // 退出 / 进入全屏前，若正在长按加速，先恢复正常速度，避免状态卡住
+    if (_longPressActive) {
+      _controller.setPlaybackSpeed(1.0);
+    }
     if (_fullscreen) {
       await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -479,6 +513,10 @@ class _PlayPageState extends State<PlayPage> {
         _scalePanelOpen = false;
         // 进全屏先把控制层亮出来，几秒后再自动收
         _controlsVisible = true;
+        // 手势状态复位（长按 / 滑动 seek 只在全屏内有效）
+        _longPressActive = false;
+        _seekActive = false;
+        _gestureActive = false;
       });
       _hideTimer?.cancel();
       if (_fullscreen) _scheduleHideControls();
@@ -677,6 +715,37 @@ class _PlayPageState extends State<PlayPage> {
               Positioned.fill(
                 child: IgnorePointer(child: _buildGestureHud()),
               ),
+            // 左右滑动快进 / 快退的居中提示
+            if (_seekActive)
+              Positioned.fill(
+                child: IgnorePointer(child: _buildSeekHud()),
+              ),
+            // 长按加速提示（左上），与控制层无关，套 IgnorePointer 避免吃掉点击
+            if (_longPressActive)
+              Positioned(
+                top: 10,
+                left: 12,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xB3000000),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      child: Text(
+                        '长按加速 ${_longPressRate.toStringAsFixed(1)}×',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -697,38 +766,128 @@ class _PlayPageState extends State<PlayPage> {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.arrow_downward_rounded, size: 13, color: speedColor),
-                const SizedBox(width: 3),
-                Text(
-                  VideoNetworkStats.formatSpeed(stats.speedBps),
-                  style: TextStyle(
-                    fontSize: 12,
-                    height: 1.2,
-                    fontWeight: FontWeight.w600,
-                    color: speedColor,
-                  ),
-                ),
-                if (stale)
-                  const Text(
-                    ' ·',
-                    style: TextStyle(fontSize: 12, color: Colors.white54),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 3),
+            Icon(Icons.arrow_downward_rounded, size: 13, color: speedColor),
+            const SizedBox(width: 3),
             Text(
-              '码率 ${VideoNetworkStats.formatBitrate(stats.bitrateBps)}',
-              style: const TextStyle(
-                fontSize: 11,
+              VideoNetworkStats.formatSpeed(stats.speedBps),
+              style: TextStyle(
+                fontSize: 12,
                 height: 1.2,
-                color: Colors.white70,
+                fontWeight: FontWeight.w600,
+                color: speedColor,
+              ),
+            ),
+            if (stale)
+              const Text(
+                ' ·',
+                style: TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 全屏手势：左右滑动快进快退 + 长按加速
+  // --------------------------------------------------------------------------
+
+  /// 当前播放进度的归一化比例（0~1）
+  double get _positionFraction {
+    final total = _controller.value.duration.inMilliseconds;
+    if (total <= 0) return 0;
+    return (_controller.value.position.inMilliseconds / total).clamp(0.0, 1.0);
+  }
+
+  /// 横向滑动起点：记下当前进度与手指横坐标，整屏宽度对应 [_seekSpanSeconds] 秒。
+  void _onSeekStart(DragStartDetails details, double width) {
+    if (!_fullscreen) return;
+    if (!_controller.value.isInitialized) return;
+    setState(() {
+      _seekActive = true;
+      _seekBaseFraction = _positionFraction;
+      _seekStartDx = details.localPosition.dx;
+      _seekTrackWidth = width;
+      _seekDeltaSeconds = 0;
+      _seekPreviewFraction = _seekBaseFraction;
+    });
+  }
+
+  void _onSeekUpdate(DragUpdateDetails details) {
+    if (!_seekActive) return;
+    final total = _controller.value.duration.inMilliseconds.toDouble();
+    if (total <= 0 || _seekTrackWidth <= 0) return;
+    final deltaFraction = ((details.localPosition.dx - _seekStartDx) /
+            _seekTrackWidth) *
+        (_seekSpanSeconds * 1000 / total);
+    final fraction = (_seekBaseFraction + deltaFraction).clamp(0.0, 1.0);
+    setState(() {
+      _seekPreviewFraction = fraction;
+      _seekDeltaSeconds = (fraction - _seekBaseFraction) * total / 1000;
+    });
+    _controller.seekTo(Duration(milliseconds: (fraction * total).round()));
+  }
+
+  void _onSeekEnd() {
+    if (!_seekActive) return;
+    setState(() {
+      _seekActive = false;
+      _seekPreviewFraction = 0;
+      _seekDeltaSeconds = 0;
+    });
+  }
+
+  /// 长按开始：把播放速度提到设定的倍率。
+  /// video_player 底层走 ExoPlayer 的 PlaybackParameters，支持任意正数倍率，
+  /// 大于 2.0 时会用跳帧方式实现，2 / 4 / 8 都没问题。
+  void _onLongPressStart() {
+    if (!_fullscreen) return;
+    if (!_controller.value.isInitialized) return;
+    _controller.setPlaybackSpeed(_longPressRate);
+    setState(() => _longPressActive = true);
+  }
+
+  /// 长按结束：恢复正常速度（本 App 基础速度恒为 1.0，没有别的速度设置项）。
+  void _onLongPressEnd() {
+    _controller.setPlaybackSpeed(1.0);
+    setState(() => _longPressActive = false);
+  }
+
+  /// 左右滑动 seek 时的居中提示：目标时间 + 快进 / 快退秒数。
+  Widget _buildSeekHud() {
+    final duration = _controller.value.duration;
+    final target = Duration(
+      milliseconds: (_seekPreviewFraction * duration.inMilliseconds).round(),
+    );
+    final delta = _seekDeltaSeconds;
+    final sign = delta >= 0 ? '+' : '−';
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xD9000000),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${_fmt(target)} / ${_fmt(duration)}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '$sign ${delta.abs().toStringAsFixed(0)} 秒',
+              style: TextStyle(
+                color: delta >= 0 ? const Color(0xFF6DD143) : Colors.white,
+                fontSize: 13,
               ),
             ),
           ],
@@ -750,6 +909,7 @@ class _PlayPageState extends State<PlayPage> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final halfWidth = constraints.maxWidth / 2;
+          final width = constraints.maxWidth;
           final span =
               constraints.maxHeight * 0.7 > 0 ? constraints.maxHeight * 0.7 : 400.0;
           return GestureDetector(
@@ -758,6 +918,7 @@ class _PlayPageState extends State<PlayPage> {
             onTap: allowTapToggle ? _toggleControls : null,
             // 双击暂停 / 继续，与竖屏一致
             onDoubleTap: _togglePlay,
+            // 左半屏上下滑调亮度、右半屏调音量，向上滑为增大
             onVerticalDragStart: (details) {
               final isBrightness = details.localPosition.dx < halfWidth;
               setState(() {
@@ -783,6 +944,16 @@ class _PlayPageState extends State<PlayPage> {
             },
             onVerticalDragEnd: (_) => setState(() => _gestureActive = false),
             onVerticalDragCancel: () => setState(() => _gestureActive = false),
+            // 全屏左右滑动快进 / 快退（横竖手势由 Flutter 竞技场自动按主方向分流，
+            // 不需要手动判断）。只在全屏启用，竖屏无此手势。
+            onHorizontalDragStart:
+                _fullscreen ? (d) => _onSeekStart(d, width) : null,
+            onHorizontalDragUpdate: _fullscreen ? _onSeekUpdate : null,
+            onHorizontalDragEnd: _fullscreen ? (_) => _onSeekEnd() : null,
+            onHorizontalDragCancel: _fullscreen ? () => _onSeekEnd() : null,
+            // 全屏长按加速：按下提到倍率速度，松手恢复 1.0
+            onLongPressStart: _fullscreen ? (_) => _onLongPressStart() : null,
+            onLongPressEnd: _fullscreen ? (_) => _onLongPressEnd() : null,
           );
         },
       ),

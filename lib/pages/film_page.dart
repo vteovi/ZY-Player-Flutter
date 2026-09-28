@@ -365,29 +365,26 @@ class FilmPageState extends State<FilmPage> with AutomaticKeepAliveClientMixin {
         icon: Icons.search_off,
       );
     }
-    return RefreshIndicator(
-      onRefresh: reload,
-      child: GridView.builder(
-        controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-        itemCount: _videos.length + (_loadingMore ? 1 : 0),
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-          maxCrossAxisExtent: 200,
-          childAspectRatio: 0.62,
-          crossAxisSpacing: 0,
-          mainAxisSpacing: 0,
-        ),
-        itemBuilder: (context, index) {
-          if (index >= _videos.length) {
-            return const Padding(
-              padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          final video = _videos[index];
-          return VideoCard(video: video, onTap: () => _openDetail(video));
-        },
+    return GridView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+      itemCount: _videos.length + (_loadingMore ? 1 : 0),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 200,
+        childAspectRatio: 0.62,
+        crossAxisSpacing: 0,
+        mainAxisSpacing: 0,
       ),
+      itemBuilder: (context, index) {
+        if (index >= _videos.length) {
+          return const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final video = _videos[index];
+        return VideoCard(video: video, onTap: () => _openDetail(video));
+      },
     );
   }
 }

@@ -317,8 +317,12 @@ class AppConfig {
   /// 打开这个开关就把显示比例的宽高对调，用户改过之后会一直被记住。
   final bool playerFlip;
 
-  /// 全屏播放时在右上角显示实时下载速度与码率
+  /// 全屏播放时在右上角显示实时下载速度
   final bool showSpeed;
+
+  /// 全屏播放时长按画面加速的倍率（2.0 / 4.0 / 8.0），默认 2.0。
+  /// 长按期间把播放速度提到该倍率，松手恢复到 1.0。
+  final double playerLongPressRate;
 
   const AppConfig({
     this.id = 0,
@@ -328,6 +332,7 @@ class AppConfig {
     this.playerScale = 'fit',
     this.playerFlip = false,
     this.showSpeed = false,
+    this.playerLongPressRate = 2.0,
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
@@ -339,6 +344,11 @@ class AppConfig {
       playerScale: (json['playerScale'] ?? 'fit').toString(),
       playerFlip: json['playerFlip'] == true || json['playerFlip'].toString() == 'true',
       showSpeed: json['showSpeed'] == true || json['showSpeed'].toString() == 'true',
+      playerLongPressRate: () {
+        final rate = json['playerLongPressRate'];
+        if (rate == null) return 2.0;
+        return rate is num ? rate.toDouble() : double.tryParse('$rate') ?? 2.0;
+      }(),
     );
   }
 
@@ -350,6 +360,7 @@ class AppConfig {
         'playerScale': playerScale,
         'playerFlip': playerFlip,
         'showSpeed': showSpeed,
+        'playerLongPressRate': playerLongPressRate,
       };
 
   AppConfig copyWith({
@@ -358,6 +369,7 @@ class AppConfig {
     String? playerScale,
     bool? playerFlip,
     bool? showSpeed,
+    double? playerLongPressRate,
   }) =>
       AppConfig(
         id: id,
@@ -367,5 +379,6 @@ class AppConfig {
         playerScale: playerScale ?? this.playerScale,
         playerFlip: playerFlip ?? this.playerFlip,
         showSpeed: showSpeed ?? this.showSpeed,
+        playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
       );
 }

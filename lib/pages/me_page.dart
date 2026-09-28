@@ -52,6 +52,31 @@ class MePage extends StatelessWidget {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
+  /// 长按加速倍率：弹窗单选 2.0 / 4.0 / 8.0，默认 2.0。
+  /// 全屏播放时长按画面即按所选倍率加速，松手恢复正常速度。
+  Future<void> _showLongPressRatePicker(BuildContext context) async {
+    final options = [2.0, 4.0, 8.0];
+    final current = context.read<AppState>().config.playerLongPressRate;
+    final picked = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('长按加速倍率'),
+        children: [
+          for (final rate in options)
+            RadioListTile<double>(
+              title: Text('${rate.toStringAsFixed(1)} 倍'),
+              value: rate,
+              groupValue: current,
+              onChanged: (value) => Navigator.of(dialogContext).pop(value),
+            ),
+        ],
+      ),
+    );
+    if (picked != null && context.mounted) {
+      await context.read<AppState>().setPlayerLongPressRate(picked);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
@@ -86,9 +111,17 @@ class MePage extends StatelessWidget {
           ),
           SwitchListTile(
             title: const Text('显示实时下载速度'),
-            subtitle: const Text('全屏播放时在右上角显示网速与码率'),
+            subtitle: const Text('全屏播放时在右上角显示实时网速'),
             value: appState.config.showSpeed,
             onChanged: (value) => context.read<AppState>().setShowSpeed(value),
+          ),
+          ListTile(
+            title: const Text('长按加速倍率'),
+            subtitle: Text(
+              '全屏播放时长按画面可加速，当前：${appState.config.playerLongPressRate.toStringAsFixed(1)} 倍',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _showLongPressRatePicker(context),
           ),
           _MenuItem(
             title: '清空播放记录',
