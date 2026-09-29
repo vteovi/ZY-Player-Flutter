@@ -28,6 +28,12 @@ dependencies:
   cached_network_image: ^3.4.1
   # 视频播放（Android 侧由 ExoPlayer 解码，原生支持 m3u8/HLS）
   video_player: ^2.9.5
+  # Windows 桌面播放实现（video_player 平台接口，内置 FFmpeg 支持 HLS；
+  # 仅在 main() 里 Platform.isWindows 时 registerWith，Android 不受影响）
+  fvp: ^0.38.1
+  # Windows 桌面 sqflite 实现（封面缓存 flutter_cache_manager 底层用 sqflite，
+  # 官方 sqflite 无 Windows 实现，main() 里切到 FFI 工厂）
+  sqflite_common_ffi: ^2.3.0
 
 # 本地修正版 video_player_android：
 # 上游在 Build.VERSION.SDK_INT < 29 时不交换视频宽高，竖屏视频（1920x1080 + 90° 旋转标记）

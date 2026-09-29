@@ -1,5 +1,9 @@
+import 'dart:io';
+
+import 'package:fvp/fvp.dart' as fvp;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'pages/main_page.dart';
 import 'providers/app_state.dart';
@@ -7,6 +11,15 @@ import 'utils/constants.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    // Windows 桌面播放：fvp（内置 FFmpeg，支持 HLS/m3u8）实现 video_player
+    // 平台接口；仅注册 Windows，Android 仍走 fork 的 ExoPlayer 实现。
+    fvp.registerWith(options: {'platforms': ['windows']});
+    // 封面缓存（flutter_cache_manager）底层 sqflite 官方无 Windows 实现，
+    // 切到 FFI（sqlite3）工厂。
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
   runApp(const ZyPlayerApp());
 }
 
