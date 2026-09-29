@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import '../models/site.dart';
 import '../models/video.dart';
 import '../services/http_service.dart';
+import '../services/source_import.dart';
 import '../services/zy_database.dart';
 import '../utils/constants.dart';
 
@@ -144,6 +145,35 @@ class AppState extends ChangeNotifier {
     }
     await loadSites();
     return true;
+  }
+
+  /// 从 TVBox / ZYFun 的 JSON 文本导入视频源（合并导入，保留现有源）。
+  ///
+  /// 同名 key 的源会被更新，其余追加；需要插件的 spider 源自动跳过。
+  /// 返回导入结果摘要（新增 / 更新 / 跳过数量、识别到的格式）。
+  Future<ImportSummary> importSitesFromContent(String content) async {
+    final parsed = SourceImport.parse(content);
+    if (parsed.sites.isEmpty) return parsed; // 携带 message 说明失败原因
+    var added = 0;
+    var updated = 0;
+    for (final site in parsed.sites) {
+      final existed =
+          await ZyDatabase.instance.containsKey(DbNames.site, site.key);
+      await ZyDatabase.instance.put(DbNames.site, site.toJson());
+      if (existed) {
+        updated++;
+      } else {
+        added++;
+      }
+    }
+    await loadSites();
+    return ImportSummary(
+      sites: parsed.sites,
+      skipped: parsed.skipped,
+      format: parsed.format,
+      added: added,
+      updated: updated,
+    );
   }
 
   // --------------------------------------------------------------------------

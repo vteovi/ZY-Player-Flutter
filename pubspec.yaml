@@ -34,6 +34,8 @@ dependencies:
   # Windows 桌面 sqflite 实现（封面缓存 flutter_cache_manager 底层用 sqflite，
   # 官方 sqflite 无 Windows 实现，main() 里切到 FFI 工厂）
   sqflite_common_ffi: ^2.3.0
+  # 本地文件选择（导入 TVBox / ZYFun 配置 JSON，跨 Android / Windows）
+  file_picker: ^8.3.0
 
 # 本地修正版 video_player_android：
 # 上游在 Build.VERSION.SDK_INT < 29 时不交换视频宽高，竖屏视频（1920x1080 + 90° 旋转标记）

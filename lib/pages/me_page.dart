@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -93,6 +97,54 @@ class MePage extends StatelessWidget {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
+  /// 从本地 JSON 文件导入 TVBox / ZYFun 配置（合并导入，保留现有源）。
+  Future<void> _importConfigFile(BuildContext context) async {
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json', 'txt', 'conf'],
+        allowMultiple: false,
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      showToast(context, '无法打开文件选择器：$e', success: false);
+      return;
+    }
+    if (result == null || result.files.isEmpty) return; // 用户取消
+    final path = result.files.single.path;
+    if (path == null) return;
+
+    String content;
+    try {
+      content = await File(path).readAsString(encoding: utf8);
+    } catch (e) {
+      if (!context.mounted) return;
+      showToast(context, '读取文件失败：$e', success: false);
+      return;
+    }
+
+    final summary =
+        await context.read<AppState>().importSitesFromContent(content);
+    if (!context.mounted) return;
+
+    if (!summary.ok) {
+      showToast(context, '导入失败：${summary.message}', success: false);
+      return;
+    }
+    final fmt = summary.format == 'zyfun'
+        ? 'ZYFun'
+        : summary.format == 'tvbox'
+            ? 'TVBox'
+            : '配置';
+    final parts = ['导入$fmt 成功：新增 ${summary.added} 个'];
+    if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
+    if (summary.skipped > 0) {
+      parts.add('跳过 ${summary.skipped} 个需插件的源');
+    }
+    showToast(context, parts.join('，'), success: true);
+  }
+
   /// 长按加速倍率：弹窗单选 2.0 / 4.0 / 8.0，默认 2.0。
   /// 全屏播放时长按画面即按所选倍率加速，松手恢复正常速度。
   Future<void> _showLongPressRatePicker(BuildContext context) async {
@@ -178,6 +230,11 @@ class MePage extends StatelessWidget {
             title: '视频源管理',
             subtitle: '管理视频源数据',
             onTap: () => _push(context, const SitePage()),
+          ),
+          _MenuItem(
+            title: '导入配置源 (TVBox / ZYFun)',
+            subtitle: '从本地 JSON 文件导入视频源（合并，保留现有源）',
+            onTap: () => _importConfigFile(context),
           ),
           SwitchListTile(
             title: const Text('横向卡片模式'),
