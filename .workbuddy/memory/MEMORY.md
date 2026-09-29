@@ -188,3 +188,19 @@ set "OUT=%PROJ%\ZY-Player-v%APPVER%-arm64-release.apk"
 - debug：`flutter build apk --debug`（Gradle 991s，192MB，全 ABI，v2 签名可直装）
 - ⚠️ D 盘空间常年紧张（构建后仅剩 ~8G），`build/` 占约 2.9G；
   再次构建前先 `flutter clean` 或删 `build/`
+
+## Windows 桌面版（2026-09-29 新增）
+- `windows/` 骨架由 `tools/gen_windows_scaffold.py` 离线渲染 SDK 模板生成；
+  ⚠️ 不要重跑 `tools/gen_scaffold.py`（会覆盖 android/ 自定义文件）
+- 播放：**fvp 0.38.1**，`main.dart` 里仅 `Platform.isWindows` 时
+  `registerWith(options: {'platforms': ['windows']})`；内置 FFmpeg 支持 HLS/m3u8，
+  实现 video_player 平台接口 → 播放页零改动；Android 仍走 fork ExoPlayer。
+  （`video_player_win` 不支持 HLS，被否。）⚠️ fvp 构建时从 GitHub 下 mdk-sdk。
+- 封面缓存：Windows 上 sqflite 无原生实现 → main() 里 `databaseFactory = databaseFactoryFfi`
+  （sqflite_common_ffi）
+- 构建：`tools/build_windows.bat`（双击）→ Release 目录 + 便携 zip
+  `ZY-Player-v<版本>-windows-x64.zip`；Android 专属通道（SystemControl/网速统计）
+  都已 try/catch 静默降级，Windows 上不崩
+- 工具链：VS 2022 BuildTools（MSVC 14.44 + WinSDK 26100 + CMake/Ninja）齐备
+- ⚠️ **Bash 工具传输层会把命令里的 `\` 转成 `/`（heredoc 也不例外）**：
+  含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再执行，不能内联
