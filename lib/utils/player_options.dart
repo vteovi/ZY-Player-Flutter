@@ -32,17 +32,20 @@ class ScaleOption {
   const ScaleOption(this.key, this.label, this.fit, this.desc);
 }
 
-/// 常见画面比例。含横屏（16:9 / 21:9）、方形（1:1）与手机竖屏（9:16）。
+/// 常见画面比例。含横屏（16:9 / 16:10 / 21:9）、方形（1:1）
+/// 与手机竖屏（9:16 / 10:16）。
 class PlayerAspects {
   PlayerAspects._();
 
   static const List<AspectOption> all = <AspectOption>[
     AspectOption('auto', '自适应', null),
     AspectOption('16:9', '16:9', 16 / 9),
+    AspectOption('16:10', '16:10', 16 / 10),
     AspectOption('4:3', '4:3', 4 / 3),
     AspectOption('1:1', '1:1', 1),
     AspectOption('3:4', '3:4', 3 / 4),
     AspectOption('9:16', '9:16 手机竖屏', 9 / 16),
+    AspectOption('10:16', '10:16 竖屏', 10 / 16),
     AspectOption('21:9', '21:9 宽幅', 21 / 9),
   ];
 
