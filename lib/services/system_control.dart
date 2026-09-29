@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 /// 系统亮度与媒体音量的读写，原生侧（Android）实现。
@@ -79,6 +81,7 @@ class SystemControl {
     String title = '',
   }) async {
     if (url.isEmpty) return 'no_url';
+    if (Platform.isWindows) return _openExternalWindows(url);
     try {
       final status = await _channel.invokeMethod<String>(
         'openWithExternalPlayer',
@@ -88,6 +91,87 @@ class SystemControl {
     } catch (_) {
       return 'error';
     }
+  }
+
+  /// Windows 上常见的视频播放器可执行文件名与固定安装路径。
+  /// 源地址多是 m3u8，浏览器播不了，所以优先找真正的播放器。
+  static const List<String> _winPlayerExes = [
+    'PotPlayerMini64.exe',
+    'PotPlayerMini.exe',
+    'vlc.exe',
+    'mpv.exe',
+    'mpc-hc64.exe',
+    'mpc-hc.exe',
+  ];
+
+  static const List<String> _winPlayerFixedPaths = [
+    r'C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe',
+    r'C:\Program Files (x86)\DAUM\PotPlayer\PotPlayerMini64.exe',
+    r'C:\Program Files\VideoLAN\VLC\vlc.exe',
+    r'C:\Program Files (x86)\VideoLAN\VLC\vlc.exe',
+  ];
+
+  /// Windows：①注册表 App Paths / 固定路径找已装播放器，直接带 URL 启动；
+  /// ②找不到就 explorer 交给系统默认关联（没有关联时系统自己弹「打开方式」）。
+  static Future<String> _openExternalWindows(String url) async {
+    for (final exe in _winPlayerExes) {
+      final path = await _resolveAppPath(exe);
+      if (path == null) continue;
+      try {
+        await Process.start(path, [url], mode: ProcessStartMode.detached);
+        return 'ok';
+      } catch (_) {
+        // 注册表里的路径可能已失效，继续试下一个
+      }
+    }
+    for (final path in _winPlayerFixedPaths) {
+      if (!File(path).existsSync()) continue;
+      try {
+        await Process.start(path, [url], mode: ProcessStartMode.detached);
+        return 'ok';
+      } catch (_) {
+        // 文件可能存在但启动失败，继续
+      }
+    }
+    try {
+      await Process.start('explorer.exe', [url],
+          mode: ProcessStartMode.detached);
+      return 'ok';
+    } catch (_) {
+      return 'error';
+    }
+  }
+
+  /// 在注册表 App Paths（HKLM + HKCU）里查 [exe] 的真实安装路径。
+  static Future<String?> _resolveAppPath(String exe) async {
+    const roots = [
+      r'HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths',
+      r'HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths',
+      r'HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths',
+    ];
+    for (final root in roots) {
+      try {
+        final result = await Process.run(
+          'reg',
+          ['query', '$root\\$exe', '/ve'],
+          // reg.exe 输出用的是系统 OEM 代码页（中文系统 = GBK），用 systemEncoding 解
+          stdoutEncoding: systemEncoding,
+        ).timeout(const Duration(seconds: 3));
+        if (result.exitCode != 0) continue;
+        final match =
+            RegExp(r'REG_SZ\s+(.+\.exe)', caseSensitive: false)
+                .firstMatch(result.stdout.toString());
+        if (match == null) continue;
+        // App Paths 的默认值可能带引号存储（如 "C:\My Program\PotPlayer\...exe"）
+        final path =
+            match.group(1)!.trim().replaceAll('"', '').trim();
+        if (path.isEmpty || !File(path).existsSync()) continue;
+        return path;
+      } catch (_) {
+        // reg 不可用 / 超时：忽略，继续查下一个根
+      }
+    }
+    return null;
   }
 
   /// 播放时保持屏幕常亮。开启会给当前窗口加 FLAG_KEEP_SCREEN_ON，
