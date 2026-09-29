@@ -44,9 +44,9 @@ class PlayerAspects {
     AspectOption('4:3', '4:3', 4 / 3),
     AspectOption('1:1', '1:1', 1),
     AspectOption('3:4', '3:4', 3 / 4),
-    AspectOption('9:16', '9:16 手机竖屏', 9 / 16),
-    AspectOption('10:16', '10:16 竖屏', 10 / 16),
-    AspectOption('21:9', '21:9 宽幅', 21 / 9),
+    AspectOption('9:16', '9:16', 9 / 16),
+    AspectOption('10:16', '10:16', 10 / 16),
+    AspectOption('21:9', '21:9', 21 / 9),
   ];
 
   static AspectOption byKey(String? key) => all.firstWhere(
