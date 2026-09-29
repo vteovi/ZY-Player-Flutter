@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
+import '../services/data_backup.dart';
 import '../utils/toast.dart';
 import 'history_page.dart';
 import 'site_page.dart';
@@ -95,6 +96,30 @@ class MePage extends StatelessWidget {
 
   void _push(BuildContext context, Widget page) {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
+  /// 备份数据：视频源、播放记录、收藏夹、设置项。
+  Future<void> _backupData(BuildContext context) async {
+    final result = await DataBackup.backup();
+    if (!context.mounted) return;
+    showToast(context, result.message, success: result.ok);
+  }
+
+  /// 从备份文件恢复数据（覆盖式），恢复后刷新内存状态。
+  Future<void> _restoreData(BuildContext context) async {
+    final confirmed = await _confirmClear(
+      context,
+      '恢复备份',
+      '恢复将覆盖当前的视频源、播放记录、收藏夹和设置项，确定继续吗？',
+    );
+    if (!confirmed) return;
+    final result = await DataBackup.restore();
+    if (!context.mounted) return;
+    if (result.ok) {
+      await context.read<AppState>().reloadAll();
+    }
+    if (!context.mounted) return;
+    showToast(context, result.message, success: result.ok);
   }
 
   /// 从本地 JSON 文件导入 TVBox / ZYFun 配置（合并导入，保留现有源）。
@@ -236,6 +261,16 @@ class MePage extends StatelessWidget {
             subtitle: '从本地 JSON 文件导入视频源（合并，保留现有源）',
             onTap: () => _importConfigFile(context),
           ),
+          _MenuItem(
+            title: '备份数据',
+            subtitle: '备份视频源、播放记录、收藏夹、设置项到文件',
+            onTap: () => _backupData(context),
+          ),
+          _MenuItem(
+            title: '恢复数据',
+            subtitle: '从备份文件恢复（覆盖当前数据）',
+            onTap: () => _restoreData(context),
+          ),
           SwitchListTile(
             title: const Text('横向卡片模式'),
             subtitle: const Text(
@@ -288,7 +323,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.4.0',
+            subtitle: '1.5.0',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(

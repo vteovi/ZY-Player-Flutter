@@ -4,9 +4,9 @@ publish_to: 'none'
 
 # 原 uni-app 版本 versionName 0.1.2 / versionCode 102
 # ⚠️ versionCode（+ 后面的数字）必须严格递增，否则 Android 拒绝覆盖安装旧包
-#    （0.1.3=103，1.0.0=104，1.1.0=105，1.1.1=106，1.1.2=107，1.2.0=108，1.2.1=109，1.3.0=111，1.3.1=112，1.4.0=113，依次 +1）
+#    （0.1.3=103，1.0.0=104，1.1.0=105，1.1.1=106，1.1.2=107，1.2.0=108，1.2.1=109，1.3.0=111，1.3.1=112，1.4.0=113，1.5.0=114，依次 +1）
 #    ⚠️ 110 已被 TVBox 测试版（已回退）占用，1.3.0 从 111 起跳
-version: 1.4.0+113
+version: 1.5.0+114
 
 environment:
   sdk: ^3.8.0
@@ -34,8 +34,10 @@ dependencies:
   # Windows 桌面 sqflite 实现（封面缓存 flutter_cache_manager 底层用 sqflite，
   # 官方 sqflite 无 Windows 实现，main() 里切到 FFI 工厂）
   sqflite_common_ffi: ^2.3.0
-  # 本地文件选择（导入 TVBox / ZYFun 配置 JSON，跨 Android / Windows）
+  # 本地文件选择（导入 TVBox / ZYFun 配置 JSON、备份/恢复文件，跨 Android / Windows）
   file_picker: ^8.3.0
+  # 获取下载文件夹路径（Windows 备份直接落盘到下载目录）
+  path_provider: ^2.1.5
 
 # 本地修正版 video_player_android：
 # 上游在 Build.VERSION.SDK_INT < 29 时不交换视频宽高，竖屏视频（1920x1080 + 90° 旋转标记）

@@ -51,6 +51,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 重新从存储加载全部数据并刷新内存（备份恢复后调用）。
+  Future<void> reloadAll() async {
+    await Future.wait([loadSites(), loadSetting(), loadStars(), loadHistories()]);
+    notifyListeners();
+  }
+
   // --------------------------------------------------------------------------
   // 默认数据（来自 assets）
   // --------------------------------------------------------------------------
