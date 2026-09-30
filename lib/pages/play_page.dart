@@ -181,7 +181,10 @@ class _PlayPageState extends State<PlayPage> {
     }
     _controller.removeListener(_onControllerUpdate);
     _controller.dispose();
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    // ⚠️ 退出播放页必须把方向偏好**清空**（空列表 = 交还系统决定），
+    // 而不是锁死 portraitUp——否则在平板上（系统横屏但 App 被锁竖屏）整个 App
+    // 会被两侧黑边夹住、中间内容又矮又窄，离开播放页也回不来。
+    SystemChrome.setPreferredOrientations([]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
@@ -520,7 +523,9 @@ class _PlayPageState extends State<PlayPage> {
       _controller.setPlaybackSpeed(1.0);
     }
     if (_fullscreen) {
-      await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      // 退出全屏：同样把方向偏好清空，交还系统决定（不要在平板上把 App 锁成竖屏条）。
+      // 非全屏的竖屏播放页布局本身靠 LayoutBuilder 自适应，不需要锁方向。
+      await SystemChrome.setPreferredOrientations([]);
       await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     } else {
       // 方向跟着画面比例走，而不是一律横屏
