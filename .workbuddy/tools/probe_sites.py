@@ -40,6 +40,13 @@ def classify(head: bytes):
     return "OTHER", False
 
 
+def type_label(t):
+    """type 可能是数字（zyfun 导出是 1/0）或字符串（内置清单是 json/xml）。"""
+    if isinstance(t, (int, float)):
+        return {0: "xml", 1: "json"}.get(int(t), str(int(t)))
+    return str(t)
+
+
 def probe(item):
     name = item.get("name", "?")
     typ = item.get("type", "?")
@@ -47,8 +54,13 @@ def probe(item):
     if not api:
         return dict(name=name, type=typ, api=api, status="NOAPI", ms=0,
                     size=0, fmt="-", ok=False, note="接口为空")
-    # 与 App 内一致的请求方式（http_service.dart 用的是 {api}?ac=videolist）
-    url = api + ("&" if "?" in api else "?") + "ac=videolist&pg=1"
+    # 与 App 内一致：HttpService._apiUrl() 会**合并**参数，同名以调用方为准。
+    # 所以 api 自带 ?ac=list 时要替换掉，不能简单追加（否则 maccms 只认第一个 ac）。
+    if "?" in api:
+        head, _, _ = api.partition("?")
+        url = head + "?ac=videolist&pg=1"
+    else:
+        url = api + "?ac=videolist&pg=1"
     req = urllib.request.Request(
         url,
         data=b"" if METHOD == "POST" else None,
@@ -87,6 +99,8 @@ def main():
     if "--post" in sys.argv:
         METHOD = "POST"
     items = json.load(open(src, encoding="utf-8"))
+    if isinstance(items, dict):  # 也接受 zyfun 的 {"tbl_site":[...]} 整体文件
+        items = items.get("tbl_site") or items.get("sites") or []
     print("共 %d 个源，请求方式 %s，并发探测中...\n" % (len(items), METHOD))
     with ThreadPoolExecutor(max_workers=16) as ex:
         results = list(ex.map(probe, items))
@@ -96,8 +110,8 @@ def main():
 
     def line(r):
         return "%-16s %-5s %-6s %5sms %8sB %-5s %s" % (
-            r["name"][:16], r["type"], r["status"], r["ms"], r["size"],
-            r["fmt"], r["note"])
+            r["name"][:16], type_label(r["type"]), r["status"], r["ms"],
+            r["size"], r["fmt"], r["note"])
 
     print("=" * 78)
     print("【可用】%d 个" % len(ok))
@@ -118,9 +132,9 @@ def main():
     print("【类型标注 vs 实际返回】")
     print("=" * 78)
     for r in results:
-        if r["ok"] and r["fmt"] != "-" and r["fmt"].upper() != r["type"].upper():
+        if r["ok"] and r["fmt"] != "-" and r["fmt"].upper() != type_label(r["type"]).upper():
             print("  ⚠ %-16s 标注=%-5s 实际=%-5s (解析器可能不认)" %
-                  (r["name"][:16], r["type"], r["fmt"]))
+                  (r["name"][:16], type_label(r["type"]), r["fmt"]))
 
     print()
     print("汇总: 可用 %d / 不可用 %d / 总计 %d" % (len(ok), len(bad), len(results)))
