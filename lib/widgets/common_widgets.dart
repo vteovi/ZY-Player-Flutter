@@ -41,29 +41,10 @@ class EmptyHint extends StatelessWidget {
   }
 }
 
-/// 全屏加载遮罩（对应 uni-app 版的 u-mask + u-loading）
-class LoadingMask extends StatelessWidget {
-  final bool visible;
-  final Widget child;
-
-  const LoadingMask({super.key, required this.visible, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        child,
-        if (visible)
-          const Positioned.fill(
-            child: ColoredBox(
-              color: Color(0x33000000),
-              child: Center(child: CircularProgressIndicator()),
-            ),
-          ),
-      ],
-    );
-  }
-}
+// 注：原 uni-app 版的「全屏半透明黑遮罩 + 转圈」（u-mask + u-loading）已移除。
+// 它会把整块区域压暗，而首次进分栏 / 换源时底下本来就是空白，
+// 表现就是「切一下整页变灰」，观感很差。列表类加载一律改用骨架屏
+// （见 widgets/video_grid.dart 的 VideoGridSkeleton）。
 
 /// 底部弹出的单选列表（对应 uni-app 版的 u-select）
 Future<T?> showPicker<T>({

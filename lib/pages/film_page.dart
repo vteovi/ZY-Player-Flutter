@@ -71,8 +71,11 @@ class FilmPageState extends State<FilmPage>
   }
 
   /// 站点或分类数量变化后，重建 TabController（长度必须和分类数一致）
-  void _initTabs(int length) {
-    if (_tabController.length == length) return;
+  ///
+  /// [force] = true 时即使长度没变也重建，并把选中分栏重置回「最新」——
+  /// 换源后新旧站点分类数恰好相同的情况必须靠它兜住，否则会停在原来那一栏。
+  void _initTabs(int length, {bool force = false}) {
+    if (!force && _tabController.length == length) return;
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _tabController = TabController(length: length, vsync: this);
@@ -107,16 +110,17 @@ class FilmPageState extends State<FilmPage>
         _recordCounts.clear();
         _loading = false;
       });
-      _initTabs(_classes.length);
+      _initTabs(_classes.length, force: true);
       return;
     }
+    // 换源期间**保留旧的分类栏**，等新分类拉回来再整体替换。
+    // 原来这里立刻把 _classes 重置成 [最新]，分类栏会先塌成 1 个再变回来，
+    // 白白闪一下。
     setState(() {
       _loading = true;
+      _site = sites.first;
       _recordCounts.clear();
     });
-    _site = sites.first;
-    _classes = <VideoClass>[_latestClass];
-    _initTabs(_classes.length);
     await _loadClasses();
     if (mounted) setState(() => _loading = false);
   }
@@ -131,7 +135,7 @@ class FilmPageState extends State<FilmPage>
     setState(() {
       _classes = <VideoClass>[_latestClass, ...visible];
     });
-    _initTabs(_classes.length);
+    _initTabs(_classes.length, force: true);
   }
 
   /// 子分类页面加载完某一分类的资源数后，回写到顶部的统计
@@ -159,10 +163,8 @@ class FilmPageState extends State<FilmPage>
     setState(() {
       _loading = true;
       _site = picked;
-      _classes = <VideoClass>[_latestClass];
       _recordCounts.clear();
     });
-    _initTabs(_classes.length);
     await _loadClasses();
     if (mounted) setState(() => _loading = false);
   }
@@ -321,9 +323,9 @@ class FilmPageState extends State<FilmPage>
         icon: Icons.video_library_outlined,
       );
     }
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    // 换源 / 拉分类期间铺骨架屏（形状与真实网格一致），
+    // 不再整块换成居中转圈 —— 那会先把内容抹掉再长回来
+    if (_loading) return const VideoGridSkeleton();
     final r18 = context.read<AppState>().config.r18;
     return TabBarView(
       controller: _tabController,
@@ -457,18 +459,27 @@ class CategoryTabState extends State<CategoryTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Stack(
-      children: [
-        LoadingMask(
-          visible: _loading,
-          child: buildVideoGrid(
+    // 本栏还没有数据时铺骨架屏；已经有内容再加载（例如刷新）就保持内容不动，
+    // 只在顶部压一条细进度线，避免「切一下变灰、内容消失又长回来」。
+    final Widget content = (_loading && _videos.isEmpty)
+        ? const VideoGridSkeleton()
+        : buildVideoGrid(
             context: context,
             videos: _videos,
             scrollController: _scrollController,
             loadingMore: _loadingMore,
             onTap: widget.onTapVideo,
+          );
+    return Stack(
+      children: [
+        content,
+        if (_loading && _videos.isNotEmpty)
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: LinearProgressIndicator(minHeight: 2),
           ),
-        ),
         if (_showBackTop)
           Positioned(
             right: 16,

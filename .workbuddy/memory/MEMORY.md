@@ -235,6 +235,19 @@ zyfun 的 `api` 常自带查询串（如 `.../api.php/provide/vod/?ac=list`）�
 `models/site.dart`（无 Flutter 依赖），可被纯 dart 脚本直接 import ——
 `.workbuddy/tools/import_test.dart` 就是这么跑真实文件的（24 项断言）。
 
+## 加载态 UI：一律骨架屏，禁灰黑遮罩（2026-10-01，勿回退）
+用户明确反馈「切分栏 / 换网站总是变灰，体验非常不好」。
+- **`LoadingMask`（`Color(0x33000000)` 半透明黑 + 居中转圈）已从项目删除**，
+  别再写回来。它盖住的是**空网格**（首次进分栏 / 换源时底下本来没内容），
+  纯属把整块区域压暗，还透出 `EmptyHint` 文字。
+- 列表类加载统一用 **`VideoGridSkeleton`**（`widgets/video_grid.dart`）：
+  与真实卡片同形的呼吸占位，靠顶层函数 **`videoGridDelegate(context)`** 与真实网格
+  共用同一份列数/比例策略 —— ⚠️ 改列数/比例只改这一处，否则骨架会错形跳版。
+- 有内容再刷新时**不要抹掉内容**：保持内容可见 + 顶部 2px `LinearProgressIndicator`。
+- 换源时**不要立刻把 `_classes` 重置成 `[最新]`**（分类栏会 N→1→N 闪跳），
+  保留旧栏、等新分类到齐再整体替换；`_initTabs(length, force: true)` 负责
+  长度相同也重建并把分栏归零。
+
 ## Git 约定（2026-10-01 用户明确要求）
 - **任务收尾时必须由助手自己落一个本地提交（commit = 快照），不用等用户开口。**
   用户原话：「每次改完，快照还是要你自己来创建一个快照」。改完代码/记忆就 `git add` +
