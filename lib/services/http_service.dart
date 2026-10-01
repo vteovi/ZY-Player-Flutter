@@ -5,6 +5,7 @@ import 'package:xml/xml.dart' as xml;
 
 import '../models/site.dart';
 import '../models/video.dart';
+import 'source_import.dart';
 
 /// 分类
 class VideoClass {
@@ -59,6 +60,37 @@ class HttpService {
         'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
     'Accept': '*/*',
   };
+
+  /// 拼接口地址：把站点 api 自带的参数与本次调用的参数**合并**，同名以后者为准。
+  ///
+  /// ⚠️ 别退回字符串拼接。zyfun 导出的 api 常自带查询串，例如
+  /// `https://api.apibdzy.com/api.php/provide/vod/?ac=list`，直接拼
+  /// `?ac=videolist&pg=1` 会得到 `...?ac=list?ac=videolist&pg=1` ——
+  /// 服务端只取到第一个 `ac=list`，表现就是「这个源在 App 里加载不出来」。
+  /// 用 `Uri` 重新组装既能去掉重复，又能正确编码中文关键词。
+  static String _apiUrl(Site site, Map<String, String> params) {
+    final base = site.api.trim();
+    if (base.isEmpty) return base;
+    try {
+      final uri = Uri.parse(base);
+      if (uri.hasScheme && uri.host.isNotEmpty) {
+        return uri
+            .replace(
+              queryParameters: <String, String>{
+                ...uri.queryParameters,
+                ...params,
+              },
+            )
+            .toString();
+      }
+    } catch (_) {
+      // 地址解析不了就退回最朴素的拼接
+    }
+    final query = params.entries
+        .map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    return '$base?$query';
+  }
 
   /// 发起请求：**先 GET，必要时再回退 POST**。
   ///
@@ -263,7 +295,7 @@ class HttpService {
   /// 先带 `?ac=list` 请求（maccms 的 json 接口只在这里带出分类），
   /// 拿不到再试裸接口（部分 xml 站在裸地址才输出 `<class>`）。
   Future<List<VideoClass>> fetchClasses(Site site) async {
-    for (final url in <String>['${site.api}?ac=list', site.api]) {
+    for (final url in <String>[_apiUrl(site, {'ac': 'list'}), site.api]) {
       final _Payload payload;
       try {
         payload = await _load(url);
@@ -313,9 +345,10 @@ class HttpService {
   /// 获取视频列表
   Future<List<Video>> fetchList(Site site, {int pg = 1, String? tid}) async {
     try {
-      final url =
-          '${site.api}?ac=videolist${(tid != null && tid.isNotEmpty && tid != '0') ? '&t=$tid' : ''}&pg=$pg';
-      return _videosFrom(await _load(url));
+      final params = <String, String>{'ac': 'videolist'};
+      if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
+      params['pg'] = '$pg';
+      return _videosFrom(await _load(_apiUrl(site, params)));
     } catch (_) {
       return <Video>[];
     }
@@ -348,9 +381,9 @@ class HttpService {
   /// 获取总资源数与页数
   Future<PageInfo> fetchPage(Site site, {String? tid}) async {
     try {
-      final url =
-          '${site.api}?ac=videolist${(tid != null && tid.isNotEmpty && tid != '0') ? '&t=$tid' : ''}';
-      final payload = await _load(url);
+      final params = <String, String>{'ac': 'videolist'};
+      if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
+      final payload = await _load(_apiUrl(site, params));
       if (payload.json != null) return _pageFromJson(payload.json!);
       return _pageFromXml(payload.xmlDoc);
     } catch (_) {
@@ -378,8 +411,7 @@ class HttpService {
   /// 搜索资源
   Future<List<Video>> search(Site site, String keyword) async {
     try {
-      final wd = Uri.encodeComponent(keyword);
-      return _videosFrom(await _load('${site.api}?wd=$wd'));
+      return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})));
     } catch (_) {
       return <Video>[];
     }
@@ -388,7 +420,8 @@ class HttpService {
   /// 获取资源详情（含播放列表）
   Future<VideoDetail?> fetchDetail(Site site, String id) async {
     try {
-      final payload = await _load('${site.api}?ac=videolist&ids=$id');
+      final payload =
+          await _load(_apiUrl(site, {'ac': 'videolist', 'ids': id}));
       final fromJson = _detailFromJson(payload.json);
       if (fromJson != null) return fromJson;
       return _detailFromXml(payload.xmlDoc);
@@ -430,21 +463,14 @@ class HttpService {
     return VideoDetail.fromVideo(detail, m3u8List: m3u8List);
   }
 
-  /// 通过 json 地址导入视频源
+  /// 通过 json 地址导入视频源。
+  ///
+  /// 与本地文件导入走**同一套解析**（[SourceImport]），
+  /// 这样 `tbl_site` / 裸数组 / TVBox 等几种导出格式的表现完全一致。
   Future<List<Site>> importSites(String jsonUrl) async {
     try {
       final raw = await _get(jsonUrl);
-      final decoded = jsonDecode(raw);
-      if (decoded is List) {
-        return decoded.whereType<Map>().map((e) => Site.fromJson(e)).toList();
-      }
-      if (decoded is Map && decoded['sites'] is List) {
-        return (decoded['sites'] as List)
-            .whereType<Map>()
-            .map((e) => Site.fromJson(e))
-            .toList();
-      }
-      return <Site>[];
+      return SourceImport.parse(raw).sites;
     } catch (_) {
       return <Site>[];
     }

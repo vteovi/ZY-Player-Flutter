@@ -205,6 +205,36 @@ set "OUT=%PROJ%\ZY-Player-v%APPVER%-arm64-release.apk"
 - ⚠️ **Bash 工具传输层会把命令里的 `\` 转成 `/`（heredoc 也不例外）**：
   含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再执行，不能内联
 
+## 视频源导入 / 请求地址（2026-10-01，勿回退）
+
+**导入解析**统一在 `lib/services/source_import.dart` 的 `SourceImport.parse()`，
+本地文件导入（`me_page.dart`）与网址导入（`HttpService.importSites`）都走它。
+必须同时认这几种形态：
+- **zyfun 新版（Tauri）配置导出**：顶层键 **`tbl_site`**（数据库表名），值是数组。
+  样本：`C:\Users\VTE\Documents\新建文件夹\zyfun_config_20260923_100544.json`（35 个源）。
+  同批还可能有 `tbl_iptv` / `tbl_analyze` / `tbl_drive` / `tbl_star`，**只取 `tbl_site`**。
+- **zyfun「源管理 → 导出」**：顶层**裸数组**（元素无 `type` 字段）。
+- **zyfun 旧版（Electron）**：`{"sites":{"default":1,"data":[...]}}`。
+- **TVBox / catvod**：`{"sites":[...]}`。
+- 兜底扫描顶层数组时**要求元素含 `api`** —— IPTV/解析源用 `url`，据此避开误选。
+
+⚠️ **接口地址一律用 `HttpService._apiUrl(site, params)` 拼，不要退回字符串拼接。**
+zyfun 的 `api` 常自带查询串（如 `.../api.php/provide/vod/?ac=list`），
+拼成 `...?ac=list?ac=videolist&pg=1` 后 maccms 只认第一个 `ac=list`，
+返回**精简列表**：无 `vod_pic`、无 `vod_play_url`。
+症状是「首页列得出片名但封面全空、点进详情没有简介和播放地址」，**不是报错**，很容易误判。
+`_apiUrl` 用 `Uri.replace(queryParameters:)` 合并（本次参数覆盖同名项），
+顺带正确编码中文 `wd`。改动后要同步 `.workbuddy/tools/url_merge_test.dart` 里的副本。
+
+- 源清单里的 `type` 字段**不可信**（有标 `xml` 实际返回 JSON 的），
+  解析一律按**响应首字符**判定：`{`/`[`→JSON，`<`→XML（`http_service.dart` `_parse`）。
+- `Site.id` 是装饰字段，记录身份用 `key`（`zy_database.dart` 全部按 `item['key']` 索引）。
+  zyfun 的 `id`/`key` 是 UUID 字符串，取不到数字时留 0 无副作用。
+
+**不编译也能端到端测解析逻辑**：`source_import.dart` 只依赖 `dart:convert` +
+`models/site.dart`（无 Flutter 依赖），可被纯 dart 脚本直接 import ——
+`.workbuddy/tools/import_test.dart` 就是这么跑真实文件的（24 项断言）。
+
 ## Git 约定（2026-10-01 用户明确要求）
 - **任务收尾时必须由助手自己落一个本地提交（commit = 快照），不用等用户开口。**
   用户原话：「每次改完，快照还是要你自己来创建一个快照」。改完代码/记忆就 `git add` +

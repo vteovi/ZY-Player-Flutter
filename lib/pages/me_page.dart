@@ -142,7 +142,9 @@ class MePage extends StatelessWidget {
 
     String content;
     try {
-      content = await File(path).readAsString(encoding: utf8);
+      // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
+      final bytes = await File(path).readAsBytes();
+      content = utf8.decode(bytes, allowMalformed: true);
     } catch (e) {
       if (!context.mounted) return;
       showToast(context, '读取文件失败：$e', success: false);
@@ -323,7 +325,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.5.2',
+            subtitle: '1.5.3',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
