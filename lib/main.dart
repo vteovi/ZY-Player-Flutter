@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'pages/main_page.dart';
 import 'providers/app_state.dart';
+import 'utils/app_colors.dart';
 import 'utils/constants.dart';
 
 Future<void> main() async {
@@ -59,32 +60,78 @@ class _AppRoot extends StatelessWidget {
   }
 
   ThemeData _buildTheme(Brightness brightness) {
-    const seed = Color(0xFF1E88E5);
-    final colorScheme =
-        ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
     final isDark = brightness == Brightness.dark;
+    final base = ColorScheme.fromSeed(
+      seedColor: AppColors.brand,
+      brightness: brightness,
+    );
+    // 深色模式把 surface 系列一并压到纯黑：M3 的对话框 / 底部弹层 / 菜单 /
+    // Chip 等默认都从 colorScheme.surface 取底色，不覆盖的话会从纯黑页面上
+    // 冒出一堆灰面板，OLED 上很扎眼。
+    // 需要层级的用 surfaceContainerHigh 那一档（极暗灰），或靠描边。
+    final scheme = isDark
+        ? base.copyWith(
+            surface: AppColors.darkBg,
+            surfaceContainerLowest: AppColors.darkBg,
+            surfaceContainerLow: AppColors.darkBg,
+            surfaceContainer: AppColors.darkBg,
+            surfaceContainerHigh: AppColors.darkSurface,
+            surfaceContainerHighest: AppColors.darkSurface,
+            outlineVariant: AppColors.darkOutline,
+          )
+        : base;
     return ThemeData(
       useMaterial3: true,
-      colorScheme: colorScheme,
+      colorScheme: scheme,
       scaffoldBackgroundColor:
-          isDark ? const Color(0xFF121212) : const Color(0xFFF8F8F8),
+          isDark ? AppColors.darkBg : AppColors.lightBg,
+      dividerColor: isDark ? AppColors.darkDivider : AppColors.lightDivider,
       appBarTheme: AppBarTheme(
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        backgroundColor: isDark ? AppColors.darkBg : Colors.white,
         foregroundColor: isDark ? Colors.white : const Color(0xFF303133),
-        surfaceTintColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        surfaceTintColor: Colors.transparent,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
-        backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        backgroundColor: isDark ? AppColors.darkBg : Colors.white,
         selectedItemColor: isDark ? Colors.white : const Color(0xFF303133),
         unselectedItemColor:
             isDark ? Colors.white70 : const Color(0xFF909399),
         type: BottomNavigationBarType.fixed,
       ),
       cardTheme: CardThemeData(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-        surfaceTintColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: isDark ? AppColors.darkBg : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+      ),
+      dividerTheme: DividerThemeData(
+        color: isDark ? AppColors.darkDivider : AppColors.lightDivider,
+        thickness: 1,
+        space: 1,
+      ),
+      dialogTheme: DialogThemeData(
+        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      popupMenuTheme: PopupMenuThemeData(
+        color: isDark ? AppColors.darkSurface : Colors.white,
+        surfaceTintColor: Colors.transparent,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: isDark ? AppColors.darkSurface : Colors.white,
+      ),
+      listTileTheme: ListTileThemeData(
+        iconColor: isDark ? AppColors.darkSubText : null,
+      ),
+      tabBarTheme: TabBarThemeData(
+        dividerColor: isDark ? AppColors.darkDivider : const Color(0xFFEDEDED),
       ),
     );
   }

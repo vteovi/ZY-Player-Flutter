@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/video.dart';
 import '../providers/app_state.dart';
+import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 import '../widgets/common_widgets.dart';
 import 'detail_page.dart';
@@ -61,8 +62,10 @@ class _StarPageState extends State<StarPage> {
                   ),
                   subtitle: item.type.isEmpty ? null : Text(item.type),
                   trailing: IconButton(
-                    icon: const Icon(Icons.delete_outline,
-                        color: Color(0xFF909399)),
+                    icon: const Icon(Icons.delete_outline),
+                    color: Theme.of(context).brightness == Brightness.dark
+                        ? AppColors.darkSubText
+                        : const Color(0xFF909399),
                     onPressed: () => _remove(context, item),
                   ),
                   onTap: () => _openDetail(item),

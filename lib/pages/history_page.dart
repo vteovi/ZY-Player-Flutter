@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/video.dart';
 import '../providers/app_state.dart';
+import '../utils/app_colors.dart';
 import '../widgets/common_widgets.dart';
 import 'play_page.dart';
 
@@ -43,6 +44,7 @@ class _HistoryPageState extends State<HistoryPage> {
   @override
   Widget build(BuildContext context) {
     final histories = context.watch<AppState>().histories;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(title: const Text('播放记录')),
       body: histories.isEmpty
@@ -68,8 +70,12 @@ class _HistoryPageState extends State<HistoryPage> {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             item.label,
-                            style: const TextStyle(
-                                fontSize: 12, color: Color(0xFF606266)),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark
+                                  ? AppColors.darkSubText
+                                  : const Color(0xFF606266),
+                            ),
                           ),
                         ),
                       if (progress > 0)
@@ -81,16 +87,22 @@ class _HistoryPageState extends State<HistoryPage> {
                                 child: LinearProgressIndicator(
                                   value: progress / 100,
                                   minHeight: 3,
-                                  backgroundColor: const Color(0xFFEDEDED),
+                                  backgroundColor: isDark
+                                      ? AppColors.darkDivider
+                                      : const Color(0xFFEDEDED),
                                   valueColor: const AlwaysStoppedAnimation(
-                                      Color(0xFF1E88E5)),
+                                      AppColors.brand),
                                 ),
                               ),
                               const SizedBox(width: 8),
                               Text(
                                 '$progress%',
-                                style: const TextStyle(
-                                    fontSize: 12, color: Color(0xFF909399)),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? AppColors.darkSubText
+                                      : const Color(0xFF909399),
+                                ),
                               ),
                             ],
                           ),

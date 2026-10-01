@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/video.dart';
+import '../utils/app_colors.dart';
 
 /// 首页卡片：封面 + 片名 + 分类/备注/年份（图上文下）。
 ///
@@ -28,7 +29,7 @@ class VideoCard extends StatelessWidget {
     return Card(
       clipBehavior: Clip.antiAlias,
       margin: const EdgeInsets.all(6),
-      color: isDark ? const Color(0xFF1E1E20) : null,
+      // 底色交给 CardTheme（深色下是纯黑），这里不再写死
       child: InkWell(
         onTap: onTap,
         child: Column(
@@ -62,7 +63,7 @@ class VideoCard extends StatelessWidget {
 
   /// 分类 + 备注 + 年份
   Widget _buildMetaRow(ThemeData theme, bool isDark) {
-    final subColor = isDark ? const Color(0xFF9CA0A6) : const Color(0xFF909399);
+    final subColor = isDark ? AppColors.darkSubText : AppColors.lightSubText;
     return Row(
       children: [
         Expanded(
@@ -79,7 +80,7 @@ class VideoCard extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
             decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF3A2A2C) : const Color(0xFFFFF1F0),
+              color: isDark ? const Color(0xFF2A1416) : const Color(0xFFFFF1F0),
               borderRadius: BorderRadius.circular(3),
             ),
             child: Text(
@@ -99,9 +100,9 @@ class VideoCard extends StatelessWidget {
 
   Widget _buildCover(bool isDark) {
     final bgColor =
-        isDark ? const Color(0xFF2C2C2E) : const Color(0xFFEDEDED);
+        isDark ? AppColors.darkSurface : const Color(0xFFEDEDED);
     final iconColor =
-        isDark ? const Color(0xFF5A5A5E) : const Color(0xFFC0C4CC);
+        isDark ? AppColors.darkCoverIcon : const Color(0xFFC0C4CC);
     final Widget image;
     if (video.pic.isEmpty) {
       image = ColoredBox(

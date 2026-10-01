@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -6,6 +7,46 @@ import 'package:xml/xml.dart' as xml;
 import '../models/site.dart';
 import '../models/video.dart';
 import 'source_import.dart';
+
+/// 请求失败时抛出，携带**可直接展示给用户**的中文原因。
+///
+/// 普通取数路径只关心"成没成"，但源可用性检测需要把失败原因讲清楚
+/// （域名没了 / 超时 / 403 / 接口变了），所以单独定义这个异常。
+class HttpRequestException implements Exception {
+  final String reason;
+
+  const HttpRequestException(this.reason);
+
+  @override
+  String toString() => reason;
+}
+
+/// 源可用性
+enum SiteHealth {
+  /// 拿到了分类或片单
+  ok,
+
+  /// 接口能连通，但没返回片单 —— 域名还在、接口已改版，是采集站最常见的死法
+  warn,
+
+  /// 连不上，或返回的内容根本不是采集接口
+  fail,
+}
+
+/// 单个源的检测结果
+class SiteCheckResult {
+  final SiteHealth health;
+
+  /// 人类可读的结论，例如「可用 · 12 个分类」「域名解析失败」
+  final String message;
+
+  /// 耗时（毫秒）
+  final int ms;
+
+  const SiteCheckResult(this.health, this.message, this.ms);
+
+  bool get ok => health == SiteHealth.ok;
+}
 
 /// 分类
 class VideoClass {
@@ -40,7 +81,11 @@ class _Payload {
   /// 的前缀，导致本文件里所有 `xml.XXX` 都被判为「前缀被局部声明遮蔽」。
   final xml.XmlDocument? xmlDoc;
 
-  const _Payload({this.json, this.xmlDoc});
+  /// 正文看起来是 HTML 网页（而非采集接口）。
+  /// 实测这是采集站"域名还在、接口已改版"的典型特征，据此给出更准的提示。
+  final bool looksLikeHtml;
+
+  const _Payload({this.json, this.xmlDoc, this.looksLikeHtml = false});
 }
 
 /// 视频源请求服务，对应 uni-app 版 utils/request.js。
@@ -101,31 +146,88 @@ class HttpService {
   /// ⚠️ 回退只针对 **4xx**（可能是服务端不接受这种请求方法）。
   /// 网络层错误（DNS 解析不了 / 连接被拒 / 超时）换方法同样会失败，
   /// 若也去重试，一个死站就要白等两个超时（30 秒），故直接放弃。
-  Future<String> _fetch(String url) async {
+  Future<String> _fetch(String url, {Duration? timeout}) async {
     final uri = Uri.parse(url);
+    final limit = timeout ?? _timeout;
+    // 非空初值：下面每条分支都会覆盖它，analyzer 也不会再报
+    // DEAD_NULL_AWARE_EXPRESSION
+    var reason = '请求失败';
     var worthRetry = false;
     try {
-      final res = await http.get(uri, headers: _headers).timeout(_timeout);
+      final res = await http.get(uri, headers: _headers).timeout(limit);
       if (res.statusCode >= 200 && res.statusCode < 300 && res.body.isNotEmpty) {
         return _decode(res);
       }
+      reason = _httpReason(res.statusCode);
       worthRetry = res.statusCode >= 400 && res.statusCode < 500;
-    } catch (_) {
+    } catch (e) {
+      reason = _describeRawError(e.toString());
       worthRetry = false;
     }
     if (worthRetry) {
       try {
-        final res = await http.post(uri, headers: _headers).timeout(_timeout);
+        final res = await http.post(uri, headers: _headers).timeout(limit);
         if (res.statusCode >= 200 &&
             res.statusCode < 300 &&
             res.body.isNotEmpty) {
           return _decode(res);
         }
-      } catch (_) {
-        // 落到下面统一抛出
+        reason = _httpReason(res.statusCode);
+      } catch (e) {
+        reason = _describeRawError(e.toString());
       }
     }
-    throw Exception('请求失败: $url');
+    throw HttpRequestException(reason);
+  }
+
+  /// 把请求异常翻译成能直接展示给用户的中文原因。
+  static String describeRequestError(Object e) {
+    if (e is HttpRequestException) return e.reason;
+    if (e is TimeoutException) return '连接超时';
+    return _describeRawError(e.toString());
+  }
+
+  static String _httpReason(int code) {
+    if (code == 403) return 'HTTP 403（服务端拒绝访问）';
+    if (code == 404) return 'HTTP 404（接口不存在）';
+    if (code >= 500) return 'HTTP $code（服务端错误）';
+    return 'HTTP $code';
+  }
+
+  /// ⚠️ 只做字符串匹配，不 import `dart:io` —— 保持本文件不依赖平台库。
+  ///
+  /// 分类规则是拿真实采集站实测出来的（Windows 下 OS 错误码与 Linux 不同，
+  /// 比如连接被拒在 Windows 上是 errno 1225 / 10061，Linux 是 111）。
+  static String _describeRawError(String text) {
+    if (text.contains('CERTIFICATE_VERIFY_FAILED') ||
+        text.contains('certificate has expired') ||
+        text.contains('CERTIFICATE')) {
+      return 'HTTPS 证书无效或已过期';
+    }
+    if (text.contains('HandshakeException')) return 'TLS 握手失败';
+    if (text.contains('Failed host lookup') ||
+        text.contains('getaddrinfo') ||
+        text.contains('No address associated')) {
+      return '域名解析失败（站点可能已关停或换了域名）';
+    }
+    if (text.contains('Connection refused') ||
+        text.contains('errno = 111') ||
+        text.contains('errno = 1225') ||
+        text.contains('errno = 10061') ||
+        text.contains('拒绝网络连接')) {
+      return '连接被拒绝';
+    }
+    if (text.contains('Connection reset') ||
+        text.contains('errno = 104') ||
+        text.contains('errno = 10054') ||
+        text.contains('强制关闭')) {
+      return '连接被重置';
+    }
+    if (text.contains('Network is unreachable')) return '网络不可达';
+    if (text.contains('TimeoutException') || text.contains('timed out')) {
+      return '连接超时';
+    }
+    return '网络错误';
   }
 
   Future<String> _get(String url) async {
@@ -171,7 +273,8 @@ class HttpService {
   /// （`taopianapi.com/cjapi/sda/vod/json.html` 被标成 `xml`，实际返回 JSON），
   /// 按 `type` 选解析器必然失败。这里改为看首字符：
   /// `{` / `[` → JSON，`<` → XML；都认不出就把两种都试一遍。
-  Future<_Payload> _load(String url) async => _parse(await _fetch(url));
+  Future<_Payload> _load(String url, {Duration? timeout}) async =>
+      _parse(await _fetch(url, timeout: timeout));
 
   static _Payload _parse(String raw) {
     final t = raw.trimLeft();
@@ -188,7 +291,14 @@ class HttpService {
     if (json != null) return _Payload(json: json);
     final doc = _tryXml(raw);
     if (doc != null) return _Payload(xmlDoc: doc);
-    return const _Payload();
+    return _Payload(looksLikeHtml: _looksLikeHtml(t));
+  }
+
+  static bool _looksLikeHtml(String trimmed) {
+    final head = trimmed.length > 400
+        ? trimmed.substring(0, 400).toLowerCase()
+        : trimmed.toLowerCase();
+    return head.contains('<!doctype html') || head.contains('<html');
   }
 
   static Map<String, dynamic>? _tryJson(String raw) {
@@ -340,6 +450,76 @@ class HttpService {
       ));
     }
     return list;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 源可用性检测
+  // ---------------------------------------------------------------------------
+
+  /// 检测专用超时：比正常取数短，免得一堆死站把「检测全部」拖到几分钟
+  static const Duration _checkTimeout = Duration(seconds: 8);
+
+  /// 检测单个源是否还能用。
+  ///
+  /// 判定方式与 App 自身取数据**完全一致**（请求 `?ac=list`），
+  /// 所以"检测通过"和"首页真能加载出来"是同一件事，不是另写一套逻辑猜。
+  ///
+  /// - 解析出分类 / 片单 → [SiteHealth.ok]
+  /// - 接口能连通但没有片单 → [SiteHealth.warn]
+  ///   （域名还在、接口已改成网页，是采集站最常见的死法）
+  /// - 连接层就失败，或返回内容不是采集接口 → [SiteHealth.fail]
+  Future<SiteCheckResult> checkSite(Site site) async {
+    final api = site.api.trim();
+    if (api.isEmpty) {
+      return const SiteCheckResult(SiteHealth.fail, '接口地址为空', 0);
+    }
+    final sw = Stopwatch()..start();
+
+    final _Payload payload;
+    try {
+      payload =
+          await _load(_apiUrl(site, {'ac': 'list'}), timeout: _checkTimeout);
+    } catch (e) {
+      sw.stop();
+      // 连接层就失败，换裸地址也是同样的错，不必再等一次超时
+      return SiteCheckResult(
+        SiteHealth.fail,
+        describeRequestError(e),
+        sw.elapsedMilliseconds,
+      );
+    }
+
+    var classes = _classesFromJson(payload.json);
+    if (classes.isEmpty) classes = _classesFromXml(payload.xmlDoc);
+    var videos = _videosFrom(payload);
+
+    // 部分 xml 站只在裸地址输出 <class>，与 fetchClasses 的回退保持一致
+    if (classes.isEmpty && videos.isEmpty) {
+      try {
+        final bare = await _load(api, timeout: _checkTimeout);
+        classes = _classesFromJson(bare.json);
+        if (classes.isEmpty) classes = _classesFromXml(bare.xmlDoc);
+        videos = _videosFrom(bare);
+      } catch (_) {
+        // 裸地址失败不影响已有结论
+      }
+    }
+    sw.stop();
+    final ms = sw.elapsedMilliseconds;
+
+    if (classes.isNotEmpty) {
+      return SiteCheckResult(SiteHealth.ok, '可用 · ${classes.length} 个分类', ms);
+    }
+    if (videos.isNotEmpty) {
+      return SiteCheckResult(SiteHealth.ok, '可用 · ${videos.length} 条资源', ms);
+    }
+    if (payload.json != null || payload.xmlDoc != null) {
+      return SiteCheckResult(SiteHealth.warn, '接口能连通，但没返回片单', ms);
+    }
+    if (payload.looksLikeHtml) {
+      return SiteCheckResult(SiteHealth.fail, '返回的是网页，接口已变更', ms);
+    }
+    return SiteCheckResult(SiteHealth.fail, '返回内容不是采集接口', ms);
   }
 
   /// 获取视频列表

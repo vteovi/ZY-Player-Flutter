@@ -68,5 +68,5 @@ Add the following to D:\WorkBuddy\ZY-Player-Flutter\android\app\build.gradle.kts
     }
 Flutter assets will be downloaded from https://storage.flutter-io.cn. Make sure you trust this source!
 Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 6720 bytes (99.6% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
-Running Gradle task 'assembleRelease'...                          647.1s
+Running Gradle task 'assembleRelease'...                          622.2s
 √ Built build\app\outputs\flutter-apk\app-release.apk (68.8MB)

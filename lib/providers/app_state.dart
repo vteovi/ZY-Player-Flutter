@@ -141,6 +141,23 @@ class AppState extends ChangeNotifier {
     await loadSites();
   }
 
+  /// 批量启停源（源可用性检测后「一键停用失效源」用）。
+  ///
+  /// 用 `put`（upsert）逐条写，比 [toggleSite] 的 remove + add 少一半 IO；
+  /// 状态本来就一致的条目直接跳过。
+  Future<void> setSitesActive(Iterable<Site> targets, bool active) async {
+    var changed = false;
+    for (final s in targets) {
+      if (s.isActive == active) continue;
+      await ZyDatabase.instance.put(
+        DbNames.site,
+        s.copyWith(isActive: active).toJson(),
+      );
+      changed = true;
+    }
+    if (changed) await loadSites();
+  }
+
   /// 导入视频源（json 地址），导入成功后覆盖原有源
   Future<bool> importSites(String url) async {
     final list = await HttpService.instance.importSites(url);

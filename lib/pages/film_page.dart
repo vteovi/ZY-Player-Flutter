@@ -5,6 +5,7 @@ import '../models/site.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
+import '../utils/app_colors.dart';
 import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
@@ -260,8 +261,10 @@ class FilmPageState extends State<FilmPage>
           height: 42,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+            // 深色下用极暗面 + 描边，而不是把底色提亮（提亮整屏就发灰了）
+            color: isDark ? AppColors.darkSurface : Colors.white,
             borderRadius: BorderRadius.circular(24),
+            border: isDark ? Border.all(color: AppColors.darkOutline) : null,
           ),
           child: Row(
             children: [
@@ -290,7 +293,7 @@ class FilmPageState extends State<FilmPage>
     if (_classes.isEmpty) return const SizedBox.shrink();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+      color: isDark ? AppColors.darkBg : Colors.white,
       child: TabBar(
         controller: _tabController,
         isScrollable: true,

@@ -10,6 +10,7 @@ import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../services/system_control.dart';
+import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 import '../widgets/common_widgets.dart';
 import 'play_page.dart';
@@ -447,7 +448,7 @@ class _DetailPageState extends State<DetailPage> {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+        color: isDark ? AppColors.darkBg : Colors.white,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
       ),
       padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
@@ -527,7 +528,8 @@ class _DetailPageState extends State<DetailPage> {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF303030) : Colors.white,
+          // 压在模糊海报上：纯黑 + 已有的白色描边即可，不必再提亮底色
+          color: isDark ? AppColors.darkBg : Colors.white,
           shape: BoxShape.circle,
           border: Border.all(
             color: isDark ? Colors.white24 : const Color(0xFFF8F8F8),

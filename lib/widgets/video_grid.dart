@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/video.dart';
 import '../providers/app_state.dart';
+import '../utils/app_colors.dart';
 import 'common_widgets.dart';
 import 'video_card.dart';
 
@@ -142,9 +143,11 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color base = isDark ? const Color(0xFF2A2A2C) : const Color(0xFFE7EAEE);
+    // 骨架屏要靠色块可见来表达"正在加载"，所以深色下也不能纯黑
+    final Color base =
+        isDark ? AppColors.darkSkeletonLow : AppColors.lightSkeletonLow;
     final Color highlight =
-        isDark ? const Color(0xFF38383D) : const Color(0xFFF3F5F8);
+        isDark ? AppColors.darkSkeletonHigh : AppColors.lightSkeletonHigh;
     // 在 build 期取一次（含 watch 依赖），别放进 AnimatedBuilder 里反复读
     final delegate = videoGridDelegate(context);
 
@@ -161,7 +164,7 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
           itemBuilder: (context, _) => Card(
             clipBehavior: Clip.antiAlias,
             margin: const EdgeInsets.all(6),
-            color: isDark ? const Color(0xFF1E1E20) : null,
+            // 底色交给 CardTheme（深色下是纯黑）
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
