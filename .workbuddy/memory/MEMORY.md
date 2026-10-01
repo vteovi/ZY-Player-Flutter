@@ -204,3 +204,14 @@ set "OUT=%PROJ%\ZY-Player-v%APPVER%-arm64-release.apk"
 - 工具链：VS 2022 BuildTools（MSVC 14.44 + WinSDK 26100 + CMake/Ninja）齐备
 - ⚠️ **Bash 工具传输层会把命令里的 `\` 转成 `/`（heredoc 也不例外）**：
   含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再执行，不能内联
+
+## Git 约定（2026-10-01 用户明确要求）
+- **任务收尾时必须由助手自己落一个本地提交（commit = 快照），不用等用户开口。**
+  用户原话：「每次改完，快照还是要你自己来创建一个快照」。改完代码/记忆就 `git add` +
+  `git commit`，保持工作区干净（`git status --porcelain` 为 0 项）再汇报。
+- **助手只 `git add` + `git commit` 到本地，绝不 `git push`** —— 推送交给用户自己做。
+  原因：本机到 GitHub 经常连接重置，助手反复重试只会卡住、徒劳无功。
+- 仓库：`origin → https://github.com/vteovi/ZY-Player-Flutter.git`（公开），主分支 `main`。
+  远端里**不含任何 apk**（已用 filter-repo 清过历史，`.gitignore` 也加了 `*.apk`）。
+- 提交完在汇报里注明「已提交本地、未推送」，需要时附推送命令供用户自己执行。
+- 环境提示：跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`，否则会撞配置锁。
