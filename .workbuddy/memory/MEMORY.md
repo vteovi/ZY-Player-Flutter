@@ -62,8 +62,8 @@ sha1 `391f81d02f42fb84a5eb2aadadc08d69386af16c`。
 | `flutter build apk --debug`（默认全 ABI） | 991s | 192MB |
 
 统一走 `tools/build_apk.bat`（双击）：内置探测 → 构建 → 拷到根目录 → 打印 SHA1，
-日志在 `tools/build_log.txt`。当前版本 **`1.0.0+104`**，
-产物 `ZY-Player-v1.0.0-arm64-release.apk`。
+日志在 `tools/build_log.txt`。当前版本 **`1.5.4+118`**，
+产物 `ZY-Player-v1.5.4-arm64-release.apk`。
 
 **APK 名字从 `pubspec.yaml` 自动派生**，不要再改回写死的名字：
 ```bat
