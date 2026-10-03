@@ -7,7 +7,7 @@ import '../services/http_service.dart';
 import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 
-/// 视频源管理：导入源、可用性检测、青少年模式、启用/停用、置顶
+/// 视频源管理：导入源、可用性检测、启用/停用、清除死站、置顶
 class SitePage extends StatefulWidget {
   const SitePage({super.key});
 
@@ -114,7 +114,7 @@ class _SitePageState extends State<SitePage> {
     if (mounted) setState(() => _batchRunning = false);
   }
 
-  /// 检测出的「启用中但不可用」的源
+  /// 检测出的「启用中但不可用」的源（一键停用失效源的目标）
   List<Site> get _failedActive {
     final sites = context.read<AppState>().sites;
     return sites
@@ -122,12 +122,70 @@ class _SitePageState extends State<SitePage> {
         .toList();
   }
 
+  /// 检测出的「死站」：健康度为 fail 的源，**不论当前是否启用**。
+  ///
+  /// 与 [_failedActive] 分开：死站是彻底删掉（连条目一起），
+  /// 失效源只是停用（条目留着，说不定哪天又活了）。
+  List<Site> get _deadSites {
+    final sites = context.read<AppState>().sites;
+    return sites
+        .where((s) =>
+            _results.containsKey(s.key) &&
+            _results[s.key]!.health == SiteHealth.fail)
+        .toList();
+  }
+
+  /// 一键停用：把「启用中但检测不可用」的源批量设为停用（不删条目）
   Future<void> _disableFailed() async {
     final targets = _failedActive;
     if (targets.isEmpty) return;
     await context.read<AppState>().setSitesActive(targets, false);
     if (!mounted) return;
     showToast(context, '已停用 ${targets.length} 个失效源');
+  }
+
+  /// 清除死站：把检测不可用的源从列表里删掉。
+  ///
+  /// 删除不可逆，所以先弹确认框；同时提示可以改用「一键停用失效源」。
+  Future<void> _clearDead() async {
+    final targets = _deadSites;
+    if (targets.isEmpty) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final warnColor = isDark ? AppColors.failDark : AppColors.failLight;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清除死站'),
+        content: Text(
+          '将从源列表中删除 ${targets.length} 个检测不可用的视频源，'
+          '删除后无法恢复。\n\n'
+          '如果只是想暂时屏蔽，请改用「一键停用失效源」。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: warnColor),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final removed = await context.read<AppState>().removeSites(targets);
+    if (!mounted) return;
+    // 源已经删了，对应的检测结果也要一起丢掉，否则汇总数字会一直挂着
+    setState(() {
+      for (final s in targets) {
+        _results.remove(s.key);
+      }
+    });
+    showToast(context, '已清除 $removed 个死站');
   }
 
   // ---------------------------------------------------------------------------
@@ -166,6 +224,10 @@ class _SitePageState extends State<SitePage> {
 
   Widget _buildToolbar(AppState state) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 两个清理动作都得先检测出结果才有目标，没检测时为 0 → 按钮保持禁用
+    final failed = _failedActive.length;
+    final dead = _deadSites.length;
+    final idle = _batchRunning || state.sites.isEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
       child: Column(
@@ -232,19 +294,33 @@ class _SitePageState extends State<SitePage> {
               ),
             ],
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            title: const Text('开启青少年模式', style: TextStyle(fontSize: 14)),
-            subtitle: Text(
-              '过滤片名/分类命中关键词的资源',
-              style: TextStyle(
-                fontSize: 11,
-                color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: idle || failed == 0 ? null : _disableFailed,
+                  icon: const Icon(Icons.block, size: 18),
+                  label: const Text('一键停用失效源', style: TextStyle(fontSize: 13)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
               ),
-            ),
-            value: state.config.r18,
-            onChanged: (v) => context.read<AppState>().setR18(v),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: idle || dead == 0 ? null : _clearDead,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('清除死站', style: TextStyle(fontSize: 13)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor:
+                        isDark ? AppColors.failDark : AppColors.failLight,
+                  ),
+                ),
+              ),
+            ],
           ),
           if (_results.isNotEmpty) _buildSummary(),
         ],
@@ -252,17 +328,16 @@ class _SitePageState extends State<SitePage> {
     );
   }
 
-  /// 检测结果汇总 + 「一键停用失效源」
+  /// 检测结果汇总（清理动作放在工具栏第二行，这里只报数）
   Widget _buildSummary() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final values = _results.values;
     final ok = values.where((r) => r.health == SiteHealth.ok).length;
     final warn = values.where((r) => r.health == SiteHealth.warn).length;
     final fail = values.where((r) => r.health == SiteHealth.fail).length;
-    final failed = _failedActive.length;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(top: 10, bottom: 8),
       child: Wrap(
         spacing: 8,
         runSpacing: 6,
@@ -274,16 +349,13 @@ class _SitePageState extends State<SitePage> {
               AppColors.warnLight, isDark),
           _summaryChip(Icons.cancel_outlined, '不可用 $fail', AppColors.failDark,
               AppColors.failLight, isDark),
-          if (failed > 0)
-            TextButton.icon(
-              onPressed: _disableFailed,
-              icon: const Icon(Icons.block, size: 16),
-              label: Text('停用 $failed 个失效源'),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-              ),
+          Text(
+            '已检测 ${values.length} 个源',
+            style: TextStyle(
+              fontSize: 12,
+              color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
             ),
+          ),
         ],
       ),
     );

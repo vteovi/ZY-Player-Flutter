@@ -83,7 +83,7 @@ class AppState extends ChangeNotifier {
           .toList();
     }
     return <Map<String, dynamic>>[
-      {'id': 0, 'key': 'config', 'R18': true},
+      {'id': 0, 'key': 'config'},
     ];
   }
 
@@ -158,6 +158,19 @@ class AppState extends ChangeNotifier {
     if (changed) await loadSites();
   }
 
+  /// 批量删除源（源管理页「清除死站」用），返回实际删除数量。
+  ///
+  /// 走 [ZyDatabase.removeMany]，key 列表只重写一次；
+  /// 剩下的源保持原有顺序（含置顶）。
+  Future<int> removeSites(Iterable<Site> targets) async {
+    final removed = await ZyDatabase.instance.removeMany(
+      DbNames.site,
+      targets.map((s) => s.key),
+    );
+    if (removed > 0) await loadSites();
+    return removed;
+  }
+
   /// 导入视频源（json 地址），导入成功后覆盖原有源
   Future<bool> importSites(String url) async {
     final list = await HttpService.instance.importSites(url);
@@ -206,12 +219,6 @@ class AppState extends ChangeNotifier {
   Future<void> loadSetting() async {
     final data = await ZyDatabase.instance.get(DbNames.setting, 'config');
     _config = data == null ? const AppConfig() : AppConfig.fromJson(data);
-    notifyListeners();
-  }
-
-  Future<void> setR18(bool value) async {
-    _config = _config.copyWith(r18: value);
-    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
     notifyListeners();
   }
 

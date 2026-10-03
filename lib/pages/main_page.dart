@@ -32,7 +32,7 @@ class _MainPageState extends State<MainPage> {
     if (index == _index) return;
     setState(() => _index = index);
     if (index == 0) {
-      // 视频源或青少年模式可能被改动过，按需刷新首页
+      // 视频源可能被改动过，按需刷新首页
       _filmKey.currentState?.reloadIfNeeded();
     } else {
       context.read<AppState>().refresh();

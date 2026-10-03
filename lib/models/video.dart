@@ -303,8 +303,6 @@ class RecordItem extends Video {
 class AppConfig {
   final int id;
   final String key;
-  /// 青少年模式：开启后过滤掉命中敏感词的条目
-  final bool r18;
 
   /// 播放页画面比例，见 `utils/player_options.dart` 的 PlayerAspects
   final String playerAspect;
@@ -334,7 +332,6 @@ class AppConfig {
   const AppConfig({
     this.id = 0,
     this.key = 'config',
-    this.r18 = true,
     this.playerAspect = 'auto',
     this.playerScale = 'fit',
     this.playerFlip = false,
@@ -349,7 +346,6 @@ class AppConfig {
     return AppConfig(
       id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0,
       key: (json['key'] ?? 'config').toString(),
-      r18: json['R18'] == null ? true : json['R18'] == true || json['R18'].toString() == 'true',
       playerAspect: (json['playerAspect'] ?? 'auto').toString(),
       playerScale: (json['playerScale'] ?? 'fit').toString(),
       playerFlip: json['playerFlip'] == true || json['playerFlip'].toString() == 'true',
@@ -368,7 +364,6 @@ class AppConfig {
   Map<String, dynamic> toJson() => {
         'id': id,
         'key': key,
-        'R18': r18,
         'playerAspect': playerAspect,
         'playerScale': playerScale,
         'playerFlip': playerFlip,
@@ -379,7 +374,6 @@ class AppConfig {
       };
 
   AppConfig copyWith({
-    bool? r18,
     String? playerAspect,
     String? playerScale,
     bool? playerFlip,
@@ -391,7 +385,6 @@ class AppConfig {
       AppConfig(
         id: id,
         key: key,
-        r18: r18 ?? this.r18,
         playerAspect: playerAspect ?? this.playerAspect,
         playerScale: playerScale ?? this.playerScale,
         playerFlip: playerFlip ?? this.playerFlip,

@@ -122,6 +122,26 @@ class ZyDatabase {
     return true;
   }
 
+  /// 批量移除记录，返回**实际删除条数**。
+  ///
+  /// 与循环调用 [remove] 的区别：key 列表只重写一次（[remove] 每删一条就写一次），
+  /// 删几十条死站时少掉大量磁盘写入。顺序不受影响 —— 剩下的 key 原样保留。
+  Future<int> removeMany(String db, Iterable<String> targets) async {
+    final drop = targets.toSet();
+    if (drop.isEmpty) return 0;
+    final keys = await getAllKeys(db);
+    if (keys.isEmpty) return 0;
+    final kept = keys.where((k) => !drop.contains(k)).toList();
+    final removed = keys.length - kept.length;
+    if (removed == 0) return 0;
+    await _saveKeys(db, kept);
+    final store = await _store;
+    for (final key in keys) {
+      if (drop.contains(key)) await store.remove(_itemKey(db, key));
+    }
+    return removed;
+  }
+
   /// 清空整个库（库为空时返回 false，与 uni-app 版保持一致）
   Future<bool> removeAll(String db) async {
     final keys = await getAllKeys(db);

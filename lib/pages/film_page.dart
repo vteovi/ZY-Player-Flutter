@@ -86,10 +86,10 @@ class FilmPageState extends State<FilmPage>
 
   String get _currentSignature {
     final state = context.read<AppState>();
-    return '${state.activeSites.map((s) => s.key).join(',')}|${state.config.r18}';
+    return state.activeSites.map((s) => s.key).join(',');
   }
 
-  /// 视频源或青少年模式改动过时才重新拉取（切换 tab 时调用）
+  /// 视频源改动过时才重新拉取（切换 tab 时调用）
   Future<void> reloadIfNeeded() async {
     if (_currentSignature != _signature) {
       await reload();
@@ -183,13 +183,6 @@ class FilmPageState extends State<FilmPage>
         builder: (_) => DetailPage(siteKey: _site!.key, videoId: video.id),
       ),
     );
-  }
-
-  /// 青少年模式下过滤命中的条目
-  static bool _matchesR18(Video video, bool r18) {
-    if (!r18) return false;
-    return AppConstants.r18KeyWords
-        .any((word) => video.name.contains(word) || video.type.contains(word));
   }
 
   @override
@@ -329,7 +322,6 @@ class FilmPageState extends State<FilmPage>
     // 换源 / 拉分类期间铺骨架屏（形状与真实网格一致），
     // 不再整块换成居中转圈 —— 那会先把内容抹掉再长回来
     if (_loading) return const VideoGridSkeleton();
-    final r18 = context.read<AppState>().config.r18;
     return TabBarView(
       controller: _tabController,
       children: _classes
@@ -338,7 +330,6 @@ class FilmPageState extends State<FilmPage>
               key: Key('${_site!.key}-${c.tid}'),
               site: _site!,
               videoClass: c,
-              r18: r18,
               onRecordCount: _onRecordCount,
               onTapVideo: _openDetail,
             ),
@@ -352,7 +343,6 @@ class FilmPageState extends State<FilmPage>
 class CategoryTab extends StatefulWidget {
   final Site site;
   final VideoClass videoClass;
-  final bool r18;
   final void Function(String tid, int count) onRecordCount;
   final void Function(Video video) onTapVideo;
 
@@ -360,7 +350,6 @@ class CategoryTab extends StatefulWidget {
     super.key,
     required this.site,
     required this.videoClass,
-    required this.r18,
     required this.onRecordCount,
     required this.onTapVideo,
   });
@@ -438,9 +427,7 @@ class CategoryTabState extends State<CategoryTab>
       tid: widget.videoClass.tid,
     );
     if (!mounted) return;
-    final filtered =
-        list.where((v) => !FilmPageState._matchesR18(v, widget.r18)).toList();
-    setState(() => _videos.addAll(filtered));
+    setState(() => _videos.addAll(list));
     if (_videos.length <= 6 && page > 1) {
       _pageCount--;
       await _appendPage(_pageCount);

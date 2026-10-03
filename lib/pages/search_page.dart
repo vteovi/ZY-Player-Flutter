@@ -7,7 +7,6 @@ import '../models/site.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
-import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
 import 'detail_page.dart';
@@ -103,7 +102,6 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
-    final r18 = app.config.r18;
     // 分批并发：每批完成后立刻合并刷新，结果陆续出现
     for (var i = 0; i < sites.length; i += _batchSize) {
       final end = math.min(i + _batchSize, sites.length);
@@ -112,10 +110,7 @@ class _SearchPageState extends State<SearchPage> {
         chunk.map((site) async {
           try {
             final list = await HttpService.instance.search(site, kw);
-            return list
-                .where((v) => !_matchesR18(v, r18))
-                .map((v) => _Hit(site, v))
-                .toList();
+            return list.map((v) => _Hit(site, v)).toList();
           } catch (_) {
             return <_Hit>[];
           }
@@ -168,13 +163,6 @@ class _SearchPageState extends State<SearchPage> {
         return;
       }
     }
-  }
-
-  /// 青少年模式下过滤命中的条目（与首页一致）
-  static bool _matchesR18(Video video, bool r18) {
-    if (!r18) return false;
-    return AppConstants.r18KeyWords
-        .any((word) => video.name.contains(word) || video.type.contains(word));
   }
 
   @override
