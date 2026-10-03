@@ -77,6 +77,11 @@ class _SitePageState extends State<SitePage> {
     setState(() => _busy.add(site.key));
     final result = await HttpService.instance.checkSite(site);
     if (!mounted) return;
+    // 检测期间源可能被删了（清除死站 / 清空所有源）—— 过期结果直接丢掉
+    if (context.read<AppState>().siteOf(site.key) == null) {
+      setState(() => _busy.remove(site.key));
+      return;
+    }
     setState(() {
       _busy.remove(site.key);
       _results[site.key] = result;
@@ -103,6 +108,11 @@ class _SitePageState extends State<SitePage> {
         final site = list[next++];
         final result = await HttpService.instance.checkSite(site);
         if (!mounted) return;
+        // 源已被删（清除死站 / 清空所有源）就不写结果，只推进进度
+        if (context.read<AppState>().siteOf(site.key) == null) {
+          setState(() => _done++);
+          continue;
+        }
         setState(() {
           _results[site.key] = result;
           _done++;
@@ -186,6 +196,50 @@ class _SitePageState extends State<SitePage> {
       }
     });
     showToast(context, '已清除 $removed 个死站');
+  }
+
+  /// 清空所有源：把列表里**全部**视频源删掉（不分好坏）。
+  ///
+  /// 比「清除死站」更狠，连没检测过的源一起走，所以必须二次确认，
+  /// 并明确告知收藏 / 播放记录里的条目会连带打不开。
+  Future<void> _clearAllSites() async {
+    final sites = context.read<AppState>().sites;
+    if (sites.isEmpty) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final warnColor = isDark ? AppColors.failDark : AppColors.failLight;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清空所有源'),
+        content: Text(
+          '将删除全部 ${sites.length} 个视频源（不分可用与否），'
+          '清空后需要重新导入才能观看。\n\n'
+          '收藏和播放记录里来自这些源的条目将无法再打开，此操作无法撤销。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: warnColor),
+            child: const Text('清空'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final removed = await context.read<AppState>().removeSites(sites);
+    if (!mounted) return;
+    // 源都没了，检测结果自然作废（顺带丢掉可能的在飞行中的标记）
+    setState(() {
+      _results.clear();
+      _busy.clear();
+    });
+    showToast(context, '已清空 $removed 个视频源');
   }
 
   // ---------------------------------------------------------------------------
@@ -321,6 +375,18 @@ class _SitePageState extends State<SitePage> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: idle ? null : _clearAllSites,
+              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              label: const Text('清空所有源', style: TextStyle(fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: isDark ? AppColors.failDark : AppColors.failLight,
+              ),
+            ),
           ),
           if (_results.isNotEmpty) _buildSummary(),
         ],

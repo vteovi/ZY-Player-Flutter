@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：0.1.2+102（与原 uni-app 版 versionName / versionCode 一致）
+- 版本：1.6.0+121（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 
@@ -16,7 +16,7 @@
 | 播放 | m3u8/HLS 播放、播放暂停、进度拖拽、全屏、选集、每 10 秒记录进度 |
 | 收藏 | 收藏列表、跳转详情、单项删除 |
 | 播放记录 | 显示观看进度百分比、从上次位置续播 |
-| 源管理 | 视频源启用停用、置顶、从 JSON 地址/文件导入、可用性检测（单条 / 全部）、一键停用失效源、清除死站 |
+| 源管理 | 视频源启用停用、置顶、从 JSON 地址/文件导入、可用性检测（单条 / 全部）、一键停用失效源、清除死站、清空所有源 |
 | 我 | 播放记录入口、源管理入口、清空记录/收藏、重置软件 |
 
 ## 与原版的对应关系
