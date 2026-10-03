@@ -92,8 +92,17 @@ maccms 只认第一个 `ac=list`，返回**精简列表**（无 `vod_pic`、无 
   （证书过期/无效）与纯握手失败；正文 `<!DOCTYPE html>` → 「返回的是网页，接口已变更」
   （采集站最常见的死法）。
 - 入口在 `site_page.dart`：单条重测 + 「检测全部」（**并发 4**）+ 汇总 chip
-  +「停用 N 个失效源」（用 `AppState.setSitesActive` 批量 upsert）。
+  + 工具栏第二/三行三个清理按钮（未检测时禁用，批量检测中全禁用）：
+  **「一键停用失效源」**（`_failedActive` = 启用中且检测不可用 →
+  `AppState.setSitesActive` 批量 upsert 置停用，条目留着）
+  / **「清除死站」**（`_deadSites` = 检测 `fail` 的源，不论启用与否 →
+  `AppState.removeSites` 真删除，弹二次确认，删完把对应 `_results` 一起清掉）
+  / **「清空所有源」**（整行按钮，全部源一起删，二次确认提示收藏/历史会失效）。
+  ⚠️ 检测结果写回前必须确认源还在列表里（`siteOf(key) != null`）——
+  源可能在检测期间被清掉，否则汇总会挂着已删源的数字。
   ⚠️ 检测结果**只放内存不落库** —— 可用性有时效，存下来反而误导。
+- **青少年模式已整体移除**（2026-10-03）：UI 开关、`AppConfig.r18`、
+  `AppConstants.r18KeyWords`、film/search 的 `_matchesR18` 全删，别再写回来。
 - 工具：`.workbuddy/tools/check_site_test.dart`（真实 35 源端到端，14.2s 跑完）、
   `raw_error_probe.dart`（打印真实异常串，用来校准分类）。
 
