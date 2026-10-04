@@ -171,6 +171,22 @@ maccms 只认第一个 `ac=list`，返回**精简列表**（无 `vod_pic`、无 
   （2.9.x 叫 `textureId`，别被 pub 缓存里的旧版本误导），且标了 `@visibleForTesting`，
   需 `// ignore: invalid_use_of_visible_for_testing_member`。
 
+## 应用图标（勿回退，2026-10-04 换新）
+生成脚本 `.workbuddy/tools/make_icons.py`（探测 `probe_icon.py`；自检预览输出
+`.workbuddy/tools/icon_preview/`，已 gitignore）。源图：黑底圆角 + 青色播放 logo +
+"ZY Player" 文字（1282×1282，圆角外纯白）。
+- 覆盖范围：Android 五密度 legacy `ic_launcher.png` + **自适应图标**
+  （`mipmap-anydpi-v26/ic_launcher.xml`、`values/colors.xml` 的
+  `ic_launcher_background=#000000`、五密度 `ic_launcher_foreground.png`）；
+  Windows `windows/runner/resources/app_icon.ico`（原为 **0 字节空文件**）；
+  iOS `AppIcon.appiconset` 15 尺寸；Web favicon + icons 四尺寸。
+- ⚠️ **圆角外的白边不能用亮度阈值填黑**：文字 "ZY Player" 是亮青色（亮度≈220），
+  会被阈值当背景一起填黑、文字消失。必须从**四角 flood-fill**
+  （`ImageDraw.floodfill`，候选背景 lum≥245、thresh=20）+ `MaxFilter(7)` 膨胀，
+  只填与边缘连通的外部白。
+- ⚠️ **自适应 foreground 内容缩到 0.72**：圆形遮罩直径仅画布 ~66–72%，
+  满幅会把文字两端裁掉；legacy 则用满幅完整图（圆角方形遮罩下文字完整）。
+
 ## 其他坑（勿回退）
 - **⚠️ Flutter 命中测试铁律**：`RenderBox.hitTest()` 首句是
   `if (_size.contains(position))` —— 触点落在**父节点尺寸之外**，整棵子树都不参与命中。
