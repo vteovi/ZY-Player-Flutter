@@ -233,21 +233,7 @@ class MePage extends StatelessWidget {
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         children: [
-          const SizedBox(height: 24),
-          const Center(
-            child: Image(
-              image: AssetImage('assets/images/logo.png'),
-              width: 110,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Center(
-            child: Text(
-              'ZY Player APP',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
@@ -325,7 +311,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.6.2',
+            subtitle: '1.6.3',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
