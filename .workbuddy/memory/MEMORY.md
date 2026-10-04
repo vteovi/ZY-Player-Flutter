@@ -86,3 +86,4 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 - **详情页布局**：`_buildContent` → `_buildInfoSection`（Stack + `_actionLane=76` 预留按钮位）→ `_buildInfoCard`；两个悬浮按钮 `right: 116/40`、`top: _actionLane-28/-40`，勿改回负偏移
 - **自写原生通道** `MethodChannel('com.zy.player/system')`：Dart 侧 `services/system_control.dart`，Kotlin 侧 `MainActivity.kt`（亮度走窗口 `screenBrightness` 不写系统设置；音量走 `STREAM_MUSIC`），**两端必须同步改**。未引入第三方亮度/音量包
 - **设置页**是底部导航第三项（`me_page.dart`，不再是「我」）；播放开关用 `SwitchListTile`，`MePage` 的 build 顶部要 `context.watch<AppState>()` 才会跟着刷新
+- **数据备份/恢复**（`services/data_backup.dart`）：备份用 `FilePicker.platform.saveFile()`（系统「另存为」对话框），**不是** `getDirectoryPath()`（那是选目录）。⚠️ `saveFile` 的 `bytes` **Android/iOS 必填**（不传抛 `ArgumentError`，桌面不传要在 Dart 侧自己写文件；macOS 传 bytes 会抛 `UnsupportedError`）；`_autoDir()` 兜底防 saveFile 不可用。恢复用 `pickFiles()`
