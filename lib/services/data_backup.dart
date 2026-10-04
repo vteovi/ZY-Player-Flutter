@@ -18,8 +18,10 @@ class BackupResult {
 /// 数据备份与恢复。
 ///
 /// 备份内容：视频源(site)、播放记录(history)、收藏夹(star)、设置项(setting)。
-/// - 备份：Windows 直接写到「下载」文件夹；Android / iOS 走系统文件选择器（SAF），
-///   用户可导航到 Download，无需任何存储权限。
+/// - 备份：通过系统文件管理器（目录选择器）让用户选一个目录，再把备份文件
+///   写入该目录（Android / iOS 13+ / Windows / macOS / Linux 均支持）。
+///   仅在目录选择器不可用的极少数系统上，才退回写入免权限的可写目录，
+///   保证功能不会失效、也不再把英文异常暴露给用户。
 /// - 恢复：用系统文件选择器读取备份 JSON，按命名空间整体回写（覆盖式），随后刷新内存。
 class DataBackup {
   DataBackup._();
@@ -49,13 +51,11 @@ class DataBackup {
 
   /// 备份到本地文件。
   ///
-  /// 各平台都尽量写入「无需权限」的可写目录，避免依赖 file_picker 的 saveFile
-  /// （该 API 仅在 Android 受支持，桌面 / iOS 会直接抛出英文异常，正是此前
-  /// 「保存失败 + 一串英文」的根因）：
-  /// - Android：优先弹系统选择器（SAF）让用户选位置；若返回的是 content URI
-  ///   或写入失败，则退回应用外部存储目录下的 ZYPlayer 子目录（免权限、文件管理器可访问）。
-  /// - Windows / Linux / macOS：下载文件夹（取不到则退回应用文档目录）。
-  /// - iOS：应用文档目录（可用「文件」App 访问）。
+  /// 通过系统文件管理器（目录选择器 getDirectoryPath）让用户选一个目录，
+  /// 再把备份 JSON 写入该目录。支持 Android / iOS 13+ / Windows / macOS / Linux。
+  /// 两层兜底，保证任何平台都不会出现「保存失败 + 一串英文」：
+  /// 1) 选中目录写入失败（如 Android 分区存储拒绝），自动改存免权限可写目录并提示；
+  /// 2) 目录选择器本身不可用（极少数系统版本），直接写免权限可写目录。
   static Future<BackupResult> backup() async {
     String json;
     try {
@@ -65,55 +65,72 @@ class DataBackup {
     }
     final fileName = 'ZYPlayer-backup-${_timestamp()}.json';
 
-    // Android：系统选择器优先，取消 / 失败后再决定兜底。
-    if (Platform.isAndroid) {
-      try {
-        final result = await FilePicker.platform.saveFile(
-          dialogTitle: '选择备份保存位置（建议选 Download 文件夹）',
-          fileName: fileName,
-          type: FileType.custom,
-          allowedExtensions: const ['json'],
-        );
-        if (result == null) {
-          return const BackupResult(ok: false, message: '已取消保存');
-        }
-        // 部分 Android 版本 saveFile 返回 content:// URI，dart:io 无法直接写
-        if (result.startsWith('content:')) {
-          throw const FileSystemException('unsupported content uri');
-        }
-        await File(result).writeAsString(json, encoding: utf8);
-        return BackupResult(ok: true, message: '已备份到：$result', path: result);
-      } catch (e) {
-        // 落到下面的应用目录兜底（用户主动取消已提前 return，不会到这里）
-      }
+    // 1) 通过系统文件管理器选择保存目录（首选交互）。
+    // getDirectoryPath 返回 String?：用户取消时通常返回 null 或空串。
+    String? dirPath;
+    var pickerFailed = false;
+    try {
+      dirPath = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: '选择备份文件保存的目录',
+      );
+    } catch (e) {
+      // 极少数平台不支持目录选择：标记后走兜底目录。
+      pickerFailed = true;
     }
 
-    // 兜底 / 桌面 / iOS：直接写入免权限的可写目录。
-    Directory? dir;
+    if (!pickerFailed) {
+      final target = dirPath?.trim() ?? '';
+      if (target.isEmpty) {
+        // 用户主动取消选择（getDirectoryPath 取消时返回 null 或空串）。
+        return const BackupResult(ok: false, message: '已取消保存');
+      }
+      final res = await _writeJsonTo(Directory(target), fileName, json, '所选目录');
+      if (res.ok) return res;
+      // 选中目录写入失败（如系统拒绝）：退回免权限可写目录，保证备份不丢失。
+      final fb = await _autoDir(json, fileName);
+      if (fb.ok) {
+        return BackupResult(
+          ok: true,
+          message: '所选目录无法写入，已改存到：${fb.path}',
+          path: fb.path,
+        );
+      }
+      return res;
+    }
+
+    // 2) 兜底：目录选择器不可用时，直接写入免权限的可写目录。
+    return _autoDir(json, fileName);
+  }
+
+  /// 写入免权限可写目录（下载 / 应用文档目录），作为目录选择器不可用或
+  /// 选中目录写入失败时的兜底，保证备份功能在任何平台都不会彻底失效。
+  static Future<BackupResult> _autoDir(String json, String fileName) async {
     String label;
+    Directory dir;
     try {
       if (Platform.isIOS) {
         dir = await getApplicationDocumentsDirectory();
         label = '应用文档目录（可在「文件」App 中查看）';
-      } else if (Platform.isAndroid) {
-        final ext = await getExternalStorageDirectory();
-        dir = ext == null
-            ? null
-            : Directory('${ext.path}${Platform.pathSeparator}ZYPlayer');
-        label = '应用文件夹 ZYPlayer（文件管理器可访问）';
       } else {
-        dir = await getDownloadsDirectory() ??
-            await getApplicationDocumentsDirectory();
+        final downloads = await getDownloadsDirectory();
+        dir = downloads ?? await getApplicationDocumentsDirectory();
         label = '下载文件夹';
       }
     } catch (e) {
       return BackupResult(ok: false, message: '无法定位保存目录：${_localized(e)}');
     }
+    return _writeJsonTo(dir, fileName, json, label);
+  }
 
-    if (dir == null) {
-      return const BackupResult(ok: false, message: '无法定位可写目录');
-    }
-
+  /// 把备份 JSON 写入指定目录，返回结果（含实际落盘路径）。
+  ///
+  /// [label] 用于提示文案里标注保存位置，便于用户查找文件。
+  static Future<BackupResult> _writeJsonTo(
+    Directory dir,
+    String fileName,
+    String json,
+    String label,
+  ) async {
     try {
       if (!await dir.exists()) {
         await dir.create(recursive: true);
