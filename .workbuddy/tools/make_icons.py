@@ -1,11 +1,12 @@
 """Generate app icons for ZY-Player-Flutter from the new artwork.
 
-Source: .workbuddy/tools/icon_source.png (1195x1195, RGBA)
- - black rounded square with a cyan play logo (NO text), outer corners transparent.
+Source: .workbuddy/tools/icon_source.png (1214x1215, RGBA, 2026-10-04 update)
+ - black rounded square with a cyan play + sound-wave logo (NO text),
+   outer corners transparent (alpha=0, only ~1.2% of the canvas).
  - the artwork's black is ~#090907 (near black).
 Strategy: composite the RGBA source onto a pure-black canvas (transparent corners
 become #000000), so legacy/dark surfaces get a full black square. The logo itself
-is centered and only ~0.54 of the canvas width, so the adaptive foreground can use
+is centered and only ~0.53 of the canvas width, so the adaptive foreground can use
 the full bleed (ratio 1.0) and still stay inside the launcher round safe-zone.
 """
 import os
