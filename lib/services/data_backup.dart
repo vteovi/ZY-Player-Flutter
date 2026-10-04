@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -18,10 +19,10 @@ class BackupResult {
 /// 数据备份与恢复。
 ///
 /// 备份内容：视频源(site)、播放记录(history)、收藏夹(star)、设置项(setting)。
-/// - 备份：通过系统文件管理器（目录选择器）让用户选一个目录，再把备份文件
-///   写入该目录（Android / iOS 13+ / Windows / macOS / Linux 均支持）。
-///   仅在目录选择器不可用的极少数系统上，才退回写入免权限的可写目录，
-///   保证功能不会失效、也不再把英文异常暴露给用户。
+/// - 备份：走系统「另存为」对话框（file_picker 的 saveFile）——打开系统文件管理器，
+///   用户选好保存位置与文件名后直接把备份写进去（Android / iOS / Windows /
+///   macOS / Linux 均支持）。仅在极少数 saveFile 不可用的系统上，才退回写入
+///   免权限的可写目录，保证功能不会失效、也不再把英文异常暴露给用户。
 /// - 恢复：用系统文件选择器读取备份 JSON，按命名空间整体回写（覆盖式），随后刷新内存。
 class DataBackup {
   DataBackup._();
@@ -49,13 +50,14 @@ class DataBackup {
     return jsonEncode(payload);
   }
 
-  /// 备份到本地文件。
+  /// 备份到本地文件：弹出系统「另存为」对话框，用户选好位置即落盘。
   ///
-  /// 通过系统文件管理器（目录选择器 getDirectoryPath）让用户选一个目录，
-  /// 再把备份 JSON 写入该目录。支持 Android / iOS 13+ / Windows / macOS / Linux。
-  /// 两层兜底，保证任何平台都不会出现「保存失败 + 一串英文」：
-  /// 1) 选中目录写入失败（如 Android 分区存储拒绝），自动改存免权限可写目录并提示；
-  /// 2) 目录选择器本身不可用（极少数系统版本），直接写免权限可写目录。
+  /// file_picker 的 saveFile 行为按平台分两类：
+  /// - Android / iOS：必须传 [bytes]，由原生端直接把内容写入用户所选位置
+  ///   （Android 走 SAF，无需存储权限），返回值是保存后的 URI / 路径。
+  /// - Windows / macOS / Linux：saveFile 只弹原生保存对话框并返回所选路径，
+  ///   内容由 Dart 侧用 dart:io 写入。
+  /// 极少数 saveFile 不可用的系统上，退回写入免权限可写目录，保证不彻底失败。
   static Future<BackupResult> backup() async {
     String json;
     try {
@@ -64,42 +66,51 @@ class DataBackup {
       return BackupResult(ok: false, message: '读取数据失败：${_localized(e)}');
     }
     final fileName = 'ZYPlayer-backup-${_timestamp()}.json';
+    final bytes = Uint8List.fromList(utf8.encode(json));
 
-    // 1) 通过系统文件管理器选择保存目录（首选交互）。
-    // getDirectoryPath 返回 String?：用户取消时通常返回 null 或空串。
-    String? dirPath;
-    var pickerFailed = false;
     try {
-      dirPath = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: '选择备份文件保存的目录',
-      );
-    } catch (e) {
-      // 极少数平台不支持目录选择：标记后走兜底目录。
-      pickerFailed = true;
-    }
+      // Android / iOS：saveFile 需要 bytes，原生端直接写入所选位置。
+      if (Platform.isAndroid || Platform.isIOS) {
+        final result = await FilePicker.platform.saveFile(
+          dialogTitle: '保存备份文件',
+          fileName: fileName,
+          type: FileType.custom,
+          allowedExtensions: const ['json'],
+          bytes: bytes,
+        );
+        if (result == null) {
+          return const BackupResult(ok: false, message: '已取消保存');
+        }
+        // Android 返回 content:// URI，没有可读的磁盘路径，提示用所选位置 + 文件名。
+        final shown =
+            result.startsWith('content:') ? '所选位置：$fileName' : result;
+        return BackupResult(ok: true, message: '已保存到$shown', path: result);
+      }
 
-    if (!pickerFailed) {
-      final target = dirPath?.trim() ?? '';
-      if (target.isEmpty) {
-        // 用户主动取消选择（getDirectoryPath 取消时返回 null 或空串）。
+      // 桌面（Windows / macOS / Linux）：saveFile 返回目标路径，由 Dart 写入。
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: '保存备份文件',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+      if (path == null) {
         return const BackupResult(ok: false, message: '已取消保存');
       }
-      final res = await _writeJsonTo(Directory(target), fileName, json, '所选目录');
-      if (res.ok) return res;
-      // 选中目录写入失败（如系统拒绝）：退回免权限可写目录，保证备份不丢失。
+      await File(path).writeAsString(json, encoding: utf8);
+      return BackupResult(ok: true, message: '已保存到：$path', path: path);
+    } catch (e) {
+      // saveFile 在个别平台 / 系统版本不可用：退回免权限可写目录，避免备份彻底失败。
       final fb = await _autoDir(json, fileName);
       if (fb.ok) {
         return BackupResult(
           ok: true,
-          message: '所选目录无法写入，已改存到：${fb.path}',
+          message: '无法打开保存对话框，已改存到：${fb.path}',
           path: fb.path,
         );
       }
-      return res;
+      return BackupResult(ok: false, message: '保存失败：${_localized(e)}');
     }
-
-    // 2) 兜底：目录选择器不可用时，直接写入免权限的可写目录。
-    return _autoDir(json, fileName);
   }
 
   /// 写入免权限可写目录（下载 / 应用文档目录），作为目录选择器不可用或
