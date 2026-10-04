@@ -73,9 +73,9 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 - **全屏控制层自动隐藏**：`_controlsVisible` + `_hideTimer`（4s）；手势层 `onTap`（仅全屏传 `allowTapToggle: true`）开关。控制层 = `AnimatedOpacity` + **`IgnorePointer`（收起时必须，否则隐形按钮吃点击）** + `Listener(onPointerDown:)` 重新计时；面板展开时不隐藏。右上角网速浮层独立常显，**也必须套 `IgnorePointer`**
 - **实时网速/码率**（`AppConfig.showSpeed`，默认关）：Dart 侧 `services/video_network_stats.dart` 轮询 `_controller.playerId`，仅「全屏 + 开关开」时 1s 一次；原生侧在 fork 的 `VideoPlayer` 挂 `AnalyticsListener`（`onBandwidthEstimate` 取速度、`onDownstreamFormatChanged` 取码率、onLoad* 判活跃）。通道 `MethodChannel('com.zy.player/video_network_stats')`，注册在 `VideoPlayerPlugin.onAttachedToEngine`；**不要改 Pigeon 生成产物**。⚠️ id getter 随版本变：本项目 video_player **2.10.1** 是 `playerId`（2.9.x 叫 `textureId`），标了 `@visibleForTesting`，需 `// ignore: invalid_use_of_visible_for_testing_member`
 
-## 应用图标（勿回退，2026-10-04 定稿：纯播放 logo）
+## 应用图标（勿回退，2026-10-04 定稿：播放三角+声波 logo）
 `make_icons.py`（+ `probe_icon.py` / `analyze_source.py`；预览 `icon_preview/` 已 gitignore）。
-**源图 `.workbuddy/tools/icon_source.png`**：1195² RGBA，圆角外**透明**，黑底 ≈`#090907` + 青色播放 logo，**无文字**（源图已 gitignore）。处理：`alpha_composite(纯黑, 源图)`（圆角外→`#000000`）；adaptive foreground 用**满幅 1.0**（logo 仅占画布 0.54 宽、居中，圆内不裁）。
+**源图 `.workbuddy/tools/icon_source.png`**：1214×1215 RGBA，圆角外**透明**（仅 ~1.2%），黑底 ≈`#090907` + 青色播放三角 + 声波弧线，**无文字**（源图已 gitignore）。处理：`alpha_composite(纯黑, 源图)`（圆角外→`#000000`）；adaptive foreground 用**满幅 1.0**（logo 仅占画布 0.53 宽、居中，圆内不裁）。
 覆盖：Android 五密度 legacy + adaptive（`mipmap-anydpi-v26/ic_launcher.xml` + `values/colors.xml` `ic_launcher_background=#000000` + 五密度 foreground）、Windows `app_icon.ico`、iOS 15 尺寸、Web。
 **设置页顶部品牌区已删**（`me_page.dart` 无 logo 图与 "ZY Player APP" 文字）；⚠️ **`assets/images/logo.png` 不可删**——`main.dart` 启动页 `AppBootstrap` 仍用（width:120）。
 坑（换图会复现）：① 源图圆角外是**白**→ 必须四角 flood-fill（不能用亮度阈值，会吃亮青文字）；② 图标**含文字**→ adaptive foreground 缩 **0.72**（圆形遮罩直径仅 ~66–72%）；③ 局部**不透明**贴纯黑画布会露深灰矩形 → 先按 `max(R,G,B)` 抠底。
