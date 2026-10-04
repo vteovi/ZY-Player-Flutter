@@ -121,21 +121,29 @@ class _SitePageState extends State<SitePage> {
     }
 
     await Future.wait(List<Future<void>>.generate(4, (_) => worker()));
-    if (mounted) setState(() => _batchRunning = false);
-  }
+    if (!mounted) return;
 
-  /// 检测出的「启用中但不可用」的源（一键停用失效源的目标）
-  List<Site> get _failedActive {
-    final sites = context.read<AppState>().sites;
-    return sites
-        .where((s) => s.isActive && _results.containsKey(s.key) && !_results[s.key]!.ok)
+    // 检测完成后，把「启用中但不可用（含 warn / fail）」的源自动停用。
+    // 原「一键停用失效源」按钮的行为移到了这里，免得每次手动点。
+    final appState = context.read<AppState>();
+    final failed = appState.sites
+        .where((s) =>
+            s.isActive && _results.containsKey(s.key) && !_results[s.key]!.ok)
         .toList();
+    if (failed.isNotEmpty) {
+      await appState.setSitesActive(failed, false);
+    }
+    if (!mounted) return;
+    setState(() => _batchRunning = false);
+    if (failed.isNotEmpty) {
+      showToast(context, '检测到 ${failed.length} 个失效源，已自动停用');
+    }
   }
 
   /// 检测出的「死站」：健康度为 fail 的源，**不论当前是否启用**。
   ///
-  /// 与 [_failedActive] 分开：死站是彻底删掉（连条目一起），
-  /// 失效源只是停用（条目留着，说不定哪天又活了）。
+  /// 与「检测全部后自动停用」分开：死站是彻底删掉（连条目一起），
+  /// 自动停用只是把失效源设为停用（条目留着，说不定哪天又活了）。
   List<Site> get _deadSites {
     final sites = context.read<AppState>().sites;
     return sites
@@ -145,18 +153,10 @@ class _SitePageState extends State<SitePage> {
         .toList();
   }
 
-  /// 一键停用：把「启用中但检测不可用」的源批量设为停用（不删条目）
-  Future<void> _disableFailed() async {
-    final targets = _failedActive;
-    if (targets.isEmpty) return;
-    await context.read<AppState>().setSitesActive(targets, false);
-    if (!mounted) return;
-    showToast(context, '已停用 ${targets.length} 个失效源');
-  }
-
   /// 清除死站：把检测不可用的源从列表里删掉。
   ///
-  /// 删除不可逆，所以先弹确认框；同时提示可以改用「一键停用失效源」。
+  /// 删除不可逆，所以先弹确认框。提示里说明：只想暂时屏蔽就点「检测全部」
+  /// 让失效源自动停用，条目会保留。
   Future<void> _clearDead() async {
     final targets = _deadSites;
     if (targets.isEmpty) return;
@@ -170,7 +170,8 @@ class _SitePageState extends State<SitePage> {
         content: Text(
           '将从源列表中删除 ${targets.length} 个检测不可用的视频源，'
           '删除后无法恢复。\n\n'
-          '如果只是想暂时屏蔽，请改用「一键停用失效源」。',
+          '如果只是想暂时屏蔽而非删除：点「检测全部」后会自动停用失效源，'
+          '条目会保留。',
         ),
         actions: [
           TextButton(
@@ -278,8 +279,7 @@ class _SitePageState extends State<SitePage> {
 
   Widget _buildToolbar(AppState state) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 两个清理动作都得先检测出结果才有目标，没检测时为 0 → 按钮保持禁用
-    final failed = _failedActive.length;
+    // 「清除死站」得先检测出 fail 才有目标，没检测时为 0 → 按钮保持禁用
     final dead = _deadSites.length;
     final idle = _batchRunning || state.sites.isEmpty;
     return Padding(
@@ -353,40 +353,28 @@ class _SitePageState extends State<SitePage> {
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: idle || failed == 0 ? null : _disableFailed,
-                  icon: const Icon(Icons.block, size: 18),
-                  label: const Text('一键停用失效源', style: TextStyle(fontSize: 13)),
+                  onPressed: idle || dead == 0 ? null : _clearDead,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('清除死站', style: TextStyle(fontSize: 13)),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    foregroundColor:
+                        isDark ? AppColors.failDark : AppColors.failLight,
                   ),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: idle || dead == 0 ? null : _clearDead,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('清除死站', style: TextStyle(fontSize: 13)),
+                  onPressed: idle ? null : _clearAllSites,
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: const Text('清空所有源', style: TextStyle(fontSize: 13)),
                   style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
                     foregroundColor:
                         isDark ? AppColors.failDark : AppColors.failLight,
                   ),
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: idle ? null : _clearAllSites,
-              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-              label: const Text('清空所有源', style: TextStyle(fontSize: 13)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: isDark ? AppColors.failDark : AppColors.failLight,
-              ),
-            ),
           ),
           if (_results.isNotEmpty) _buildSummary(),
         ],

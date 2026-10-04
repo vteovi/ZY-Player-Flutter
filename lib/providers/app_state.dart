@@ -141,7 +141,7 @@ class AppState extends ChangeNotifier {
     await loadSites();
   }
 
-  /// 批量启停源（源可用性检测后「一键停用失效源」用）。
+  /// 批量启停源（源可用性检测后自动停用失效源用）。
   ///
   /// 用 `put`（upsert）逐条写，比 [toggleSite] 的 remove + add 少一半 IO；
   /// 状态本来就一致的条目直接跳过。
