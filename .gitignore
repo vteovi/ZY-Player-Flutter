@@ -61,6 +61,9 @@ unlinked_spec.ds
 *.apk
 *.aab
 
+# 图标生成的自检预览（由 .workbuddy/tools/make_icons.py 产出，可随时重新生成）
+.workbuddy/tools/icon_preview/
+
 # iOS/XCode related
 **/ios/**/*.mode1v3
 **/ios/**/*.mode2v3
