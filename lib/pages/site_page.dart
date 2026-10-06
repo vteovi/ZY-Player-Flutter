@@ -123,20 +123,36 @@ class _SitePageState extends State<SitePage> {
     await Future.wait(List<Future<void>>.generate(4, (_) => worker()));
     if (!mounted) return;
 
-    // 检测完成后，把「启用中但不可用（含 warn / fail）」的源自动停用。
-    // 原「一键停用失效源」按钮的行为移到了这里，免得每次手动点。
+    // 检测完成后，按检测结果整理每个源的启用状态：
+    //  - 不可用（warn / fail）且当前启用的 → 自动停用
+    //  - 可用（ok）且当前停用的 → 自动启用
+    // 原「一键停用失效源」按钮的行为已移到这里，免得每次手动点。
     final appState = context.read<AppState>();
-    final failed = appState.sites
+    final toDisable = appState.sites
         .where((s) =>
             s.isActive && _results.containsKey(s.key) && !_results[s.key]!.ok)
         .toList();
-    if (failed.isNotEmpty) {
-      await appState.setSitesActive(failed, false);
+    final toEnable = appState.sites
+        .where((s) =>
+            !s.isActive && _results.containsKey(s.key) && _results[s.key]!.ok)
+        .toList();
+    if (toDisable.isNotEmpty) {
+      await appState.setSitesActive(toDisable, false);
+    }
+    if (toEnable.isNotEmpty) {
+      await appState.setSitesActive(toEnable, true);
     }
     if (!mounted) return;
     setState(() => _batchRunning = false);
-    if (failed.isNotEmpty) {
-      showToast(context, '检测到 ${failed.length} 个失效源，已自动停用');
+    if (toDisable.isNotEmpty || toEnable.isNotEmpty) {
+      final parts = <String>[];
+      if (toDisable.isNotEmpty) {
+        parts.add('停用 ${toDisable.length} 个失效源');
+      }
+      if (toEnable.isNotEmpty) {
+        parts.add('启用 ${toEnable.length} 个可用源');
+      }
+      showToast(context, parts.join('，'));
     }
   }
 
