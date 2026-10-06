@@ -18,6 +18,13 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 | `flutter build apk --release --target-platform android-arm64` | **342s（最快）** | 18.1MB |
 | `flutter build apk --debug`（全 ABI） | 991s | 192MB |
 
+## 视频源（源清单 / 内置默认源）
+- **源引擎只支持 maccms 的 json/xml HTTP 接口**（Site.api 必须是真实 URL；`SourceImport._mapType` 把 type 0=xml、1=json 收下，**type 3/4/7/15…（SpiderJS/drpy）直接跳过**）。
+- **猫影视 / CatVod 的 config 是 SpiderJS**：`api` 多为本地 `.js` 爬虫、`type:3`，本 APP 跑不了——导入/内置会被全部跳过（0 可用源）。只有把其中真实的 maccms 端点（藏在 `ext.url` 里，形如 `api.php/provide/vod`、`apijson.php`、`api.php/app/`）抽出来当 `api` 才能用。
+- **内置默认源**在 `assets/data/init_site.json`（数组，Site 格式），由 `AppState.bootstrap → ZyDatabase.initDb` 在**源库为空时**种子化（首次启动 / 重置软件时生效；已装过、源库非空的老用户不会自动加，需「重置软件」）。`pubspec.yaml` 已声明该 asset。
+- 当前内置 22 个猫影视 maccms 源（group=猫影视）：13 个 `provide/vod` 采集源 + 1 个 apijson + 8 个 `api.php/app/`（APP丨*）。live.php / 主页 / 阿里token 占位 / mogai_api.php / `api.php/v1.vod` 等非标准接口未纳入。
+- ⚠️ 老用户升级后看不到新内置源是正常的（源库非空不覆盖）。要么清源库重来，要么手动「源管理→导入网址」。`config_open.json` 留在仓库根目录（用户丢进来的原始文件，未入仓、运行时不引用）。
+
 统一双击 `tools/build_apk.bat`：探测 → 构建 → 拷到根目录 → 打印 SHA1，日志 `tools/build_log.txt`。**APK 名从 pubspec 派生**，勿写死：`findstr /b /c:"version:"`（`/b` 只匹配行首，避开 versionName 注释行）。
 ⚠️ **改版本号同步四处**（versionCode 严格递增，否则拒装）：`pubspec.yaml`（`version:`，bat 自动跟随）/ `lib/pages/me_page.dart`「版本更新」副标题 / `android/local.properties`（git 不跟踪）/ `README.md` 版本行。
 **构建阻塞点（勿回退）**：`android/app/build.gradle.kts` NDK 固定 `27.0.12077973`（模板默认目录是空壳）；`android/gradle.properties` 开 `kotlin.incremental=false` + `in-process`（pub 缓存 C:、工程 D:，Kotlin 增量缓存 `File.relativeTo` 跨盘符必炸）；release 关 lint / 关 jetifier / 单 ABI。⚠️ D 盘常剩 ~8G，构建前先 `flutter clean`。
