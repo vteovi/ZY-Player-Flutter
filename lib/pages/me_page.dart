@@ -197,8 +197,8 @@ class MePage extends StatelessWidget {
     }
   }
 
-  /// 第三方播放器（PC / Windows 专属）：用文件选择器选一个 .exe，
-  /// 之后「使用第三方播放器播放」会直接启动它而不是自动查找已安装的播放器。
+  /// 自定义播放器（PC / Windows 专属）：用文件选择器选一个 .exe，
+  /// 之后「外部播放」会直接启动它而不是自动查找已安装的播放器。
   Widget _buildExternalPlayerTile(BuildContext context) {
     final path = context.watch<AppState>().config.externalPlayerPath;
     final fileName = path.isNotEmpty
@@ -210,7 +210,7 @@ class MePage extends StatelessWidget {
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 12, 16, 2),
           child: Text(
-            '第三方播放器（PC）',
+            '自定义播放器（PC）',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
           ),
         ),
@@ -280,14 +280,14 @@ class MePage extends StatelessWidget {
     }
     await context.read<AppState>().setExternalPlayerPath(picked);
     if (!context.mounted) return;
-    showToast(context, '已设置第三方播放器');
+    showToast(context, '已设置自定义播放器');
   }
 
   /// 清除已设置的播放器路径，恢复到自动查找。
   Future<void> _clearExternalPlayer(BuildContext context) async {
     await context.read<AppState>().setExternalPlayerPath('');
     if (!context.mounted) return;
-    showToast(context, '已清除第三方播放器路径');
+    showToast(context, '已清除自定义播放器路径');
   }
 
   /// 用指定路径空启动一次播放器，确认路径可用（不传播放地址）。

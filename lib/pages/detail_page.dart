@@ -184,7 +184,7 @@ class _DetailPageState extends State<DetailPage> {
     _showPlayPicker();
   }
 
-  /// 用第三方播放器打开：与内置播放一样先选集，再交给系统选择器
+  /// 用外部播放器打开：与内置播放一样先选集，再交给系统选择器
   Future<void> _onExternalPlayTap() async {
     if (_playList.isEmpty) {
       showToast(context, '没有解析到可播放地址', success: false);
@@ -208,18 +208,18 @@ class _DetailPageState extends State<DetailPage> {
     if (!mounted) return;
     switch (status) {
       case 'no_app':
-        showToast(context, '没找到能播放该地址的第三方播放器', success: false);
+        showToast(context, '没找到能播放该地址的播放器', success: false);
       case 'no_url':
         showToast(context, '没有可播放的地址', success: false);
       case 'error':
-        showToast(context, '调起第三方播放器失败', success: false);
+        showToast(context, '调起外部播放失败', success: false);
       default:
         // ok：系统选择器已经弹出来了，不用再打扰用户
         break;
     }
   }
 
-  /// [external] 为 true 时，选中的集数交给第三方播放器而不是内置播放页
+  /// [external] 为 true 时，选中的集数交给外部播放器而不是内置播放页
   void _showPlayPicker({bool external = false}) {
     showModalBottomSheet(
       context: context,
@@ -232,7 +232,7 @@ class _DetailPageState extends State<DetailPage> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                  external ? '选择集数 · 用第三方播放器播放' : '选择集数',
+                  external ? '选择集数 · 外部播放' : '选择集数',
                   style: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.w600),
                 ),
@@ -508,7 +508,7 @@ class _DetailPageState extends State<DetailPage> {
             child: OutlinedButton.icon(
               onPressed: _onExternalPlayTap,
               icon: const Icon(Icons.open_in_new, size: 18),
-              label: const Text('使用第三方播放器播放'),
+              label: const Text('外部播放'),
             ),
           ),
         ],

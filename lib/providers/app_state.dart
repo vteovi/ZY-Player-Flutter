@@ -279,7 +279,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 自定义第三方播放器的可执行文件路径（Windows 专属）。
+  /// 自定义播放器的可执行文件路径（Windows 专属）。
   /// 空字符串表示未设置，外部播放回退到自动查找已安装的播放器。
   Future<void> setExternalPlayerPath(String path) async {
     final next = path.trim();
