@@ -49,7 +49,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 ## 源可用性检测（2026-10-01）
 - `HttpService.checkSite(site)` → `SiteCheckResult(health, message, ms)`，`enum SiteHealth { ok, warn, fail }`。请求 `?ac=list`，**与 App 取数逻辑完全一致**。ok=解析出分类/片单；warn=接口通但无片单；fail=连接层失败或返回非采集接口。检测超时 **8s**（正常 15s）；`_fetch`/`_load` 有可选 `timeout`
 - `_describeRawError` 分类**实测校准，别凭感觉改**：Windows 连接被拒 `errno=1225`/`10061`（Linux 111），文案中文「远程计算机拒绝网络连接」；`HandshakeException` 分出 `CERTIFICATE_VERIFY_FAILED`（证书过期/无效）与纯握手失败；正文 `<!DOCTYPE html>` →「返回的是网页，接口已变更」（采集站最常见死法）
-- 入口 `site_page.dart`：单条重测 +「检测全部」（**并发 4**）+ 汇总 chip + 工具栏三个清理按钮（未检测禁用，批量中全禁用）：**「一键停用失效源」**（`_failedActive`=启用中且不可用 → `AppState.setSitesActive` 批量置停用，条目留着）/ **「清除死站」**（`_deadSites`=检测 fail，不论启用与否 → `AppState.removeSites` 真删，二次确认，删后清对应 `_results`）/ **「清空所有源」**（整行按钮，全删，二次确认提示收藏/历史失效）。⚠️ 结果写回前确认源还在（`siteOf(key) != null`）；⚠️ 结果**只放内存不落库**（有时效）
+- 入口 `site_page.dart`：单条重测 +「检测全部」（**并发 4**）+ 汇总 chip + 工具栏三个清理按钮（未检测禁用，批量中全禁用）。⚠️ **「一键停用失效源」按钮已删除**，其逻辑并入「检测全部」：检测完毕后 **不可用（warn/fail）且启用的源自动停用**、**可用（ok）且停用的源自动启用**（`setSitesActive` 批量 upsert，状态一致的跳过），提示语按需拼接「停用 N 个失效源，启用 M 个可用源」。工具栏仍有：**「清除死站」**（`_deadSites`=检测 fail，不论启用与否 → `AppState.removeSites` 真删，二次确认，删后清对应 `_results`）/ **「清空所有源」**（整行按钮，全删，二次确认提示收藏/历史失效）。⚠️ 结果写回前确认源还在（`siteOf(key) != null`）；⚠️ 结果**只放内存不落库**（有时效）
 - **青少年模式已整体移除**（2026-10-03）：UI 开关、`AppConfig.r18`、`AppConstants.r18KeyWords`、film/search 的 `_matchesR18` 全删，别再写回来
 - 工具：`.workbuddy/tools/check_site_test.dart`（真实 35 源，14.2s）、`raw_error_probe.dart`（打印真实异常串校准分类）
 
