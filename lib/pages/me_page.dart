@@ -197,6 +197,111 @@ class MePage extends StatelessWidget {
     }
   }
 
+  /// 第三方播放器（PC / Windows 专属）：用文件选择器选一个 .exe，
+  /// 之后「使用第三方播放器播放」会直接启动它而不是自动查找已安装的播放器。
+  Widget _buildExternalPlayerTile(BuildContext context) {
+    final path = context.watch<AppState>().config.externalPlayerPath;
+    final fileName = path.isNotEmpty
+        ? path.split(RegExp(r'[\\/]')).last
+        : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, 16, 2),
+          child: Text(
+            '第三方播放器（PC）',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ),
+        ListTile(
+          title: const Text('播放器路径'),
+          subtitle: Text(
+            path.isEmpty
+                ? '未设置，将自动查找已安装的播放器（PotPlayer / VLC 等）'
+                : (fileName ?? path),
+          ),
+          trailing: path.isEmpty
+              ? const Icon(Icons.chevron_right)
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextButton(
+                      onPressed: () => _testExternalPlayer(context, path),
+                      child: const Text('测试'),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.clear, size: 20),
+                      tooltip: '清除',
+                      onPressed: () => _clearExternalPlayer(context),
+                    ),
+                  ],
+                ),
+          onTap: () => _pickExternalPlayer(context),
+        ),
+        if (path.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              path,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// 选择播放器可执行文件：只接受 .exe，并校验文件存在。
+  Future<void> _pickExternalPlayer(BuildContext context) async {
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['exe'],
+        allowMultiple: false,
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      showToast(context, '无法打开文件选择器：$e', success: false);
+      return;
+    }
+    if (result == null || result.files.isEmpty) return; // 用户取消
+    final picked = result.files.single.path;
+    if (picked == null || picked.isEmpty) return;
+    if (!picked.toLowerCase().endsWith('.exe')) {
+      if (!context.mounted) return;
+      showToast(context, '请选择 .exe 播放器程序', success: false);
+      return;
+    }
+    if (!File(picked).existsSync()) {
+      if (!context.mounted) return;
+      showToast(context, '文件不存在：$picked', success: false);
+      return;
+    }
+    await context.read<AppState>().setExternalPlayerPath(picked);
+    if (!context.mounted) return;
+    showToast(context, '已设置第三方播放器');
+  }
+
+  /// 清除已设置的播放器路径，恢复到自动查找。
+  Future<void> _clearExternalPlayer(BuildContext context) async {
+    await context.read<AppState>().setExternalPlayerPath('');
+    if (!context.mounted) return;
+    showToast(context, '已清除第三方播放器路径');
+  }
+
+  /// 用指定路径空启动一次播放器，确认路径可用（不传播放地址）。
+  Future<void> _testExternalPlayer(BuildContext context, String path) async {
+    try {
+      await Process.start(path, [], mode: ProcessStartMode.detached);
+      if (!context.mounted) return;
+      showToast(context, '已尝试启动播放器');
+    } catch (e) {
+      if (!context.mounted) return;
+      showToast(context, '启动失败：$e', success: false);
+    }
+  }
+
   /// 主题模式：弹窗单选 跟随系统 / 浅色 / 深色，默认跟随系统。
   /// 选择后写入设置，home 处的 _AppRoot 实时切换 light / dark / system 主题。
   Future<void> _showThemeModePicker(BuildContext context) async {
@@ -273,6 +378,7 @@ class MePage extends StatelessWidget {
             value: appState.config.showSpeed,
             onChanged: (value) => context.read<AppState>().setShowSpeed(value),
           ),
+          if (Platform.isWindows) _buildExternalPlayerTile(context),
           ListTile(
             title: const Text('长按加速倍率'),
             subtitle: Text(
@@ -311,7 +417,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.6.8',
+            subtitle: '1.6.9',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(

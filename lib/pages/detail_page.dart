@@ -203,6 +203,7 @@ class _DetailPageState extends State<DetailPage> {
     final status = await SystemControl.openWithExternalPlayer(
       url: item.value,
       title: item.label.isNotEmpty ? item.label : (_detail?.name ?? ''),
+      customPath: context.read<AppState>().config.externalPlayerPath,
     );
     if (!mounted) return;
     switch (status) {

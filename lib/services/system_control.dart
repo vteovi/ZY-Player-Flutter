@@ -74,14 +74,20 @@ class SystemControl {
   /// - `no_app`：设备上没有能处理这个地址的应用
   /// - `error`：调起过程中抛异常
   ///
+  /// [customPath] 是用户在设置里指定的播放器可执行文件路径（Windows 专属）。
+  /// 非空且文件存在时优先用它启动；为空则走自动查找（Windows）/ 系统选择器（Android）。
+  ///
   /// 走自写通道而不引 `url_launcher`：后者是「浏览器式」的 ACTION_VIEW，
   /// m3u8 直链在多数机型上只会弹浏览器，用户要的是「选播放器」。
   static Future<String> openWithExternalPlayer({
     required String url,
     String title = '',
+    String? customPath,
   }) async {
     if (url.isEmpty) return 'no_url';
-    if (Platform.isWindows) return _openExternalWindows(url);
+    if (Platform.isWindows) {
+      return _openExternalWindows(url, customPath: customPath);
+    }
     try {
       final status = await _channel.invokeMethod<String>(
         'openWithExternalPlayer',
@@ -111,9 +117,29 @@ class SystemControl {
     r'C:\Program Files (x86)\VideoLAN\VLC\vlc.exe',
   ];
 
-  /// Windows：①注册表 App Paths / 固定路径找已装播放器，直接带 URL 启动；
-  /// ②找不到就 explorer 交给系统默认关联（没有关联时系统自己弹「打开方式」）。
-  static Future<String> _openExternalWindows(String url) async {
+  /// Windows：①用户指定的播放器路径优先（文件存在时）；②注册表 App Paths / 固定路径
+  /// 找已装播放器，直接带 URL 启动；③找不到就 explorer 交给系统默认关联
+  /// （没有关联时系统自己弹「打开方式」）。
+  ///
+  /// [customPath] 非空且文件存在时，直接启动它并带上 [url]；启动失败直接返回
+  /// `error`（用户明确选了某个播放器，不应再静默回退到别的）。
+  /// 若指定的文件不存在，则忽略该设置、继续走自动查找。
+  static Future<String> _openExternalWindows(
+    String url, {
+    String? customPath,
+  }) async {
+    if (customPath != null && customPath.trim().isNotEmpty) {
+      final path = customPath.trim();
+      if (File(path).existsSync()) {
+        try {
+          await Process.start(path, [url], mode: ProcessStartMode.detached);
+          return 'ok';
+        } catch (_) {
+          return 'error';
+        }
+      }
+      // 指定了但文件不存在：忽略该设置，继续走下面的自动查找
+    }
     for (final exe in _winPlayerExes) {
       final path = await _resolveAppPath(exe);
       if (path == null) continue;

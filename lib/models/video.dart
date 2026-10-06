@@ -329,6 +329,11 @@ class AppConfig {
   /// 手机竖屏每行一个，平板大屏自适应多列；关闭为竖向海报（默认）。
   final bool landscapeCard;
 
+  /// 自定义第三方播放器的可执行文件路径（Windows 专属）。
+  /// 设置后，「使用第三方播放器播放」会直接启动该 exe 并带上播放地址，
+  /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
+  final String externalPlayerPath;
+
   const AppConfig({
     this.id = 0,
     this.key = 'config',
@@ -339,6 +344,7 @@ class AppConfig {
     this.playerLongPressRate = 2.0,
     this.themeMode = 'system',
     this.landscapeCard = false,
+    this.externalPlayerPath = '',
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
@@ -358,6 +364,7 @@ class AppConfig {
       themeMode: mode == 'light' || mode == 'dark' ? mode : 'system',
       landscapeCard:
           json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
+      externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
     );
   }
 
@@ -371,6 +378,7 @@ class AppConfig {
         'playerLongPressRate': playerLongPressRate,
         'themeMode': themeMode,
         'landscapeCard': landscapeCard,
+        'externalPlayerPath': externalPlayerPath,
       };
 
   AppConfig copyWith({
@@ -381,6 +389,7 @@ class AppConfig {
     double? playerLongPressRate,
     String? themeMode,
     bool? landscapeCard,
+    String? externalPlayerPath,
   }) =>
       AppConfig(
         id: id,
@@ -392,5 +401,6 @@ class AppConfig {
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
         themeMode: themeMode ?? this.themeMode,
         landscapeCard: landscapeCard ?? this.landscapeCard,
+        externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
       );
 }
