@@ -75,6 +75,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 - **「⇄ 交换宽高」是真旋转**：`RotatedBox(quarterTurns: 1)` 包住纹理盒子 + `_displayAspectRatio` 取倒数；只改画框是拉伸不是交换
 - **手势（竖屏/全屏共用 `_buildGestureLayer()`）**：左半屏上下滑调亮度、右半屏调音量，向上增大，居中 HUD；双击暂停/继续（单击无动作）。手势层 `Positioned.fill` + `HitTestBehavior.opaque` → **命中即止**，双击必须由手势层自己处理
 - **进度条是自绘 `_ProgressSlider`**（play_page.dart 末尾），别换回官方 `VideoProgressIndicator`（内部写死 `minHeight=4`，全屏手指点不中）。尺寸：全屏 10/48/20，竖屏 6/36/14（barHeight/touchHeight/thumbSize）；轨道左右各内缩 `thumbSize/2`，故 `fraction = (dx - thumbSize/2) / trackWidth`
+- ⚠️ **进度条轨道色跟主题走**（2026-10-07 修过）：深色（含全屏）用白色半透明、浅色用深色半透明——竖屏深色控制面板是黑底，黑轨道会看不见。已播放段始终用主题蓝 `_accent`
 - **全屏方向跟随画面比例**（`_displayAspectRatio >= 1` → 横屏；9:16 保持竖屏），进全屏/切比例/切集都重算。`_forceLandscape`（null 跟随/true 强制横/false 强制竖）仅本次全屏会话有效，进出复位
 - **返回键：全屏时先退全屏，再按一次才退播放页**。`PopScope(canPop: !_fullscreen)` + `onPopInvokedWithResult` 调 `_toggleFullscreen()`；`canPop` 每次 build 求值，**不需计数器**。⚠️ 拦截分支**别自己调 `Navigator.pop()`**（重复出栈会把播放页弹掉）。用 `PopScope`，别用废弃 `WillPopScope`
 - **全屏控制层自动隐藏**：`_controlsVisible` + `_hideTimer`（4s）；手势层 `onTap`（仅全屏传 `allowTapToggle: true`）开关。控制层 = `AnimatedOpacity` + **`IgnorePointer`（收起时必须，否则隐形按钮吃点击）** + `Listener(onPointerDown:)` 重新计时；面板展开时不隐藏。右上角网速浮层独立常显，**也必须套 `IgnorePointer`**
