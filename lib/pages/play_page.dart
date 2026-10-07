@@ -1199,6 +1199,10 @@ class _PlayPageState extends State<PlayPage> {
   /// 全屏整体放大一圈，手指容易瞄。
   Widget _buildProgressRow() {
     final value = _controller.value;
+    // 深色（含全屏深色视频底）下轨道用浅色，否则黑底黑条看不见；
+    // 浅色模式沿用深色半透明轨道，叠在浅色控制面板上才看得清。
+    final darkTrack =
+        _fullscreen || Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
       child: Row(
@@ -1210,10 +1214,12 @@ class _PlayPageState extends State<PlayPage> {
               touchHeight: _fullscreen ? 48 : 36,
               thumbSize: _fullscreen ? 20 : 14,
               playedColor: _accent,
-              bufferedColor:
-                  _fullscreen ? const Color(0x8CFFFFFF) : const Color(0x40000000),
-              backgroundColor:
-                  _fullscreen ? const Color(0x40FFFFFF) : const Color(0x1F000000),
+              bufferedColor: darkTrack
+                  ? const Color(0x80FFFFFF)
+                  : const Color(0x40000000),
+              backgroundColor: darkTrack
+                  ? const Color(0x33FFFFFF)
+                  : const Color(0x1F000000),
             ),
           ),
           const SizedBox(width: 10),
