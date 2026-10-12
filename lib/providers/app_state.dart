@@ -181,13 +181,15 @@ class AppState extends ChangeNotifier {
     return removed;
   }
 
-  /// 导入视频源（json 地址），导入成功后覆盖原有源
+  /// 导入视频源（json 地址），与现有源**合并**（按 key 更新/追加，不清空已有源）。
+  ///
+  /// 区别于早期的「覆盖」导入：同名 key 的源被新数据更新，其余追加到现有源之后；
+  /// 需要插件的 spider 源在 [SourceImport.parse] 中已被跳过。
   Future<bool> importSites(String url) async {
     final list = await HttpService.instance.importSites(url);
     if (list.isEmpty) return false;
-    await ZyDatabase.instance.removeAll(DbNames.site);
     for (final s in list) {
-      await ZyDatabase.instance.add(DbNames.site, s.toJson());
+      await ZyDatabase.instance.put(DbNames.site, s.toJson());
     }
     await loadSites();
     return true;

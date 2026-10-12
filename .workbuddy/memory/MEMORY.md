@@ -45,6 +45,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 - 响应无 `charset` 按 UTF-8 解（http 包默认 latin1 会乱码）；GBK 不支持
 - `Site.id` 是装饰字段，身份用 `key`（`zy_database.dart` 全按 `item['key']` 索引）
 - **不编译也能端到端测**：`source_import.dart` 只依赖 dart:convert + `models/site.dart` → `.workbuddy/tools/import_test.dart`（24 断言）
+- **导入落地一律「合并」、不清空**：`AppState.importSites(url)`（源管理页「导入视频源」URL 导入）与 `importSitesFromContent(content)`（设置页本地文件导入）都按 `Site.key` upsert（`ZyDatabase.put`），同名 key 更新、其余追加，**都不再 `removeAll` 清空已有源**（早期版本 URL 导入会覆盖，1.7.5 起改为合并，与文件导入保持一致）。
 
 ## 源可用性检测（2026-10-01）
 - `HttpService.checkSite(site)` → `SiteCheckResult(health, message, ms)`，`enum SiteHealth { ok, warn, fail }`。请求 `?ac=list`，**与 App 取数逻辑完全一致**。ok=解析出分类/片单；warn=接口通但无片单；fail=连接层失败或返回非采集接口。检测超时 **8s**（正常 15s）；`_fetch`/`_load` 有可选 `timeout`
