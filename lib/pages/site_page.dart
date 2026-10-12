@@ -33,6 +33,10 @@ class _SitePageState extends State<SitePage> {
   int _done = 0;
   int _total = 0;
 
+  /// 串行化源库写操作，避免并发 worker 同时整库读改写互相覆盖
+  /// （shared_preferences 是整文件读改写，并发会丢更新）。
+  Future<void>? _dbChain;
+
   @override
   void dispose() {
     _urlController.dispose();
@@ -88,6 +92,15 @@ class _SitePageState extends State<SitePage> {
     });
   }
 
+  /// 把 [op] 接入串行写链：检测全部时多个 worker 可能同时改源库，
+  /// 而 shared_preferences 是整文件读改写，并发会丢更新，所以用单链排队。
+  Future<void> _serializeDb(Future<void> Function() op) {
+    final prev = _dbChain;
+    final next = (prev == null ? Future<void>.value() : prev).then((_) => op());
+    _dbChain = next.then<void>((_) {}, onError: (_) {});
+    return next;
+  }
+
   /// 检测全部源。
   ///
   /// 并发 4 而不是全量并发：采集站大多在同一个垃圾网络里，
@@ -117,42 +130,56 @@ class _SitePageState extends State<SitePage> {
           _results[site.key] = result;
           _done++;
         });
+        // 检测到不可用且当前启用 → 立即停用（实时反馈，开关马上掉），
+        // 不等检测结束再统一处理。多个 worker 并发写库，用串行链避免互相覆盖。
+        if (!result.ok && site.isActive) {
+          await _serializeDb(
+            () => context.read<AppState>().setSitesActive([site], false),
+          );
+          if (!mounted) return;
+        }
       }
     }
 
     await Future.wait(List<Future<void>>.generate(4, (_) => worker()));
     if (!mounted) return;
 
-    // 检测完成后，按检测结果整理每个源的启用状态：
-    //  - 不可用（warn / fail）且当前启用的 → 自动停用
-    //  - 可用（ok）且当前停用的 → 自动启用
-    // 原「一键停用失效源」按钮的行为已移到这里，免得每次手动点。
+    // 检测结束后：
+    //  1) 可用（ok）且停用的源 → 自动启用（沿用 1.7.1 行为）
+    //  2) 按健康度重排：可用源排到前面，不可用（warn/fail）排到后面，
+    //     没检测的源保持原样放最后。
     final appState = context.read<AppState>();
-    final toDisable = appState.sites
-        .where((s) =>
-            s.isActive && _results.containsKey(s.key) && !_results[s.key]!.ok)
-        .toList();
     final toEnable = appState.sites
         .where((s) =>
             !s.isActive && _results.containsKey(s.key) && _results[s.key]!.ok)
         .toList();
-    if (toDisable.isNotEmpty) {
-      await appState.setSitesActive(toDisable, false);
-    }
     if (toEnable.isNotEmpty) {
       await appState.setSitesActive(toEnable, true);
+      if (!mounted) return;
     }
+
+    // 不可用（warn/fail）中途已经实时停用了；这里只负责把顺序整理好。
+    final available = <Site>[];
+    final unavailable = <Site>[];
+    final undetected = <Site>[];
+    for (final s in appState.sites) {
+      final r = _results[s.key];
+      if (r == null) {
+        undetected.add(s);
+      } else if (r.ok) {
+        available.add(s);
+      } else {
+        unavailable.add(s);
+      }
+    }
+    await appState.reorderSites(
+      <Site>[...available, ...unavailable, ...undetected],
+    );
     if (!mounted) return;
+
     setState(() => _batchRunning = false);
-    if (toDisable.isNotEmpty || toEnable.isNotEmpty) {
-      final parts = <String>[];
-      if (toDisable.isNotEmpty) {
-        parts.add('停用 ${toDisable.length} 个失效源');
-      }
-      if (toEnable.isNotEmpty) {
-        parts.add('启用 ${toEnable.length} 个可用源');
-      }
-      showToast(context, parts.join('，'));
+    if (toEnable.isNotEmpty) {
+      showToast(context, '启用 ${toEnable.length} 个可用源，并将可用源排到前面');
     }
   }
 

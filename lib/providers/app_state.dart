@@ -158,6 +158,16 @@ class AppState extends ChangeNotifier {
     if (changed) await loadSites();
   }
 
+  /// 按给定顺序重写源库（只调顺序，不改启用状态）。
+  /// 「检测全部」结束后把可用源排前、不可用排后用。
+  Future<void> reorderSites(List<Site> ordered) async {
+    await ZyDatabase.instance.removeAll(DbNames.site);
+    for (final s in ordered) {
+      await ZyDatabase.instance.add(DbNames.site, s.toJson());
+    }
+    await loadSites();
+  }
+
   /// 批量删除源（源管理页「清除死站」用），返回实际删除数量。
   ///
   /// 走 [ZyDatabase.removeMany]，key 列表只重写一次；
