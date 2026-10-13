@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/video.dart';
 import '../utils/app_colors.dart';
+import '../utils/image_cache.dart';
 
 /// 首页卡片：封面 + 片名 + 分类/备注/年份（图上文下）。
 ///
@@ -112,6 +113,7 @@ class VideoCard extends StatelessWidget {
     } else {
       image = CachedNetworkImage(
         imageUrl: video.pic,
+        cacheManager: AppImageCache.instance,
         fit: BoxFit.cover,
         filterQuality: FilterQuality.low,
         placeholder: (_, __) => ColoredBox(

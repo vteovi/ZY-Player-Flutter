@@ -32,7 +32,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 ## Windows 桌面版
 - `windows/` 由 `tools/gen_windows_scaffold.py` 离线渲染；⚠️ 别重跑 `gen_scaffold.py`（会覆盖 android/）
 - 播放走 **fvp 0.38.1**，仅 `Platform.isWindows` 时 registerWith（内置 FFmpeg 支持 HLS，实现 video_player 平台接口 → 播放页零改动）。`video_player_win` 不支持 HLS，已否
-- 封面缓存：`databaseFactory = databaseFactoryFfi`
+- 封面缓存：`databaseFactory = databaseFactoryFfi`；三处 `CachedNetworkImage`/`CachedNetworkImageProvider`（列表网格、详情大图、详情背景）统一指向共享的 `AppImageCache.instance`（`lib/utils/image_cache.dart`，自定义 `CacheManager`，key=`zyPlayerImageCache`，`maxNrOfCacheObjects=2000`、`stalePeriod=90天`）。⚠️ 默认 `DefaultCacheManager` 只留 100 张（LRU 淘汰）——源站上千部海报翻过就重下，这是「每次都要重新加载图片」的真因；1.7.6 起扩大容量。改缓存相关别退回 `DefaultCacheManager`
 - 构建：双击 `tools/build_windows.bat` → Release + 便携 zip
 - ⚠️ **Bash 工具传输层会把命令里的 `\` 转成 `/`（heredoc 也不例外）**：含反斜杠字面量的脚本必须 Write 成文件再跑
 - 离线校验：`.workbuddy/tools/compile_plugin_java.sh`（纯 javac，20s；改 `third_party/` 的 Java 后先跑它，别等 Gradle）

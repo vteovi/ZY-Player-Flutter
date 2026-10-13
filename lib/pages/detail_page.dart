@@ -11,6 +11,7 @@ import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../services/system_control.dart';
 import '../utils/app_colors.dart';
+import '../utils/image_cache.dart';
 import '../utils/toast.dart';
 import '../widgets/common_widgets.dart';
 import 'play_page.dart';
@@ -349,7 +350,10 @@ class _DetailPageState extends State<DetailPage> {
       child: ImageFiltered(
         imageFilter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Image(
-          image: CachedNetworkImageProvider(_detail!.pic),
+          image: CachedNetworkImageProvider(
+            _detail!.pic,
+            cacheManager: AppImageCache.instance,
+          ),
           fit: BoxFit.cover,
           width: double.infinity,
           height: double.infinity,
@@ -377,6 +381,7 @@ class _DetailPageState extends State<DetailPage> {
                   ? const SizedBox(width: 160, height: 220)
                   : CachedNetworkImage(
                       imageUrl: detail.pic,
+                      cacheManager: AppImageCache.instance,
                       height: size.height * 0.36,
                       fit: BoxFit.fitHeight,
                       placeholder: (_, __) => const SizedBox(
