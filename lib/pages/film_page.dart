@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +9,7 @@ import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
+import '../utils/image_prefetch.dart';
 import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
@@ -425,6 +428,8 @@ class CategoryTabState extends State<CategoryTab>
           // 有缓存可显示就不铺骨架屏，直接展示
           _loading = false;
         });
+        // 抢先预取这些封面的磁盘缓存：本次滚动、下次打开直接读本地不再转圈
+        unawaited(ImagePrefetch.prefetch(restored.map((v) => v.pic).toList()));
       }
     } else if (mounted) {
       setState(() {
@@ -466,6 +471,8 @@ class CategoryTabState extends State<CategoryTab>
       }
       _loading = false;
     });
+    // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
+    unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
   }
 
   /// 取某一页的片单并写入缓存。

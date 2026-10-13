@@ -25,6 +25,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 
 ## 首页片单本地缓存（1.7.7）
 `lib/services/list_cache.dart` 按 `(siteKey,tid,pg)` 缓存分页片单+元信息(`pagecount/recordcount/ts`) 到 `DbNames.listcache`。`film_page` `CategoryTab._load`：先读缓存秒出→后台 `_refresh` 静默替换；刷新失败保留缓存不空白。`_appendPage(page,{sink})` 写缓存。`video_grid` 给 `VideoCard` 加 `ValueKey(video.id)` 防闪烁。「重置软件」走 `clearDB()` 已清 listcache。`ListCache.clearAll()` 可单独清。
+- **封面秒显靠预取（1.7.9）**：图必须下载过一次才进磁盘缓存，首见/新内容必走网络（硬限制）。`lib/utils/image_prefetch.dart` 的 `ImagePrefetch.prefetch()` 在 `_load`（读缓存后）/ `_refresh`（刷新后）后台抢先拉封面进磁盘缓存（并发上限 6、URL 去重），让滚动/下次打开直接读本地。网格封面 `memCacheWidth:480`、详情大图 `600` 限制解码尺寸降内存。
 
 ## 加载态 UI：一律骨架屏，禁灰黑遮罩
 `LoadingMask` 已删。列表用 `VideoGridSkeleton`（共用 `videoGridDelegate`）。有内容刷新不抹内容+顶部 2px `LinearProgressIndicator`。换源不立刻重置 `_classes`。

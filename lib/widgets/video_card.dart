@@ -116,6 +116,9 @@ class VideoCard extends StatelessWidget {
         cacheManager: AppImageCache.instance,
         fit: BoxFit.cover,
         filterQuality: FilterQuality.low,
+        // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
+        // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
+        memCacheWidth: 480,
         placeholder: (_, __) => ColoredBox(
           color: bgColor,
           child: Center(child: SizedBox(

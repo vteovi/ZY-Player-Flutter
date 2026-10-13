@@ -384,6 +384,8 @@ class _DetailPageState extends State<DetailPage> {
                       cacheManager: AppImageCache.instance,
                       height: size.height * 0.36,
                       fit: BoxFit.fitHeight,
+                      // 详情大图是焦点图，给到 600px 宽解码，清晰又不浪费内存
+                      memCacheWidth: 600,
                       placeholder: (_, __) => const SizedBox(
                         width: 160,
                         height: 220,
