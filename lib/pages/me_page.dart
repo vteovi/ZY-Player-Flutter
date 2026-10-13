@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_state.dart';
 import '../services/data_backup.dart';
+import '../services/list_cache.dart';
 import '../utils/toast.dart';
 import 'history_page.dart';
 import 'site_page.dart';
@@ -66,6 +67,20 @@ class MePage extends StatelessWidget {
     final ok = await context.read<AppState>().clearStars();
     if (!context.mounted) return;
     showToast(context, ok ? '清空收藏夹数据成功' : '清空收藏夹数据失败', success: ok);
+  }
+
+  /// 清除所有分类片单的本地缓存（数据层，与封面图片缓存无关）。
+  /// 清除后打开分类会重新从网络加载一次；已缓存的封面不受影响。
+  Future<void> _clearListCache(BuildContext context) async {
+    final confirmed = await _confirmClear(
+      context,
+      '清除片单缓存',
+      '确定要清除所有分类片单的本地缓存吗？清除后打开分类会重新从网络加载一次，已缓存的封面不受影响。',
+    );
+    if (!confirmed) return;
+    await ListCache.clearAll();
+    if (!context.mounted) return;
+    showToast(context, '已清除片单缓存');
   }
 
   Future<void> _resetApp(BuildContext context) async {
@@ -400,6 +415,11 @@ class MePage extends StatelessWidget {
             onTap: () => _showThemeModePicker(context),
           ),
           _MenuItem(
+            title: '清除片单缓存',
+            subtitle: '清除分类片单的本地缓存（封面不受影响）',
+            onTap: () => _clearListCache(context),
+          ),
+          _MenuItem(
             title: '清空播放记录',
             subtitle: '清空播放记录数据',
             onTap: () => _clearHistory(context),
@@ -417,7 +437,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.7.7',
+            subtitle: '1.7.8',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(

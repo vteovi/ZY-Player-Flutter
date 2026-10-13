@@ -67,6 +67,9 @@ unlinked_spec.ds
 # 图标源素材（本地保留便于重跑脚本，体积大不入库）
 .workbuddy/tools/icon_source.png
 
+# 构建日志（tools/build_apk.bat / build_windows.bat 产出，含日期/哈希，不入库）
+tools/build*log*.txt
+
 # iOS/XCode related
 **/ios/**/*.mode1v3
 **/ios/**/*.mode2v3
