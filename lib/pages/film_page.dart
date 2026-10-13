@@ -5,6 +5,7 @@ import '../models/site.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
+import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
 import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
@@ -397,40 +398,99 @@ class CategoryTabState extends State<CategoryTab>
     }
   }
 
+  /// 载入当前分类的片单。
+  ///
+  /// 两步：① 先读本地缓存（若存在）瞬间把上一次的片单画出来——**打开即显示**；
+  /// ② 后台静默向源站刷新，拿到新数据再替换。刷新失败则保留缓存、不空白。
   Future<void> _load() async {
     if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _videos.clear();
-    });
-    final info =
-        await HttpService.instance.fetchPage(widget.site, tid: widget.videoClass.tid);
-    if (!mounted) return;
-    setState(() {
-      _pageCount = info.pagecount;
-      _recordCount = info.recordcount;
-    });
-    widget.onRecordCount(widget.videoClass.tid, _recordCount);
-    await _appendPage(_pageCount);
-    if (_pageCount > 1) {
-      _pageCount--;
-      await _appendPage(_pageCount);
+    final siteKey = widget.site.key;
+    final tid = widget.videoClass.tid;
+
+    // ① 本地缓存优先：恢复元信息与「末页 + 末页-1」（与网络取数顺序一致）
+    final meta = await ListCache.getMeta(siteKey, tid);
+    if (meta != null) {
+      _recordCount = meta.recordcount;
+      widget.onRecordCount(tid, _recordCount);
+      final pages = <int>[meta.pagecount];
+      if (meta.pagecount > 1) pages.add(meta.pagecount - 1);
+      final restored = <Video>[];
+      for (final pg in pages) {
+        final cached = await ListCache.getPage(siteKey, tid, pg);
+        if (cached != null) restored.addAll(cached);
+      }
+      if (mounted) {
+        setState(() {
+          _videos.addAll(restored);
+          // 有缓存可显示就不铺骨架屏，直接展示
+          _loading = false;
+        });
+      }
+    } else if (mounted) {
+      setState(() {
+        _loading = true;
+        _videos.clear();
+      });
     }
-    if (mounted) setState(() => _loading = false);
+
+    // ② 后台刷新（不阻塞首屏）
+    await _refresh();
   }
 
-  Future<void> _appendPage(int page) async {
+  /// 向源站重新拉取片单并写回缓存，最后用最新数据替换显示。
+  /// 仅在拿到非空结果时才替换，避免刷新失败时把缓存内容清空成空白。
+  Future<void> _refresh() async {
+    if (!mounted) return;
+    final site = widget.site;
+    final tid = widget.videoClass.tid;
+    final info = await HttpService.instance.fetchPage(site, tid: tid);
+    if (!mounted) return;
+    _pageCount = info.pagecount;
+    _recordCount = info.recordcount;
+    widget.onRecordCount(tid, _recordCount);
+    await ListCache.putMeta(site.key, tid, info.pagecount, info.recordcount);
+
+    // 与原始取数顺序一致：末页、末页-1（不足 6 条继续往前翻），并写入缓存
+    final fresh = <Video>[];
+    await _appendPage(info.pagecount, sink: fresh);
+    if (info.pagecount > 1) {
+      _pageCount = info.pagecount - 1;
+      await _appendPage(_pageCount, sink: fresh);
+    }
+    if (!mounted) return;
+    setState(() {
+      if (fresh.isNotEmpty) {
+        _videos
+          ..clear()
+          ..addAll(fresh);
+      }
+      _loading = false;
+    });
+  }
+
+  /// 取某一页的片单并写入缓存。
+  ///
+  /// [sink] 非空时把结果累加进外部列表（用于后台刷新：先攒齐再一次性替换显示）；
+  /// 为空时直接累加进 [_videos]（用于滚动加载更多：边取边显示）。
+  Future<void> _appendPage(int page, {List<Video>? sink}) async {
     if (page <= 0) return;
+    final target = sink ?? _videos;
     final list = await HttpService.instance.fetchList(
       widget.site,
       pg: page,
       tid: widget.videoClass.tid,
     );
+    await ListCache.putPage(
+      widget.site.key,
+      widget.videoClass.tid,
+      page,
+      list,
+    );
     if (!mounted) return;
-    setState(() => _videos.addAll(list));
-    if (_videos.length <= 6 && page > 1) {
-      _pageCount--;
-      await _appendPage(_pageCount);
+    target.addAll(list);
+    if (target.length <= 6 && page > 1) {
+      _pageCount = page - 1;
+      await _appendPage(_pageCount, sink: sink);
     }
   }
 

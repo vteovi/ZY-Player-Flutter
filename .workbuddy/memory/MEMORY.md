@@ -47,6 +47,12 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据结构一一对应�
 - **不编译也能端到端测**：`source_import.dart` 只依赖 dart:convert + `models/site.dart` → `.workbuddy/tools/import_test.dart`（24 断言）
 - **导入落地一律「合并」、不清空**：`AppState.importSites(url)`（源管理页「导入视频源」URL 导入）与 `importSitesFromContent(content)`（设置页本地文件导入）都按 `Site.key` upsert（`ZyDatabase.put`），同名 key 更新、其余追加，**都不再 `removeAll` 清空已有源**（早期版本 URL 导入会覆盖，1.7.5 起改为合并，与文件导入保持一致）。
 
+## 首页片单本地缓存（1.7.7 起）
+- **痛点**：首页/分类页每次打开都向源站重新拉片单（**数据层**，与封面图片缓存无关），源站慢→整屏干等。封面缓存只救"看过的图"，救不了首屏数据。
+- **方案**：`lib/services/list_cache.dart` 按 `(siteKey, tid, pg)` 把分页片单与元信息（`pagecount/recordcount/ts`）缓存进 `DbNames.listcache`（shared_preferences）。`film_page.dart` 的 `CategoryTab._load`：① 先读缓存瞬间画出上一次片单（打开即显示）② 后台 `_refresh()` 静默刷新替换；刷新失败（拿到空）**保留缓存不空白**。取数顺序与旧逻辑一致（末页、末页-1，不足 6 条往前翻），`_appendPage(page, {sink})` 写缓存；`sink` 非空时攒进外部列表（刷新用）、为空时直接进 `_videos`（滚动加载更多用）。
+- 「重置软件」走 `clearDB()` 已清掉 listcache，无需单独处理。
+- `video_grid.dart` 给 `VideoCard` 加了 `ValueKey(video.id)`，刷新替换 `_videos` 时按 id 复用、不闪。
+
 ## 源可用性检测（2026-10-01）
 - `HttpService.checkSite(site)` → `SiteCheckResult(health, message, ms)`，`enum SiteHealth { ok, warn, fail }`。请求 `?ac=list`，**与 App 取数逻辑完全一致**。ok=解析出分类/片单；warn=接口通但无片单；fail=连接层失败或返回非采集接口。检测超时 **8s**（正常 15s）；`_fetch`/`_load` 有可选 `timeout`
 - `_describeRawError` 分类**实测校准，别凭感觉改**：Windows 连接被拒 `errno=1225`/`10061`（Linux 111），文案中文「远程计算机拒绝网络连接」；`HandshakeException` 分出 `CERTIFICATE_VERIFY_FAILED`（证书过期/无效）与纯握手失败；正文 `<!DOCTYPE html>` →「返回的是网页，接口已变更」（采集站最常见死法）

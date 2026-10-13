@@ -86,6 +86,7 @@ class VideoGridView extends StatelessWidget {
         }
         final video = videos[index];
         return VideoCard(
+          key: ValueKey(video.id),
           video: video,
           sourceLabel: labelOf?.call(video),
           onTap: () => onTap(video),

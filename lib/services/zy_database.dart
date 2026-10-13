@@ -191,4 +191,6 @@ class DbNames {
   static const String star = 'star';
   static const String history = 'history';
   static const String search = 'search';
+  /// 分类片单缓存（每个 (源, 分类) 的分页结果与元信息），详见 list_cache.dart
+  static const String listcache = 'listcache';
 }
