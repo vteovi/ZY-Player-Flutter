@@ -30,14 +30,12 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   VideoDetail? _detail;
   bool _loading = true;
-  bool _starred = false;
   List<PlayItem> _playList = <PlayItem>[];
 
   @override
   void initState() {
     super.initState();
     _load();
-    _checkStar();
   }
 
   String get _recordKey => '${widget.siteKey}-${widget.videoId}';
@@ -97,15 +95,13 @@ class _DetailPageState extends State<DetailPage> {
     return result;
   }
 
-  Future<void> _checkStar() async {
-    final starred = context.read<AppState>().isStarred(_recordKey);
-    if (mounted) setState(() => _starred = starred);
-  }
-
   Future<void> _toggleStar() async {
     final detail = _detail;
     if (detail == null) return;
     final state = context.read<AppState>();
+    // 以 AppState 中的权威状态为准，不信任本页缓存的 _starred：
+    // 从播放页返回后本地状态可能过期，导致对已存在的收藏重复 add（返回 false → 添加失败）。
+    final starred = state.isStarred(_recordKey);
     final item = RecordItem(
       key: _recordKey,
       id: detail.id,
@@ -122,16 +118,17 @@ class _DetailPageState extends State<DetailPage> {
       des: detail.des,
       last: detail.last,
     );
-    if (_starred) {
-      final ok = await state.removeStar(_recordKey);
-      if (!mounted) return;
-      showToast(context, ok ? '移除收藏成功' : '移除收藏失败', success: ok);
-    } else {
-      final ok = await state.addStar(item);
-      if (!mounted) return;
-      showToast(context, ok ? '添加收藏成功' : '添加收藏失败', success: ok);
-    }
-    await _checkStar();
+    final ok = starred
+        ? await state.removeStar(_recordKey)
+        : await state.addStar(item);
+    if (!mounted) return;
+    showToast(
+      context,
+      ok
+          ? (starred ? '移除收藏成功' : '添加收藏成功')
+          : (starred ? '移除收藏失败' : '添加收藏失败'),
+      success: ok,
+    );
   }
 
   Future<void> _addHistory(PlayItem item) async {
@@ -429,8 +426,10 @@ class _DetailPageState extends State<DetailPage> {
           top: _actionLane - 28,
           right: 116,
           child: _actionButton(
-            icon: _starred ? Icons.star : Icons.star_border,
-            color: _starred
+            icon: context.watch<AppState>().isStarred(_recordKey)
+                ? Icons.star
+                : Icons.star_border,
+            color: context.watch<AppState>().isStarred(_recordKey)
                 ? const Color(0xFFFF4445)
                 : (isDark ? Colors.white70 : const Color(0xFF606266)),
             onTap: _toggleStar,

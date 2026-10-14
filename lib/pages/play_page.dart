@@ -136,7 +136,6 @@ class _PlayPageState extends State<PlayPage> {
 
   /// 当前正在播放的地址（切集后会变化，用于写入历史）
   String _currentUrl = '';
-  bool _starred = false;
 
   /// 当前是否已通知系统保持常亮，避免重复调用 setKeepScreenOn
   bool _awake = false;
@@ -159,7 +158,6 @@ class _PlayPageState extends State<PlayPage> {
     _controller.addListener(_onControllerUpdate);
     _initPlayer(seekTo: widget.initialTime);
     _loadDetail();
-    _checkStar();
     _loadSystemLevels();
     // 每 10 秒写一次播放进度
     _historyTimer = Timer.periodic(
@@ -314,15 +312,13 @@ class _PlayPageState extends State<PlayPage> {
     }
   }
 
-  Future<void> _checkStar() async {
-    final starred = context.read<AppState>().isStarred(_recordKey);
-    if (mounted) setState(() => _starred = starred);
-  }
-
   Future<void> _toggleStar() async {
     final detail = _detail;
     if (detail == null) return;
     final state = context.read<AppState>();
+    // 以 AppState 中的权威状态为准，不信任本页缓存的 _starred：
+    // 从详情页收藏后返回，本地状态可能过期，导致对已存在的收藏重复 add/remove。
+    final starred = state.isStarred(_recordKey);
     final item = RecordItem(
       key: _recordKey,
       id: detail.id,
@@ -339,13 +335,17 @@ class _PlayPageState extends State<PlayPage> {
       des: detail.des,
       last: detail.last,
     );
-    final ok = _starred
+    final ok = starred
         ? await state.removeStar(_recordKey)
         : await state.addStar(item);
     if (!mounted) return;
-    showToast(context, ok ? (_starred ? '移除收藏成功' : '添加收藏成功') : '操作失败',
-        success: ok);
-    await _checkStar();
+    showToast(
+      context,
+      ok
+          ? (starred ? '移除收藏成功' : '添加收藏成功')
+          : (starred ? '移除收藏失败' : '添加收藏失败'),
+      success: ok,
+    );
   }
 
   /// 每 10 秒记录一次播放进度。
@@ -1272,9 +1272,14 @@ class _PlayPageState extends State<PlayPage> {
             }),
           ),
           _controlButton(
-            icon: _starred ? Icons.star_rounded : Icons.star_border_rounded,
-            label: _starred ? '已收藏' : '收藏',
-            tint: _starred ? const Color(0xFFFF4445) : null,
+            icon: context.watch<AppState>().isStarred(_recordKey)
+                ? Icons.star_rounded
+                : Icons.star_border_rounded,
+            label:
+                context.watch<AppState>().isStarred(_recordKey) ? '已收藏' : '收藏',
+            tint: context.watch<AppState>().isStarred(_recordKey)
+                ? const Color(0xFFFF4445)
+                : null,
             onTap: _toggleStar,
           ),
           if (_playList.length > 1)
