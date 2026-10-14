@@ -37,7 +37,11 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 进度条独占一行+等宽按钮行。比例/大小两独立维度（`_stageAreaSize`+双层 FittedBox）。交换宽高是 `RotatedBox`+倒数 aspect。手势层左亮右音量双击暂停。进度条自绘 `_ProgressSlider`（轨道色跟主题，已播段用 `_accent`）。全屏方向跟比例。返回键 `PopScope(canPop:!_fullscreen)` 先退全屏再退页。全屏控制层 `AnimatedOpacity`+`IgnorePointer`+4s 隐藏。实时网速 `AppConfig.showSpeed` 默认关（`video_network_stats.dart` 轮询 `playerId`，video_player 2.10.1）。
 
 ## 应用图标（1.7.4 定稿）
-`make_icons.py`，源图 `.workbuddy/tools/icon_source.png`（透明圆角外+黑底+青三角+声波，无文字）。adaptive foreground 满幅1.0。`assets/images/logo.png` 不可删（启动页用）。设置页顶部品牌区已删。
+`make_icons.py`，源图 `.workbuddy/tools/icon_source.png`（透明圆角外+黑底+青三角+声波，无文字）。adaptive foreground 满幅1.0。`assets/images/logo.png` 资源保留但**已不再被代码引用**（1.7.10 删掉 Flutter 启动页 `AppBootstrap` 后）。设置页顶部品牌区已删。
+
+## 启动流程（1.7.10 定稿）
+- **无 Flutter 开屏**：`main.dart` 直接 `home: MainPage()`，删除了 `AppBootstrap`（原 logo+转圈）。原生 `LaunchTheme` 背景已纯色（`drawable-v21` 用 `?android:colorBackground` 跟随系统深浅，与 app 背景同色，过渡无缝），无 logo。
+- `FilmPage.initState` 注册 `AppState` 监听，源列表就绪（空→非空）后 `reloadIfNeeded()` 自动重载，避免直进主页时短暂卡"暂无可用视频源"。`reloadIfNeeded` 按源签名比对，收藏/历史加载不触发重复拉取。
 
 ## 其他坑（勿回退）
 - Flutter 命中测试：触点在父节点外整棵子树不命中；要放外面先留空间（详情页收藏/播放按钮「点了没反应」即此因）。

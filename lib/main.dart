@@ -55,7 +55,9 @@ class _AppRoot extends StatelessWidget {
       theme: _buildTheme(Brightness.light),
       darkTheme: _buildTheme(Brightness.dark),
       themeMode: _themeModeMap[mode] ?? ThemeMode.system,
-      home: const AppBootstrap(),
+      // 直接进主页：原生 LaunchTheme 已是纯色背景（drawable-v21 跟随系统深浅），
+      // 去掉 Flutter 层的 logo+转圈开屏，原生背景 → 主页内容 无缝衔接。
+      home: const MainPage(),
     );
   }
 
@@ -134,30 +136,5 @@ class _AppRoot extends StatelessWidget {
         dividerColor: isDark ? AppColors.darkDivider : const Color(0xFFEDEDED),
       ),
     );
-  }
-}
-
-/// 启动页：等待本地数据库初始化完成
-class AppBootstrap extends StatelessWidget {
-  const AppBootstrap({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final ready = context.select<AppState, bool>((s) => s.ready);
-    if (!ready) {
-      return const Scaffold(
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Image(image: AssetImage('assets/images/logo.png'), width: 120),
-              SizedBox(height: 24),
-              CircularProgressIndicator(),
-            ],
-          ),
-        ),
-      );
-    }
-    return const MainPage();
   }
 }

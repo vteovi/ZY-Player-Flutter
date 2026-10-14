@@ -57,14 +57,24 @@ class FilmPageState extends State<FilmPage>
     super.initState();
     _tabController = TabController(length: _classes.length, vsync: this);
     _tabController.addListener(_onTabChanged);
+    // 直接进主页时 sites 可能还没加载完（bootstrap 是异步的），先挂监听：
+    // 等源列表就绪（空 → 非空）后自动 reload，避免卡在「暂无可用视频源」。
+    context.read<AppState>().addListener(_onAppStateChanged);
     reload();
   }
 
   @override
   void dispose() {
+    context.read<AppState>().removeListener(_onAppStateChanged);
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// AppState 任意变化（含 sites 加载完成）时尝试按需重载。
+  /// [reloadIfNeeded] 内部按源签名比对，签名不变（如只加载了收藏/历史）不会重复拉取。
+  void _onAppStateChanged() {
+    if (mounted) unawaited(reloadIfNeeded());
   }
 
   void _onTabChanged() {
