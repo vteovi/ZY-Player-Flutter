@@ -6,12 +6,16 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 - 网络 http；XML 用 xml 包；播放 video_player（Android=fork ExoPlayer 原生 HLS）；封面 cached_network_image（Windows 需 sqflite_common_ffi）
 - 包名 `com.zy.player` / minSdk 24 / targetSdk 35 / v2 签名
 
-## ⚠️ 两条纪律
-1. **编译 APK/出构建物由用户做**，助手只改代码 + 单进程静态检查（`dart-single-process-analyze`）。沙箱注入 tsbx.dll 使任何派生子进程失败（CreateFile failed 231），工具侧无法绕过。
-2. **助手只 `git commit` 本地，绝不 `git push`**。收尾主动落快照，确认 `git status --porcelain` 为 0 再汇报。跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
+## ⚠️ 协作纪律（用户明确要求，勿破）
+1. **编译 APK/出构建物由用户做**，助手只改代码 + 单进程静态检查（`dart-single-process-analyze`）。沙箱注入 tsbx.dll 使任何派生子进程失败（CreateFile failed 231），工具侧无法绕过。用户原话（2026-10-06）：「你不进行构建，构建 APK 交给我，你只负责写代码」。
+2. **助手只 `git commit` 本地，绝不 `git push`**。用户原话（2026-10-01）：「每次改完，快照还是要你自己来创建一个快照」——即收尾、改完代码/文档后要主动 `git add`+`git commit` 落本地快照，并确认 `git status --porcelain` 为 0（工作区干净）再汇报。
+3. **绝不主动重试任何网络操作**。GitHub 在本机网络下常连接重置，`git push` / `git ls-remote` 都会长时间挂起，用户不愿助手卡在那里反复推；推送命令附上供用户自己执行即可。
+4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
+5. **静态自检要格外仔细**：不编译发现不了错误；历史上 Edit 替换 import 块时误删过仍在使用的 `DetailActivity` import（人肉复查才发现）。改引用/结构后务必复查符号。改完照常：静态校验 + bump 版本号。
 
 ## 构建
 `flutter build apk --release --target-platform android-arm64` → ~342s / 18.1MB；debug 全 ABI ~991s / 192MB。双击 `tools/build_apk.bat`（探测→构建→拷根目录→SHA1，日志 build_log.txt）。APK 名从 pubspec 派生（`findstr /b /c:"version:"`）。**版本号同步四处**：pubspec.yaml / me_page.dart 副标题 / android/local.properties / README.md；versionCode 严格递增。构建阻塞点：NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量+in-process；release 关 lint/jetifier、单 ABI。D 盘常剩~8G，构建前 `flutter clean`。
+- **分工交付物格式**：助手改完代码交付「改动清单 + 静态自检结论 + 建议用户执行的构建命令」，由用户跑并反馈报错，助手据报错改。环境佐证（Android/Gradle）：单次工具调用约 3.5 分钟墙钟上限，gradle daemon 会被外部终止（报 `Gradle build daemon has been stopped: stop command received`）；后台/`nohup` 脱离也活不过单次调用，长构建交用户跑是更合理的分工。
 
 ## 视频源
 - 引擎只认 maccms json/xml（`Site.api` 须真实 URL）。`SourceImport._mapType` 收 type 0=xml/1=json，**type 3/4/7/15(SpiderJS/drpy) 跳过**。
@@ -52,3 +56,12 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 - 自定义播放器（PC/Windows）：设置页选 `.exe` 持久化 `AppConfig.externalPlayerPath`；详情页「外部播放」调 `openWithExternalPlayer(url,customPath:)`；未设置走自动查找。
 - 数据备份/恢复 `data_backup.dart`：备份用 `saveFile`(bytes Android/iOS 必填)；恢复用 `pickFiles`。
 - 青少年模式已整体移除，别写回。
+
+## WorkBuddy 工具环境坑（实锤，避免重踩）
+- **Bash 命令里的反斜杠 `\` 会被传输层转成 `/`**（heredoc 引号包裹也不幸免：`b'D:\\WorkBuddy'` 到手 len=13、值 `D://WorkBuddy`）。含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再 `python file.py`，绝不能内联进 Bash 命令；文件路径参数尽量用正斜杠（Windows API 都接受）。
+- **Git Bash 会把 `/MIR`、`/S` 这类 Windows 命令开关当路径转换**（`robocopy src dst /MIR` → 报 `错误: 无效参数 #3: C:/Users/.../PortableGit/.../MIR`）。解决：命令前加 `MSYS_NO_PATHCONV=1`，即 `MSYS_NO_PATHCONV=1 robocopy "D:/a" "D:/b" /MIR /NFL /NDL /NJH /NJS /NP`。注意 Windows 下 robocopy 返回码 0–7 都算成功，`&&` 链会被 1 码打断。
+
+## 静态检查的硬约束
+- 本项目用 `dart-single-process-analyze` 技能跑单进程静态检查（生成环境到 `C:/Users/VTE/AppData/Local/Temp/zyanalyze/analyze.dart`，再 `C:/flutter/bin/dart .../analyze.dart --no-lints`）。
+- 沙箱禁止派生子进程，故不能跑 `flutter analyze`/`dart analyze`（会报 CreateFile failed 231）；只能走该技能的单进程路径。
+- `android/local.properties` 被 gitignore（本地不入库），`git add` 它会被拒；提交时注意只加仓库内文件。
