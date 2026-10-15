@@ -539,16 +539,45 @@ class CategoryTabState extends State<CategoryTab>
     }
   }
 
+  /// 滚动到底部时加载更早的分页。
+  ///
+  /// ⚠️ 两点易踩的坑都已修：
+  /// 1) 取页（网络）异常必须用 try/finally 复位 `_loadingMore`，否则一旦某页失败，
+  ///    该标志永久停在 true，后续所有加载都被 guard 拦掉——表现为「滑到某处就再也不动了」。
+  ///    失败时回退 `_pageCount`，下次还能重试这一页。
+  /// 2) 加载完若用户仍停在底部（静止、无新滚动事件），`_onScroll` 不会再触发，必须
+  ///    「来回滑一下」才续拉。这里在成功贴底且列表确有增长时**自动续拉下一页**，
+  ///    让到底即连续加载，不再需要手动划动。重复页（源站返回相同 id）不增长则不续拉，
+  ///    避免对问题源站空转狂刷；`_pageCount` 一路递减到 1 自然收尾。
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || _pageCount <= 1) return;
     _loadingMore = true;
+    final before = _videos.length;
     _pageCount--;
-    await _appendPage(_pageCount);
-    _loadedPages.add(_pageCount);
+    try {
+      await _appendPage(_pageCount);
+      _loadedPages.add(_pageCount);
+    } catch (e) {
+      _pageCount++; // 回退，待下次滚动重试本页
+      if (mounted) setState(() {});
+      return; // finally 仍会复位 _loadingMore
+    } finally {
+      if (mounted) {
+        setState(() => _loadingMore = false);
+      } else {
+        _loadingMore = false;
+      }
+    }
+    // 成功且列表增长、仍贴底：自动续拉，免去「往下滑一下再往上滑一下」
     if (mounted) {
-      setState(() => _loadingMore = false);
-    } else {
-      _loadingMore = false;
+      final grew = _videos.length > before;
+      final pos = _scrollController.position;
+      if (grew &&
+          _pageCount > 1 &&
+          _scrollController.hasClients &&
+          pos.pixels >= pos.maxScrollExtent - 400) {
+        _loadMore();
+      }
     }
   }
 
