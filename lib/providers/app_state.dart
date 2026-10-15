@@ -388,6 +388,38 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// 开始播放某影片：确保历史中存在该条，并把 ts 刷新为「现在」使其置顶。
+  ///
+  /// 解决「重播同一部影片却没回到历史最前」的 bug：
+  /// 详情页原先在 key 已存在时直接 return、播放页写进度也只更新 currentTime/duration
+  /// 不碰 ts，导致重播的影片 ts 停留在最初那次。这里统一在「开始播放」时刷新 ts。
+  /// - 从未播放过 → 新建（ts=now）。
+  /// - 已存在（重播）→ 保留原播放进度，仅刷新 ts 置顶，并用最新详情更新元信息。
+  Future<void> touchHistory(RecordItem item) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final index = _histories.indexWhere((h) => h.key == item.key);
+    final RecordItem record;
+    if (index >= 0) {
+      // 重播：保留原进度，只刷新 ts 置顶
+      final old = _histories[index];
+      record = item.copyWithRecord(
+        ts: now,
+        currentTime: old.currentTime,
+        duration: old.duration,
+      );
+    } else {
+      record = item.copyWithRecord(ts: now);
+    }
+    await ZyDatabase.instance.put(DbNames.history, record.toJson());
+    if (index >= 0) {
+      _histories[index] = record;
+    } else {
+      _histories.add(record);
+    }
+    _histories.sort((a, b) => b.ts.compareTo(a.ts));
+    notifyListeners();
+  }
+
   Future<bool> clearHistories() async {
     final ok = await ZyDatabase.instance.removeAll(DbNames.history);
     await loadHistories();

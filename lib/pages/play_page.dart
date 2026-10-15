@@ -288,28 +288,26 @@ class _PlayPageState extends State<PlayPage> {
       _playList = list;
     });
 
-    // 详情页已经写过历史；从其他地方进来时补一条
+    // 不论是详情页进来还是从其他地方（如历史分栏）直接进来，开始播放都刷新历史 ts
     final state = context.read<AppState>();
-    if (state.historyOf(_recordKey) == null) {
-      await state.addHistory(RecordItem(
-        key: _recordKey,
-        label: _title.isEmpty ? detail.name : _title,
-        url: _currentUrl,
-        id: detail.id,
-        tid: detail.tid,
-        name: detail.name,
-        type: detail.type,
-        pic: detail.pic,
-        lang: detail.lang,
-        area: detail.area,
-        year: detail.year,
-        note: detail.note,
-        actor: detail.actor,
-        director: detail.director,
-        des: detail.des,
-        last: detail.last,
-      ));
-    }
+    await state.touchHistory(RecordItem(
+      key: _recordKey,
+      label: _title.isEmpty ? detail.name : _title,
+      url: _currentUrl,
+      id: detail.id,
+      tid: detail.tid,
+      name: detail.name,
+      type: detail.type,
+      pic: detail.pic,
+      lang: detail.lang,
+      area: detail.area,
+      year: detail.year,
+      note: detail.note,
+      actor: detail.actor,
+      director: detail.director,
+      des: detail.des,
+      last: detail.last,
+    ));
   }
 
   Future<void> _toggleStar() async {

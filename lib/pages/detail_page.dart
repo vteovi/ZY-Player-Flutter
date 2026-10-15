@@ -135,8 +135,8 @@ class _DetailPageState extends State<DetailPage> {
     final detail = _detail;
     if (detail == null) return;
     final state = context.read<AppState>();
-    if (state.historyOf(_recordKey) != null) return;
-    await state.addHistory(RecordItem(
+    // 开始播放即刷新历史 ts（重播会置顶）；touchHistory 内部按 key upsert 并保留进度
+    await state.touchHistory(RecordItem(
       key: _recordKey,
       label: item.label,
       url: item.value,
