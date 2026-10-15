@@ -24,7 +24,6 @@ set "FLUTTER=C:\flutter\bin\flutter.bat"
 set "DART=C:\flutter\bin\dart.bat"
 set "LOG=%PROJ%\tools\build_log.txt"
 set "PROBEOUT=%PROJ%\tools\probe_result.txt"
-rem --- split-per-abi 的 arm64 产物名（纯 arm64 小包，约 18MB）---
 set "APK=%PROJ%\build\app\outputs\flutter-apk\app-arm64-release.apk"
 rem --- derive version from pubspec.yaml so the APK name never goes stale ---
 set "APPVER="
@@ -34,10 +33,9 @@ for /f "tokens=1 delims=+" %%B in ("%APPVER%") do set "APPVER=%%B"
 set "OUT=%PROJ%\ZY-Player-v%APPVER%-arm64-release.apk"
 
 echo ================================================================
-echo   ZY-Player Flutter  -  release APK builder (arm64 only)
+echo   ZY-Player Flutter  -  release APK builder
 echo ================================================================
 echo   Version: %APPVER%
-echo   NOTE: --split-per-abi  ->  pure arm64 build, ~18MB
 echo.
 
 if not exist "%FLUTTER%" goto no_flutter
@@ -55,7 +53,7 @@ if errorlevel 1 goto probe_failed
 echo [2/4] Clearing old APK ...
 if exist "%APK%" del /q "%APK%"
 
-echo [3/4] Building arm64 only. This takes about 6 to 15 minutes.
+echo [3/4] Building. This takes about 6 to 15 minutes.
 echo       The window will look frozen - please DO NOT close it.
 echo.
 call "%FLUTTER%" build apk --release --target-platform android-arm64 --split-per-abi > "%LOG%" 2>&1
@@ -67,7 +65,7 @@ copy /y "%APK%" "%OUT%" >nul
 
 echo.
 echo ================================================================
-echo   BUILD OK (arm64 only)
+echo   BUILD OK
 echo ================================================================
 echo   File: %OUT%
 for %%F in ("%OUT%") do echo   Size: %%~zF bytes
