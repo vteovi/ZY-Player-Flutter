@@ -383,6 +383,10 @@ class CategoryTabState extends State<CategoryTab>
   bool _loadingMore = false;
   bool _showBackTop = false;
 
+  /// 已加载的页号集合：用于「后台刷新」时只替换最新尾页、不抹掉用户已下滑加载的
+  /// 更早页面，并让「加载更多」接着已加载的最早一页继续往前翻（不重复取页）。
+  final Set<int> _loadedPages = <int>{};
+
   @override
   bool get wantKeepAlive => true;
 
@@ -430,7 +434,10 @@ class CategoryTabState extends State<CategoryTab>
       final restored = <Video>[];
       for (final pg in pages) {
         final cached = await ListCache.getPage(siteKey, tid, pg);
-        if (cached != null) restored.addAll(cached);
+        if (cached != null) {
+          restored.addAll(cached);
+          _loadedPages.add(pg);
+        }
       }
       if (mounted) {
         setState(() {
@@ -452,12 +459,13 @@ class CategoryTabState extends State<CategoryTab>
     await _refresh();
   }
 
-  /// 向源站重新拉取片单并写回缓存，最后用最新数据替换显示。
-  /// 仅在拿到非空结果时才替换，避免刷新失败时把缓存内容清空成空白。
+  /// 向源站重新拉取片单并写回缓存，最后用最新数据**合并**进显示。
   ///
-  /// 取数顺序：从末页往前翻，凑够至少 6 条（末页不足则继续往前几页），
-  /// 单次循环一次性攒齐后替换——**不重复取同一页**，否则末页不足 6 条时
-  /// 「末页-1」会被取两次，列表里出现重复海报。
+  /// 取数顺序：从末页往前翻，凑够至少 6 条（末页不足则继续往前几页），单趟不重复取页。
+  /// ⚠️ 关键：刷新只替换「最新的尾页」，必须保留用户已经下滑加载出来的更早页面——
+  /// 否则后台刷新一返回就把已加载内容整段抹除（表现为「滑一下闪一下、内容少了一截」，
+  /// 再滑又刷出来）。做法：fresh 作前缀，再把当前列表里 id 不在 fresh 中的旧条目
+  /// 按原顺序接在后面（相同 id 用 fresh 的新数据覆盖）。
   Future<void> _refresh() async {
     if (!mounted) return;
     final site = widget.site;
@@ -473,20 +481,31 @@ class CategoryTabState extends State<CategoryTab>
     var page = info.pagecount;
     while (page >= 1 && (fresh.isEmpty || fresh.length < 6)) {
       await _appendPage(page, sink: fresh);
+      _loadedPages.add(page);
       page--;
     }
     if (!mounted) return;
     setState(() {
       if (fresh.isNotEmpty) {
+        // 合并而非清空：保留更早的已加载页，避免刷新把内容抹掉
+        final freshIds =
+            <String>{for (final v in fresh) if (v.id.isNotEmpty) v.id};
+        final kept = <Video>[];
+        for (final v in _videos) {
+          if (v.id.isNotEmpty && freshIds.contains(v.id)) continue;
+          kept.add(v);
+        }
         _videos
           ..clear()
-          ..addAll(fresh);
+          ..addAll(fresh)
+          ..addAll(kept);
       }
       _loading = false;
     });
-    // 循环结束时 page 已减到「最早已取页 - 1」，故最近取到的页即 page + 1；
-    // 下次 loadMore 会先 _pageCount-- 再取，正好接着往前翻，不重不漏。
-    _pageCount = page + 1;
+    // 已加载的最早一页：接下来 loadMore 从这里继续往前翻，不重复取已加载的页
+    _pageCount = _loadedPages.isEmpty
+        ? info.pagecount
+        : _loadedPages.reduce((a, b) => a < b ? a : b);
     // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
     unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
   }
@@ -525,6 +544,7 @@ class CategoryTabState extends State<CategoryTab>
     _loadingMore = true;
     _pageCount--;
     await _appendPage(_pageCount);
+    _loadedPages.add(_pageCount);
     if (mounted) {
       setState(() => _loadingMore = false);
     } else {
