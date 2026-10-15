@@ -307,14 +307,20 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadStars() async {
     final list = await ZyDatabase.instance.getAll(DbNames.star);
-    _stars = list.map(RecordItem.fromJson).toList();
+    _stars = list.map(RecordItem.fromJson).toList()
+      // 收藏分栏「最新收藏在前」：按写入时间倒序；无 ts 的老数据排在末尾
+      ..sort((a, b) => b.ts.compareTo(a.ts));
     notifyListeners();
   }
 
   bool isStarred(String key) => _stars.any((s) => s.key == key);
 
   Future<bool> addStar(RecordItem item) async {
-    final ok = await ZyDatabase.instance.add(DbNames.star, item.toJson());
+    // 兜底写入时间：旧调用方未传 ts（0）时自动补当前时间，保证倒序正确
+    final record = item.ts == 0
+        ? item.copyWithRecord(ts: DateTime.now().millisecondsSinceEpoch)
+        : item;
+    final ok = await ZyDatabase.instance.add(DbNames.star, record.toJson());
     await loadStars();
     return ok;
   }
@@ -345,7 +351,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadHistories() async {
     final list = await ZyDatabase.instance.getAll(DbNames.history);
-    _histories = list.map(RecordItem.fromJson).toList();
+    _histories = list.map(RecordItem.fromJson).toList()
+      // 历史分栏「最近观看在前」：按最近更新时间倒序；无 ts 的老数据排在末尾
+      ..sort((a, b) => b.ts.compareTo(a.ts));
     notifyListeners();
   }
 
@@ -357,17 +365,25 @@ class AppState extends ChangeNotifier {
   }
 
   Future<bool> addHistory(RecordItem item) async {
-    final ok = await ZyDatabase.instance.add(DbNames.history, item.toJson());
+    // 兜底写入时间：旧调用方未传 ts（0）时自动补当前时间，保证倒序正确
+    final record = item.ts == 0
+        ? item.copyWithRecord(ts: DateTime.now().millisecondsSinceEpoch)
+        : item;
+    final ok = await ZyDatabase.instance.add(DbNames.history, record.toJson());
     await loadHistories();
     return ok;
   }
 
-  /// 更新播放进度（播放页每 10 秒写一次）
+  /// 更新播放进度（播放页每 10 秒写一次）。
+  /// 刷新时间戳，使「最近观看」的影片排到历史分栏最前。
   Future<void> updateHistory(RecordItem item) async {
-    await ZyDatabase.instance.update(DbNames.history, item.toJson());
+    final record = item.copyWithRecord(ts: DateTime.now().millisecondsSinceEpoch);
+    await ZyDatabase.instance.update(DbNames.history, record.toJson());
     final index = _histories.indexWhere((h) => h.key == item.key);
     if (index >= 0) {
-      _histories[index] = item;
+      _histories[index] = record;
+      // 内存里直接重排，返回历史分栏时不用等下次 load 就能看到置顶效果
+      _histories.sort((a, b) => b.ts.compareTo(a.ts));
       notifyListeners();
     }
   }

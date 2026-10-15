@@ -185,6 +185,9 @@ class RecordItem extends Video {
   final String url;
   final double currentTime;
   final double duration;
+  /// 写入/最近一次更新时间（epoch 毫秒），用于收藏/历史分栏「最新在前」倒序。
+  /// 旧数据没有此字段时按 0 处理，自然排在列表末尾。
+  final int ts;
 
   const RecordItem({
     required this.key,
@@ -192,6 +195,7 @@ class RecordItem extends Video {
     this.url = '',
     this.currentTime = 0,
     this.duration = 0,
+    this.ts = 0,
     super.id,
     super.tid,
     super.name,
@@ -215,6 +219,7 @@ class RecordItem extends Video {
       url: (json['url'] ?? '').toString(),
       currentTime: _d(json['currentTime']),
       duration: _d(json['duration']),
+      ts: json['ts'] is int ? json['ts'] as int : int.tryParse('${json['ts']}') ?? 0,
       id: v.id,
       tid: v.tid,
       name: v.name,
@@ -240,6 +245,7 @@ class RecordItem extends Video {
       'url': url,
       'currentTime': currentTime,
       'duration': duration,
+      'ts': ts,
     });
     return json;
   }
@@ -262,6 +268,7 @@ class RecordItem extends Video {
     String? url,
     double? currentTime,
     double? duration,
+    int? ts,
   }) {
     return RecordItem(
       key: key,
@@ -269,6 +276,7 @@ class RecordItem extends Video {
       url: url ?? this.url,
       currentTime: currentTime ?? this.currentTime,
       duration: duration ?? this.duration,
+      ts: ts ?? this.ts,
       id: id,
       tid: tid,
       name: name,

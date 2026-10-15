@@ -78,6 +78,25 @@ class _StarPageState extends State<StarPage>
   }
 
   Future<void> _removeStar(RecordItem item) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('移除收藏'),
+        content: Text('确定要将《${item.name}》从收藏中移除吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('移除'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (confirmed != true) return;
     final ok = await context.read<AppState>().removeStar(item.key);
     if (!mounted) return;
     showToast(context, ok ? '已移除收藏' : '移除失败', success: ok);
