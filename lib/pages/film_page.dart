@@ -454,23 +454,26 @@ class CategoryTabState extends State<CategoryTab>
 
   /// 向源站重新拉取片单并写回缓存，最后用最新数据替换显示。
   /// 仅在拿到非空结果时才替换，避免刷新失败时把缓存内容清空成空白。
+  ///
+  /// 取数顺序：从末页往前翻，凑够至少 6 条（末页不足则继续往前几页），
+  /// 单次循环一次性攒齐后替换——**不重复取同一页**，否则末页不足 6 条时
+  /// 「末页-1」会被取两次，列表里出现重复海报。
   Future<void> _refresh() async {
     if (!mounted) return;
     final site = widget.site;
     final tid = widget.videoClass.tid;
     final info = await HttpService.instance.fetchPage(site, tid: tid);
     if (!mounted) return;
-    _pageCount = info.pagecount;
     _recordCount = info.recordcount;
     widget.onRecordCount(tid, _recordCount);
     await ListCache.putMeta(site.key, tid, info.pagecount, info.recordcount);
 
-    // 与原始取数顺序一致：末页、末页-1（不足 6 条继续往前翻），并写入缓存
+    // 从末页往前取，直到攒够至少 6 条或翻到第一页为止（单趟，不重复取页）
     final fresh = <Video>[];
-    await _appendPage(info.pagecount, sink: fresh);
-    if (info.pagecount > 1) {
-      _pageCount = info.pagecount - 1;
-      await _appendPage(_pageCount, sink: fresh);
+    var page = info.pagecount;
+    while (page >= 1 && (fresh.isEmpty || fresh.length < 6)) {
+      await _appendPage(page, sink: fresh);
+      page--;
     }
     if (!mounted) return;
     setState(() {
@@ -481,6 +484,9 @@ class CategoryTabState extends State<CategoryTab>
       }
       _loading = false;
     });
+    // 循环结束时 page 已减到「最早已取页 - 1」，故最近取到的页即 page + 1；
+    // 下次 loadMore 会先 _pageCount-- 再取，正好接着往前翻，不重不漏。
+    _pageCount = page + 1;
     // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
     unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
   }
@@ -489,6 +495,8 @@ class CategoryTabState extends State<CategoryTab>
   ///
   /// [sink] 非空时把结果累加进外部列表（用于后台刷新：先攒齐再一次性替换显示）；
   /// 为空时直接累加进 [_videos]（用于滚动加载更多：边取边显示）。
+  /// 不在此处递归翻页——翻页节奏统一由调用方（_refresh / _loadMore）控制，
+  /// 避免重复取页；重复 id 的条目也在此处直接跳过，作最后一层兜底。
   Future<void> _appendPage(int page, {List<Video>? sink}) async {
     if (page <= 0) return;
     final target = sink ?? _videos;
@@ -504,10 +512,11 @@ class CategoryTabState extends State<CategoryTab>
       list,
     );
     if (!mounted) return;
-    target.addAll(list);
-    if (target.length <= 6 && page > 1) {
-      _pageCount = page - 1;
-      await _appendPage(_pageCount, sink: sink);
+    final seen = <String>{for (final v in target) if (v.id.isNotEmpty) v.id};
+    for (final v in list) {
+      if (v.id.isNotEmpty && seen.contains(v.id)) continue; // 跳过重复 id
+      target.add(v);
+      if (v.id.isNotEmpty) seen.add(v.id);
     }
   }
 
