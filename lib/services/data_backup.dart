@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../utils/file_pick.dart';
 import 'zy_database.dart';
 
 /// 备份 / 恢复结果。
@@ -158,28 +159,39 @@ class DataBackup {
   static Future<BackupResult> restore() async {
     FilePickerResult? picked;
     try {
-      picked = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json'],
-        allowMultiple: false,
-      );
+      // 扩展名过滤走 FilePick：老系统 MIME 表不认 json 时会自动退回不过滤的选择器。
+      picked = await FilePick.pick(extensions: const ['json']);
     } catch (e) {
       return BackupResult(ok: false, message: '无法打开文件选择器：${_localized(e)}');
     }
     if (picked == null || picked.files.isEmpty) {
       return const BackupResult(ok: false, message: '已取消选择');
     }
-    final path = picked.files.single.path;
-    if (path == null) {
-      return const BackupResult(ok: false, message: '文件无效');
+    final file = picked.files.single;
+
+    // 优先用选择器直接返回的字节（老系统拿不到可用磁盘路径时更稳），
+    // 没有字节再退回按路径读文件。
+    String content;
+    try {
+      final bytes = file.bytes;
+      if (bytes != null) {
+        content = utf8.decode(bytes); // 备份一律 UTF-8，不含 BOM
+      } else if (file.path != null) {
+        content = await File(file.path!).readAsString(encoding: utf8);
+      } else {
+        return const BackupResult(ok: false, message: '文件无效');
+      }
+    } catch (e) {
+      return BackupResult(ok: false, message: '读取文件失败：${_localized(e)}');
     }
 
     Map<String, dynamic> payload;
     try {
-      final content = await File(path).readAsString(encoding: utf8);
       final decoded = jsonDecode(content);
-      if (decoded is! Map) throw const FormatException('不是有效的备份文件');
+      if (decoded is! Map) throw const FormatException('顶层不是 JSON 对象');
       payload = Map<String, dynamic>.from(decoded);
+    } on FormatException {
+      return const BackupResult(ok: false, message: '所选文件不是有效的备份文件');
     } catch (e) {
       return BackupResult(ok: false, message: '文件解析失败：${_localized(e)}');
     }

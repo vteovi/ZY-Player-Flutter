@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/data_backup.dart';
 import '../services/list_cache.dart';
+import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import 'site_page.dart';
 import 'star_page.dart';
@@ -141,30 +143,34 @@ class MePage extends StatelessWidget {
   Future<void> _importConfigFile(BuildContext context) async {
     FilePickerResult? result;
     try {
-      result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: const ['json', 'txt', 'conf'],
-        allowMultiple: false,
-      );
+      // 扩展名过滤走 FilePick：老系统 MIME 表不认 json/conf 时自动退回不过滤的选择器。
+      result = await FilePick.pick(extensions: const ['json', 'txt', 'conf']);
     } catch (e) {
       if (!context.mounted) return;
       showToast(context, '无法打开文件选择器：$e', success: false);
       return;
     }
     if (result == null || result.files.isEmpty) return; // 用户取消
-    final path = result.files.single.path;
-    if (path == null) return;
 
-    String content;
-    try {
-      // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
-      final bytes = await File(path).readAsBytes();
-      content = utf8.decode(bytes, allowMalformed: true);
-    } catch (e) {
-      if (!context.mounted) return;
-      showToast(context, '读取文件失败：$e', success: false);
-      return;
+    // 优先用选择器直接返回的字节，取不到再按路径读（老系统上更稳）。
+    Uint8List? raw = result.files.single.bytes;
+    if (raw == null) {
+      final path = result.files.single.path;
+      if (path == null) {
+        if (!context.mounted) return;
+        showToast(context, '文件无效', success: false);
+        return;
+      }
+      try {
+        raw = await File(path).readAsBytes();
+      } catch (e) {
+        if (!context.mounted) return;
+        showToast(context, '读取文件失败：$e', success: false);
+        return;
+      }
     }
+    // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
+    final content = utf8.decode(raw, allowMalformed: true);
 
     final summary =
         await context.read<AppState>().importSitesFromContent(content);
@@ -437,7 +443,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.9.3',
+            subtitle: '1.9.4',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
