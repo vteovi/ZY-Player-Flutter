@@ -3,6 +3,7 @@ package com.zy.player
 import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
@@ -17,6 +18,10 @@ class MainActivity : FlutterActivity() {
 
     private val channelName = "com.zy.player/system"
     private val pipChannelName = "com.zy.player/pip"
+
+    /// 画中画通道引用：configureFlutterEngine 里创建，onPictureInPictureModeChanged
+    /// 用它向 Dart 侧回传「进入/退出 PiP」事件。
+    private var pipChannel: MethodChannel? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -49,30 +54,35 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
-        // 系统级画中画（PiP）入口：播放页「画中画」按钮调用。
+        // 系统级画中画（PiP）入口 + 状态回传。同一个通道既接收 Dart 侧「enterPip」
+        // 请求，也向 Dart 侧回传「onPipModeChanged」事件（Activity 进入 / 退出 PiP）。
         // 仅 Android 8.0（API 26）及以上支持；进入失败（如设备不支持、调用时机不对）
         // 时返回 false，由 Dart 侧提示用户，不抛异常。
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pipChannelName)
-            .setMethodCallHandler { call, result ->
-                when (call.method) {
-                    "enterPip" -> {
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                            try {
-                                val params = PictureInPictureParams.Builder()
-                                    .setAspectRatio(Rational(16, 9))
-                                    .build()
-                                enterPictureInPictureMode(params)
-                                result.success(true)
-                            } catch (e: Exception) {
-                                result.success(false)
-                            }
-                        } else {
+        pipChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pipChannelName)
+        pipChannel!!.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "enterPip" -> {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        try {
+                            // 按视频真实比例设置 PiP 窗口形状（Dart 侧传 aspect 双精度），
+                            // 让小窗贴合画面、少黑边；拿不到时退回 16:9。
+                            val aspect = call.argument<Double>("aspect") ?: (16.0 / 9.0)
+                            val num = (aspect * 100.0).roundToInt().coerceAtLeast(1)
+                            val params = PictureInPictureParams.Builder()
+                                .setAspectRatio(Rational(num, 100))
+                                .build()
+                            enterPictureInPictureMode(params)
+                            result.success(true)
+                        } catch (e: Exception) {
                             result.success(false)
                         }
+                    } else {
+                        result.success(false)
                     }
-                    else -> result.notImplemented()
                 }
+                else -> result.notImplemented()
             }
+        }
     }
 
     /**
@@ -193,5 +203,17 @@ class MainActivity : FlutterActivity() {
         } else {
             window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    /**
+     * 系统画中画状态变化：进入 / 退出时回传 Dart 侧，驱动 Flutter 隐藏 / 恢复全部 UI，
+     * 让 PiP 窗口里只剩纯播放画面（详见 PlayPage._inPip）。
+     */
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipChannel?.invokeMethod("onPipModeChanged", isInPictureInPictureMode)
     }
 }

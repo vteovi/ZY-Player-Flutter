@@ -38,6 +38,10 @@ class PlayPage extends StatefulWidget {
 class _PlayPageState extends State<PlayPage> {
   static const Color _accent = Color(0xFF1E88E5);
 
+  /// 画中画通道：既用于「请求进入 PiP」(invokeMethod enterPip)，
+  /// 也用于接收原生侧回传的 PiP 模式变化事件 (onPipModeChanged)。
+  final MethodChannel _pipChannel = const MethodChannel('com.zy.player/pip');
+
   /// 竖屏时画面区域最多占屏幕高度的比例，防止 9:16 这类竖版比例把布局撑爆
   static const double _portraitMaxHeightRatio = 0.42;
 
@@ -47,6 +51,10 @@ class _PlayPageState extends State<PlayPage> {
   bool _initialized = false;
   bool _hasError = false;
   bool _fullscreen = false;
+
+  /// 是否处于系统画中画（PiP）模式。进入后隐藏一切 Flutter UI（标题栏 / 进度条 /
+  /// 控制按钮 / 详情），只留纯播放画面，让 PiP 窗口里是「全屏视频」而非缩小的整页。
+  bool _inPip = false;
 
   /// 当前画面比例 / 大小（初始化时从设置读入，改动后写回）
   late AspectOption _aspect;
@@ -159,6 +167,7 @@ class _PlayPageState extends State<PlayPage> {
     _initPlayer(seekTo: widget.initialTime);
     _loadDetail();
     _loadSystemLevels();
+    _pipChannel.setMethodCallHandler(_onPipCall);
     // 每 10 秒写一次播放进度
     _historyTimer = Timer.periodic(
       const Duration(seconds: 10),
@@ -168,6 +177,7 @@ class _PlayPageState extends State<PlayPage> {
 
   @override
   void dispose() {
+    _pipChannel.setMethodCallHandler(null);
     _historyTimer?.cancel();
     _statsTimer?.cancel();
     _hideTimer?.cancel();
@@ -368,6 +378,15 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
+  /// 原生侧 `onPictureInPictureModeChanged` 回传：进入 / 退出 PiP 时切换 [_inPip]，
+  /// 驱动 build 隐藏 / 恢复全部 Flutter UI，使 PiP 窗口里只剩纯播放画面。
+  Future<dynamic> _onPipCall(MethodCall call) async {
+    if (call.method == 'onPipModeChanged' && mounted) {
+      setState(() => _inPip = call.arguments == true);
+    }
+    return;
+  }
+
   /// 进入系统级画中画（安卓 8+）：视频缩进系统 PiP 角落，切到其他 App 也继续播。
   /// 不支持时提示用户。
   Future<void> _enterPip() async {
@@ -378,9 +397,12 @@ class _PlayPageState extends State<PlayPage> {
       if (mounted) setState(() {});
     }
     try {
-      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应
-      final ok =
-          await const MethodChannel('com.zy.player/pip').invokeMethod<bool>('enterPip');
+      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应；把视频真实比例
+      // 带过去，让 PiP 窗口形状贴合画面，避免被额外加黑边。
+      final ok = await _pipChannel.invokeMethod<bool>(
+        'enterPip',
+        {'aspect': _naturalAspectRatio},
+      );
       if (ok != true && mounted) {
         showToast(context, '当前设备/系统不支持画中画', success: false);
       }
@@ -708,18 +730,25 @@ class _PlayPageState extends State<PlayPage> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: !_fullscreen,
+      // PiP 模式下不响应系统返回：避免退出 PiP 时直接把播放页（乃至 App）pop 掉；
+      // 退 PiP 由用户点小窗展开 / 上滑关闭，原生侧会回传 onPipModeChanged(false)。
+      canPop: !_fullscreen && !_inPip,
       onPopInvokedWithResult: (didPop, result) {
-        // didPop == true：系统已放行（当前不在全屏），无需接管
-        if (didPop || !_fullscreen) return;
-        _toggleFullscreen();
+        // didPop == true：系统已放行，无需接管
+        if (didPop) return;
+        if (_fullscreen) {
+          _toggleFullscreen();
+        }
+        // _inPip 时什么都不做：交还给系统处理 PiP 窗口
       },
       child: Scaffold(
-        backgroundColor: _fullscreen ? Colors.black : null,
-        appBar: _fullscreen
+        backgroundColor: (_fullscreen || _inPip) ? Colors.black : null,
+        appBar: (_fullscreen || _inPip)
             ? null
             : AppBar(title: Text(_title.isEmpty ? '播放' : _title)),
-        body: _fullscreen ? _buildFullscreenBody() : _buildPortraitBody(),
+        body: _inPip
+            ? _buildPipBody()
+            : (_fullscreen ? _buildFullscreenBody() : _buildPortraitBody()),
       ),
     );
   }
@@ -737,6 +766,21 @@ class _PlayPageState extends State<PlayPage> {
             _buildControlPanel(),
             Expanded(child: _buildInfo()),
           ],
+        );
+      },
+    );
+  }
+
+  /// 画中画（PiP）模式下的画面：整屏纯黑底 + 居中视频，**不含任何 Flutter UI**
+  /// （无标题栏、无进度条、无控制按钮、无详情）。这样 PiP 窗口里就是「全屏视频」，
+  /// 而不是把整页（含控件）缩小塞进角落。
+  Widget _buildPipBody() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final frame = _stageAreaSize(constraints.maxWidth, constraints.maxHeight);
+        return Container(
+          color: Colors.black,
+          child: Center(child: _buildStage(frame)),
         );
       },
     );
