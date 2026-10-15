@@ -3,6 +3,7 @@
 *.lock
 *.log
 *.pyc
+*.apk
 *.swp
 .buildlog/
 .history
