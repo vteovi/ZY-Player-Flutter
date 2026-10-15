@@ -1,5 +1,6 @@
 package com.zy.player
 
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
@@ -57,7 +58,10 @@ class MainActivity : FlutterActivity() {
                     "enterPip" -> {
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                             try {
-                                enterPictureInPictureMode(Rational(16, 9))
+                                val params = PictureInPictureParams.Builder()
+                                    .setAspectRatio(Rational(16, 9))
+                                    .build()
+                                enterPictureInPictureMode(params)
                                 result.success(true)
                             } catch (e: Exception) {
                                 result.success(false)
