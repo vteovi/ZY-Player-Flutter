@@ -11,7 +11,7 @@ import 'video_card.dart';
 ///
 /// 真实网格（[VideoGridView]）与骨架屏（[VideoGridSkeleton]）**共用这一份策略**，
 /// 保证占位卡和真实卡形状完全一致，数据到达时不会跳版。
-SliverGridDelegate videoGridDelegate(BuildContext context) {
+SliverGridDelegateWithMaxCrossAxisExtent videoGridDelegate(BuildContext context) {
   final landscape = context.watch<AppState>().config.landscapeCard;
   if (landscape) {
     // 横版海报卡片：手机竖屏（<420）1 列，平板 2 列，更宽屏幕 3+ 列
@@ -72,11 +72,21 @@ class VideoGridView extends StatelessWidget {
         icon: Icons.search_off,
       );
     }
+    // 列宽决定封面解码尺寸：屏幕越宽单列越宽，但解码像素按显示尺寸的 ~2 倍即可，
+    // 平板大屏不盲目用高位图，能省下大量 GPU 纹理内存、滚动更跟手。
+    final delegate = videoGridDelegate(context);
+    final memW = (delegate.maxCrossAxisExtent * 2)
+        .round()
+        .clamp(300, 480);
     return GridView.builder(
       controller: scrollController,
+      // 关键性能项：关掉「自动保留滚出屏幕的元素」。列表一长，保留的元素会无限
+      // 膨胀元素树（平板 8 列时膨胀速度是手机的 8 倍），导致滑动越远越卡甚至滑不动。
+      // 单元格是无状态、重建极轻的，关掉它反而更顺；滚回去会按 id 从本地缓存秒重建。
+      addAutomaticKeepAlives: false,
       padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
       itemCount: videos.length + (loadingMore ? 1 : 0),
-      gridDelegate: videoGridDelegate(context),
+      gridDelegate: delegate,
       itemBuilder: (context, index) {
         if (index >= videos.length) {
           return const Padding(
@@ -89,6 +99,7 @@ class VideoGridView extends StatelessWidget {
           key: ValueKey(video.id),
           video: video,
           sourceLabel: labelOf?.call(video),
+          memCacheWidth: memW,
           onTap: () => onTap(video),
         );
       },

@@ -98,11 +98,15 @@ class VideoCard extends StatelessWidget {
   /// 来源角标（全站搜索时显示站点名），null 则不显示
   final String? sourceLabel;
 
+  /// 封面解码内存尺寸（按网格列宽自适应，平板大屏更低以省 GPU 纹理内存）
+  final int memCacheWidth;
+
   const VideoCard({
     super.key,
     required this.video,
     required this.onTap,
     this.sourceLabel,
+    this.memCacheWidth = 480,
   });
 
   @override
@@ -187,6 +191,7 @@ class VideoCard extends StatelessWidget {
       pic: video.pic,
       isDark: isDark,
       sourceLabel: sourceLabel,
+      memCacheWidth: memCacheWidth,
     );
   }
 }
