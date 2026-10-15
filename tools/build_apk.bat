@@ -2,6 +2,23 @@
 setlocal
 title ZY-Player APK Builder
 
+REM 显式注入构建所需环境变量（避免依赖用户登录环境）
+set "ANDROID_HOME=C:\Android\Sdk"
+set "JAVA_HOME=C:\Java\jdk-17"
+
+REM 构建插件需要符号链接权限：
+REM  - 若已开启“开发者模式”(设置 -> 开发者选项)，非管理员即可构建；
+REM  - 否则以管理员身份重跑本脚本（自动提权，需确认 UAC 一次）。
+set "DEVMODE=0"
+reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /v AllowDevelopmentWithoutDevLicense 2>nul | findstr /r "0x1" >nul && set "DEVMODE=1"
+if "%DEVMODE%"=="0" (
+  net session >nul 2>&1
+  if errorlevel 1 (
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
+  )
+)
+
 set "PROJ=D:\WorkBuddy\ZY-Player-Flutter"
 set "FLUTTER=C:\flutter\bin\flutter.bat"
 set "DART=C:\flutter\bin\dart.bat"

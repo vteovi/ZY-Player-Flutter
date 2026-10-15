@@ -16,6 +16,8 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 ## 构建
 - **Flutter SDK = 3.32.6，装在 `C:\flutter`**（2026-10-15 搭建；`.dart_tool/version` 锁定 3.32.6 / Dart 3.8.1，与 `third_party/video_player_android` override 匹配）。googleapis 大文件被本机掐断，改用 `storage.flutter-io.cn` 镜像 + `curl -C -` 续传安装；运行/预取时 `FLUTTER_STORAGE_BASE_URL`/`PUB_HOSTED_URL` 走中国镜像。
 `flutter build apk --release --target-platform android-arm64` → ~342s / 18.1MB；debug 全 ABI ~991s / 192MB。双击 `tools/build_apk.bat`（探测→构建→拷根目录→SHA1，日志 build_log.txt）。APK 名从 pubspec 派生（`findstr /b /c:"version:"`）。**版本号同步四处**：pubspec.yaml / me_page.dart 副标题 / android/local.properties / README.md；versionCode 严格递增。构建阻塞点：NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量+in-process；release 关 lint/jetifier、单 ABI。D 盘常剩~8G，构建前 `flutter clean`。
+- **构建运行环境必备（2026-10-15 踩坑补全）**：`ANDROID_HOME=C:\Android\Sdk` 与 `JAVA_HOME=C:\Java\jdk-17` 必须**持久化**（User+Machine）或在 `build_apk.bat` 内显式 set——它们当初只在我搭建会话里临时 set，导致用户双击 bat 报 `No Android SDK found` / `java.exe not found`。Flutter 3.32 走 `JAVA_HOME` 取系统 JDK 17（`bin/cache/jdk` 缺失，因 googleapis 大文件被掐）；`android/local.properties` 已有 `sdk.dir=C:\Android\Sdk` 兜底。
+- **符号链接权限（致命）**：Windows 构建插件需要 `SeCreateSymbolicLinkPrivilege`，否则报 `Building with plugins requires symlink support`。本机默认关闭 → `build_apk.bat` 已加**自动提权**（未开开发者模式时 `Start-Process -Verb RunAs` 重跑自身，需确认一次 UAC）。或开「设置→开发者选项→开发者模式」并重启，重启后双击静默构建（2026-10-15 已把注册表 `AllowDevelopmentWithoutDevLicense` 置 1，重启后生效）。
 - **分工交付物格式**：助手改完代码交付「改动清单 + 静态自检结论 + 建议用户执行的构建命令」，由用户跑并反馈报错，助手据报错改。环境佐证（Android/Gradle）：单次工具调用约 3.5 分钟墙钟上限，gradle daemon 会被外部终止（报 `Gradle build daemon has been stopped: stop command received`）；后台/`nohup` 脱离也活不过单次调用，长构建交用户跑是更合理的分工。
 
 ## 视频源
