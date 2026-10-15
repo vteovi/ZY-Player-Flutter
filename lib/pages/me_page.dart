@@ -437,7 +437,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.9.0',
+            subtitle: '1.9.1',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
