@@ -24,7 +24,7 @@ set "FLUTTER=C:\flutter\bin\flutter.bat"
 set "DART=C:\flutter\bin\dart.bat"
 set "LOG=%PROJ%\tools\build_log.txt"
 set "PROBEOUT=%PROJ%\tools\probe_result.txt"
-set "APK=%PROJ%\build\app\outputs\flutter-apk\app-arm64-release.apk"
+set "APK=%PROJ%\build\app\outputs\flutter-apk\app-arm64-v8a-release.apk"
 rem --- derive version from pubspec.yaml so the APK name never goes stale ---
 set "APPVER="
 for /f "tokens=2" %%V in ('findstr /b /c:"version:" "%PROJ%\pubspec.yaml"') do set "APPVER=%%V"
