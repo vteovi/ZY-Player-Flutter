@@ -72,6 +72,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 ## WorkBuddy 工具环境坑（实锤，避免重踩）
 - **Bash 命令里的反斜杠 `\` 会被传输层转成 `/`**（heredoc 引号包裹也不幸免：`b'D:\\WorkBuddy'` 到手 len=13、值 `D://WorkBuddy`）。含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再 `python file.py`，绝不能内联进 Bash 命令；文件路径参数尽量用正斜杠（Windows API 都接受）。
 - **Git Bash 会把 `/MIR`、`/S` 这类 Windows 命令开关当路径转换**（`robocopy src dst /MIR` → 报 `错误: 无效参数 #3: C:/Users/.../PortableGit/.../MIR`）。解决：命令前加 `MSYS_NO_PATHCONV=1`，即 `MSYS_NO_PATHCONV=1 robocopy "D:/a" "D:/b" /MIR /NFL /NDL /NJH /NJS /NP`。注意 Windows 下 robocopy 返回码 0–7 都算成功，`&&` 链会被 1 码打断。
+- **Write 工具新建 `.bat`/`.ps1` 会存成 UTF-16（带 `0xFE 0xFF` BOM、每个字符后跟 `\0`），`cmd.exe` 读不了，双击直接"运行不起来"**。原 `build_apk.bat`（GBK+CRLF）能跑即此因——**中文不是元凶**。`tools/build_apk_arm64.bat` 第一次就是被 Write 写成 UTF-16 才跑不起来。生成/修 bat 别用 Write 直接写含路径/中文的脚本，改用 `sed -b`（保留 CRLF）基于**已存在的 GBK bat 复制**并 `s#...#...#` 改关键行（如 `app-release.apk`→`app-arm64-release.apk`、`android-arm64 >`→`android-arm64 --split-per-abi >`）；或 Python `open(..., encoding='gbk', newline='')` 写。正确 bat 头部字节应是 `@ e c h o   o f f \r \n` 且无 `\0`。验证用 `head -c 16 file | od -c`。
 
 ## 静态检查的硬约束
 - 本项目用 `dart-single-process-analyze` 技能跑单进程静态检查（生成环境到 `C:/Users/VTE/AppData/Local/Temp/zyanalyze/analyze.dart`，再 `C:/flutter/bin/dart .../analyze.dart --no-lints`）。
