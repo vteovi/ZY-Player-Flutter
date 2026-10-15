@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'pages/main_page.dart';
 import 'providers/app_state.dart';
+import 'navigator_key.dart';
 import 'utils/app_colors.dart';
 import 'utils/constants.dart';
 
@@ -50,6 +51,7 @@ class _AppRoot extends StatelessWidget {
   Widget build(BuildContext context) {
     final mode = context.watch<AppState>().config.themeMode;
     return MaterialApp(
+      navigatorKey: appNavigatorKey,
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(Brightness.light),

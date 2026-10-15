@@ -11,6 +11,8 @@ import '../services/http_service.dart';
 import '../services/system_control.dart';
 import '../services/video_network_stats.dart';
 import '../services/zy_database.dart';
+import '../navigator_key.dart';
+import '../services/floating_player.dart';
 import '../utils/player_options.dart';
 import '../utils/toast.dart';
 
@@ -22,6 +24,9 @@ class PlayPage extends StatefulWidget {
   final String url;
   final double initialTime;
 
+  /// 从「小窗」点开续播时传入：复用同一个控制器，不重新初始化、不重新联网拉流。
+  final VideoPlayerController? existingController;
+
   const PlayPage({
     super.key,
     required this.siteKey,
@@ -29,6 +34,7 @@ class PlayPage extends StatefulWidget {
     required this.title,
     required this.url,
     this.initialTime = 0,
+    this.existingController,
   });
 
   @override
@@ -47,6 +53,10 @@ class _PlayPageState extends State<PlayPage> {
   bool _initialized = false;
   bool _hasError = false;
   bool _fullscreen = false;
+
+  /// 进入「小窗」悬浮时为 true：退出播放页时不要把控制器 dispose 掉，
+  /// 它已经转交给 FloatingPlayer 继续播放。
+  bool _keepController = false;
 
   /// 当前画面比例 / 大小（初始化时从设置读入，改动后写回）
   late AspectOption _aspect;
@@ -154,9 +164,16 @@ class _PlayPageState extends State<PlayPage> {
 
     _title = widget.title;
     _currentUrl = widget.url;
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
-    _controller.addListener(_onControllerUpdate);
-    _initPlayer(seekTo: widget.initialTime);
+    if (widget.existingController != null) {
+      // 从「小窗」点开续播：复用同一个控制器，不重新初始化、不重新联网拉流
+      _controller = widget.existingController!;
+      _controller.addListener(_onControllerUpdate);
+      _initialized = true;
+    } else {
+      _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+      _controller.addListener(_onControllerUpdate);
+      _initPlayer(seekTo: widget.initialTime);
+    }
     _loadDetail();
     _loadSystemLevels();
     // 每 10 秒写一次播放进度
@@ -178,7 +195,9 @@ class _PlayPageState extends State<PlayPage> {
       SystemControl.setKeepScreenOn(false);
     }
     _controller.removeListener(_onControllerUpdate);
-    _controller.dispose();
+    // 进入「小窗」悬浮时控制器已转移给 FloatingPlayer，不能在这里 dispose，
+    // 否则小窗里的视频会立刻断流；关闭小窗时由 FloatingPlayerWidget 负责释放。
+    if (!_keepController) _controller.dispose();
     // ⚠️ 退出播放页必须把方向偏好**清空**（空列表 = 交还系统决定），
     // 而不是锁死 portraitUp——否则在平板上（系统横屏但 App 被锁竖屏）整个 App
     // 会被两侧黑边夹住、中间内容又矮又窄，离开播放页也回不来。
@@ -311,28 +330,50 @@ class _PlayPageState extends State<PlayPage> {
   }
 
   Future<void> _toggleStar() async {
-    final detail = _detail;
-    if (detail == null) return;
     final state = context.read<AppState>();
     // 以 AppState 中的权威状态为准，不信任本页缓存的 _starred：
     // 从详情页收藏后返回，本地状态可能过期，导致对已存在的收藏重复 add/remove。
     final starred = state.isStarred(_recordKey);
-    final item = RecordItem(
-      key: _recordKey,
-      id: detail.id,
-      tid: detail.tid,
-      name: detail.name,
-      type: detail.type,
-      pic: detail.pic,
-      lang: detail.lang,
-      area: detail.area,
-      year: detail.year,
-      note: detail.note,
-      actor: detail.actor,
-      director: detail.director,
-      des: detail.des,
-      last: detail.last,
-    );
+    final detail = _detail;
+    final hist = state.historyOf(_recordKey);
+    // 优先用已加载的详情；详情还没回来（如刚从历史记录进入、网络慢/失败）时，
+    // 退而从历史记录取元数据，再退而用标题/地址兜底 —— 这样「点收藏」绝不会
+    // 因为 _detail 为 null 而静默失败（修复「从历史进入偶尔收藏不了」）。
+    final item = detail != null
+        ? RecordItem(
+            key: _recordKey,
+            id: detail.id,
+            tid: detail.tid,
+            name: detail.name,
+            type: detail.type,
+            pic: detail.pic,
+            lang: detail.lang,
+            area: detail.area,
+            year: detail.year,
+            note: detail.note,
+            actor: detail.actor,
+            director: detail.director,
+            des: detail.des,
+            last: detail.last,
+          )
+        : RecordItem(
+            key: _recordKey,
+            label: _title.isEmpty ? (hist?.name ?? '') : _title,
+            url: _currentUrl,
+            id: hist?.id ?? '',
+            tid: hist?.tid ?? '',
+            name: hist?.name.isNotEmpty == true ? hist!.name : _title,
+            type: hist?.type ?? '',
+            pic: hist?.pic ?? '',
+            lang: hist?.lang ?? '',
+            area: hist?.area ?? '',
+            year: hist?.year ?? '',
+            note: hist?.note ?? '',
+            actor: hist?.actor ?? '',
+            director: hist?.director ?? '',
+            des: hist?.des ?? '',
+            last: hist?.last ?? '',
+          );
     final ok = starred
         ? await state.removeStar(_recordKey)
         : await state.addStar(item);
@@ -344,6 +385,82 @@ class _PlayPageState extends State<PlayPage> {
           : (starred ? '移除收藏失败' : '添加收藏失败'),
       success: ok,
     );
+  }
+
+  /// 进入「应用内小窗」悬浮播放：把当前控制器转交给全局 FloatingPlayer，
+  /// 在根 Overlay 上挂一个可拖动的迷你播放器，然后退出本页。
+  /// 控制器不被 dispose，小窗里视频继续播放；点小窗可回到本页续播，点关闭才释放。
+  void _enterFloat() {
+    final c = _controller;
+    // 先复位方向/沉浸，避免全屏的方向锁和状态栏隐藏带进小窗与下层页面
+    if (_fullscreen) {
+      SystemChrome.setPreferredOrientations([]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      _fullscreen = false;
+    }
+    FloatingPlayer.instance.attach(
+      c,
+      title: _title,
+      url: _currentUrl,
+      siteKey: widget.siteKey,
+      videoId: widget.videoId,
+      initialTime: c.value.position.inSeconds.toDouble(),
+    );
+    final entry = OverlayEntry(
+      builder: (_) => FloatingPlayerWidget(
+        controller: c,
+        title: _title,
+        onExpand: () {
+          FloatingPlayer.instance.entry?.remove();
+          FloatingPlayer.instance.entry = null;
+          final f = FloatingPlayer.instance;
+          if (f.controller != null) {
+            appNavigatorKey.currentState?.push(
+              MaterialPageRoute(
+                builder: (_) => PlayPage(
+                  siteKey: f.siteKey,
+                  videoId: f.videoId,
+                  title: f.title,
+                  url: f.url,
+                  initialTime: f.initialTime,
+                  existingController: f.controller,
+                ),
+              ),
+            );
+          }
+        },
+        onClose: () {
+          FloatingPlayer.instance.entry?.remove();
+          FloatingPlayer.instance.detach();
+          c.dispose();
+        },
+      ),
+    );
+    FloatingPlayer.instance.entry = entry;
+    Overlay.of(context).insert(entry);
+    _keepController = true;
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  /// 进入系统级画中画（安卓 8+）：视频缩进系统 PiP 角落，切到其他 App 也继续播。
+  /// 不支持时提示用户。
+  Future<void> _enterPip() async {
+    if (_fullscreen) {
+      SystemChrome.setPreferredOrientations([]);
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      _fullscreen = false;
+      if (mounted) setState(() {});
+    }
+    try {
+      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应
+      final ok =
+          await const MethodChannel('com.zy.player/pip').invokeMethod<bool>('enterPip');
+      if (ok != true && mounted) {
+        showToast(context, '当前设备/系统不支持画中画', success: false);
+      }
+    } catch (_) {
+      if (mounted) showToast(context, '当前设备/系统不支持画中画', success: false);
+    }
   }
 
   /// 每 10 秒记录一次播放进度。
@@ -1279,6 +1396,16 @@ class _PlayPageState extends State<PlayPage> {
                 ? const Color(0xFFFF4445)
                 : null,
             onTap: _toggleStar,
+          ),
+          _controlButton(
+            icon: Icons.picture_in_picture_alt_rounded,
+            label: '小窗',
+            onTap: _enterFloat,
+          ),
+          _controlButton(
+            icon: Icons.picture_in_picture_rounded,
+            label: '画中画',
+            onTap: _enterPip,
           ),
           if (_playList.length > 1)
             _controlButton(

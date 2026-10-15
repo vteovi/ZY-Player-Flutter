@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.AudioManager
 import android.net.Uri
 import android.provider.Settings
+import android.util.Rational
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -14,6 +15,7 @@ import kotlin.math.roundToInt
 class MainActivity : FlutterActivity() {
 
     private val channelName = "com.zy.player/system"
+    private val pipChannelName = "com.zy.player/pip"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -41,6 +43,28 @@ class MainActivity : FlutterActivity() {
                     "setKeepScreenOn" -> {
                         setKeepScreenOn(call.argument<Boolean>("value") ?: false)
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 系统级画中画（PiP）入口：播放页「画中画」按钮调用。
+        // 仅 Android 8.0（API 26）及以上支持；进入失败（如设备不支持、调用时机不对）
+        // 时返回 false，由 Dart 侧提示用户，不抛异常。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, pipChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "enterPip" -> {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            try {
+                                enterPictureInPictureMode(Rational(16, 9))
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.success(false)
+                            }
+                        } else {
+                            result.success(false)
+                        }
                     }
                     else -> result.notImplemented()
                 }

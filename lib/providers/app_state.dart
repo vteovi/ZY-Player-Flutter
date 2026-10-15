@@ -320,7 +320,9 @@ class AppState extends ChangeNotifier {
     final record = item.ts == 0
         ? item.copyWithRecord(ts: DateTime.now().millisecondsSinceEpoch)
         : item;
-    final ok = await ZyDatabase.instance.add(DbNames.star, record.toJson());
+    // 用 put（upsert）而非 add：即使出现「内存状态短暂过期」导致重复收藏，
+    // 也不会因为 key 已存在而静默返回 false，保证收藏一定成功落库。
+    final ok = await ZyDatabase.instance.put(DbNames.star, record.toJson());
     await loadStars();
     return ok;
   }
