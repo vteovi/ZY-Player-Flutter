@@ -9,8 +9,8 @@ import '../providers/app_state.dart';
 import '../services/data_backup.dart';
 import '../services/list_cache.dart';
 import '../utils/toast.dart';
-import 'history_page.dart';
 import 'site_page.dart';
+import 'star_page.dart';
 
 /// 「设置」：播放相关开关 + 数据入口 + 清理/重置
 class MePage extends StatelessWidget {
@@ -357,7 +357,7 @@ class MePage extends StatelessWidget {
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
-            onTap: () => _push(context, const HistoryPage()),
+            onTap: () => _push(context, const StarPage(initialTab: 1)),
           ),
           _MenuItem(
             title: '视频源管理',
@@ -437,7 +437,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.7.11',
+            subtitle: '1.7.12',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(

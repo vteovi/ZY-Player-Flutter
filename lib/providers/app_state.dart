@@ -378,6 +378,13 @@ class AppState extends ChangeNotifier {
     return ok;
   }
 
+  /// 删除单条播放记录（收藏页历史分栏的卡片删除用）
+  Future<bool> removeHistory(String key) async {
+    final ok = await ZyDatabase.instance.remove(DbNames.history, key);
+    await loadHistories();
+    return ok;
+  }
+
   // --------------------------------------------------------------------------
   // 搜索历史
   // --------------------------------------------------------------------------

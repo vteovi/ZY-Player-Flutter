@@ -5,6 +5,88 @@ import '../models/video.dart';
 import '../utils/app_colors.dart';
 import '../utils/image_cache.dart';
 
+/// 海报封面：纯图（CachedNetworkImage），支持来源角标与占位/错误态。
+///
+/// [VideoCard] 与收藏/历史页的 [RecordCard] 共用，保证封面观感完全一致。
+class PosterCover extends StatelessWidget {
+  final String pic;
+  final bool isDark;
+  final String? sourceLabel;
+  final int memCacheWidth;
+
+  const PosterCover({
+    super.key,
+    required this.pic,
+    required this.isDark,
+    this.sourceLabel,
+    this.memCacheWidth = 480,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bgColor = isDark ? AppColors.darkSurface : const Color(0xFFEDEDED);
+    final iconColor = isDark ? AppColors.darkCoverIcon : const Color(0xFFC0C4CC);
+    final Widget image;
+    if (pic.isEmpty) {
+      image = ColoredBox(
+        color: bgColor,
+        child: Center(child: Icon(Icons.movie, color: iconColor)),
+      );
+    } else {
+      image = CachedNetworkImage(
+        imageUrl: pic,
+        cacheManager: AppImageCache.instance,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.low,
+        // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
+        // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
+        memCacheWidth: memCacheWidth,
+        placeholder: (_, __) => ColoredBox(
+          color: bgColor,
+          child: Center(
+            child: SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+        errorWidget: (_, __, ___) => ColoredBox(
+          color: bgColor,
+          child: Center(child: Icon(Icons.broken_image, color: iconColor)),
+        ),
+      );
+    }
+    final label = sourceLabel;
+    if (label == null || label.isEmpty) return image;
+    // 来源角标：贴在海报左上角
+    return Stack(
+      children: [
+        Positioned.fill(child: image),
+        Positioned(
+          left: 0,
+          top: 0,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            color: Colors.black45,
+            constraints: const BoxConstraints(maxWidth: 120),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                height: 1.2,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// 首页卡片：封面 + 片名 + 分类/备注/年份（图上文下）。
 ///
 /// 卡片布局在横 / 竖模式下相同，区别只在于网格给的宽高比：
@@ -100,65 +182,11 @@ class VideoCard extends StatelessWidget {
   }
 
   Widget _buildCover(bool isDark) {
-    final bgColor =
-        isDark ? AppColors.darkSurface : const Color(0xFFEDEDED);
-    final iconColor =
-        isDark ? AppColors.darkCoverIcon : const Color(0xFFC0C4CC);
-    final Widget image;
-    if (video.pic.isEmpty) {
-      image = ColoredBox(
-        color: bgColor,
-        child: Center(child: Icon(Icons.movie, color: iconColor)),
-      );
-    } else {
-      image = CachedNetworkImage(
-        imageUrl: video.pic,
-        cacheManager: AppImageCache.instance,
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
-        // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
-        // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
-        memCacheWidth: 480,
-        placeholder: (_, __) => ColoredBox(
-          color: bgColor,
-          child: Center(child: SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          )),
-        ),
-        errorWidget: (_, __, ___) => ColoredBox(
-          color: bgColor,
-          child: Center(child: Icon(Icons.broken_image, color: iconColor)),
-        ),
-      );
-    }
-    final label = sourceLabel;
-    if (label == null || label.isEmpty) return image;
-    // 来源角标：贴在海报左上角
-    return Stack(
-      children: [
-        Positioned.fill(child: image),
-        Positioned(
-          left: 0,
-          top: 0,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            color: Colors.black45,
-            constraints: const BoxConstraints(maxWidth: 120),
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                height: 1.2,
-              ),
-            ),
-          ),
-        ),
-      ],
+    // 封面逻辑抽到 PosterCover，与收藏/历史页的 RecordCard 共用
+    return PosterCover(
+      pic: video.pic,
+      isDark: isDark,
+      sourceLabel: sourceLabel,
     );
   }
 }

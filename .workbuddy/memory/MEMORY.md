@@ -14,6 +14,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 5. **静态自检要格外仔细**：不编译发现不了错误；历史上 Edit 替换 import 块时误删过仍在使用的 `DetailActivity` import（人肉复查才发现）。改引用/结构后务必复查符号。改完照常：静态校验 + bump 版本号。
 
 ## 构建
+- **Flutter SDK = 3.32.6，装在 `C:\flutter`**（2026-10-15 搭建；`.dart_tool/version` 锁定 3.32.6 / Dart 3.8.1，与 `third_party/video_player_android` override 匹配）。googleapis 大文件被本机掐断，改用 `storage.flutter-io.cn` 镜像 + `curl -C -` 续传安装；运行/预取时 `FLUTTER_STORAGE_BASE_URL`/`PUB_HOSTED_URL` 走中国镜像。
 `flutter build apk --release --target-platform android-arm64` → ~342s / 18.1MB；debug 全 ABI ~991s / 192MB。双击 `tools/build_apk.bat`（探测→构建→拷根目录→SHA1，日志 build_log.txt）。APK 名从 pubspec 派生（`findstr /b /c:"version:"`）。**版本号同步四处**：pubspec.yaml / me_page.dart 副标题 / android/local.properties / README.md；versionCode 严格递增。构建阻塞点：NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量+in-process；release 关 lint/jetifier、单 ABI。D 盘常剩~8G，构建前 `flutter clean`。
 - **分工交付物格式**：助手改完代码交付「改动清单 + 静态自检结论 + 建议用户执行的构建命令」，由用户跑并反馈报错，助手据报错改。环境佐证（Android/Gradle）：单次工具调用约 3.5 分钟墙钟上限，gradle daemon 会被外部终止（报 `Gradle build daemon has been stopped: stop command received`）；后台/`nohup` 脱离也活不过单次调用，长构建交用户跑是更合理的分工。
 
@@ -57,11 +58,18 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 - 数据备份/恢复 `data_backup.dart`：备份用 `saveFile`(bytes Android/iOS 必填)；恢复用 `pickFiles`。
 - 青少年模式已整体移除，别写回。
 
+## 收藏/历史页（1.7.12 起合并为双分栏）
+- 原「收藏」(star_page) 是文字 ListTile、「播放记录」(history_page) 独立页。1.7.12 起合并：`star_page` 用 `TabBar` 两分栏「收藏 / 历史记录」，都用卡片网格（同首页 `VideoGrid`），不再文字列表。
+- 卡片组件 `lib/widgets/record_card.dart` 的 `RecordCard`：图上文下（复用 `PosterCover`），右上角圆形删除按钮，历史模式封面下显示 `item.progress` 进度条。收藏点开 `DetailPage`，历史点开 `PlayPage` 续播（`initialTime: item.currentTime`）。
+- 封面抽成公共 `PosterCover`（`video_card.dart`），`VideoCard` 与 `RecordCard` 共用，改封面只动一处。
+- `AppState` 新增 `removeHistory(key)`（原仅 `clearHistories`），收藏页历史分栏删单条用。
+- 设置页「播放记录」入口改跳 `StarPage(initialTab:1)`；独立 `history_page.dart` 已删除（无引用）。
+
 ## WorkBuddy 工具环境坑（实锤，避免重踩）
 - **Bash 命令里的反斜杠 `\` 会被传输层转成 `/`**（heredoc 引号包裹也不幸免：`b'D:\\WorkBuddy'` 到手 len=13、值 `D://WorkBuddy`）。含反斜杠字面量的 python/脚本必须用 Write 工具写成文件再 `python file.py`，绝不能内联进 Bash 命令；文件路径参数尽量用正斜杠（Windows API 都接受）。
 - **Git Bash 会把 `/MIR`、`/S` 这类 Windows 命令开关当路径转换**（`robocopy src dst /MIR` → 报 `错误: 无效参数 #3: C:/Users/.../PortableGit/.../MIR`）。解决：命令前加 `MSYS_NO_PATHCONV=1`，即 `MSYS_NO_PATHCONV=1 robocopy "D:/a" "D:/b" /MIR /NFL /NDL /NJH /NJS /NP`。注意 Windows 下 robocopy 返回码 0–7 都算成功，`&&` 链会被 1 码打断。
 
 ## 静态检查的硬约束
 - 本项目用 `dart-single-process-analyze` 技能跑单进程静态检查（生成环境到 `C:/Users/VTE/AppData/Local/Temp/zyanalyze/analyze.dart`，再 `C:/flutter/bin/dart .../analyze.dart --no-lints`）。
-- 沙箱禁止派生子进程，故不能跑 `flutter analyze`/`dart analyze`（会报 CreateFile failed 231）；只能走该技能的单进程路径。
+- 沙箱注入 tsbx.dll 使**部分**派生子进程失败（CreateFile failed 231）；但 2026-10-15 起实测 `C:/flutter/bin/cache/dart-sdk/bin/dart.exe analyze` 可直接跑通（flutter.bat 子进程也正常）。若单进程技能不可用，直接 `dart analyze` 是可行兜底。注意 `--no-lints` 在该 SDK 不是合法参数，用裸 `dart analyze` 即可（info 级 lint 不影响编译）。
 - `android/local.properties` 被 gitignore（本地不入库），`git add` 它会被拒；提交时注意只加仓库内文件。
