@@ -397,11 +397,12 @@ class _PlayPageState extends State<PlayPage> {
       if (mounted) setState(() {});
     }
     try {
-      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应；把视频真实比例
-      // 带过去，让 PiP 窗口形状贴合画面，避免被额外加黑边。
+      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应；把**实际显示比例**
+      // （_displayAspectRatio，已含用户手动设置的比例 + 交换宽高）带过去，
+      // 让 PiP 窗口形状贴合画面，避免「手动设了 9:16 但小窗还按 16:9 留黑边」。
       final ok = await _pipChannel.invokeMethod<bool>(
         'enterPip',
-        {'aspect': _naturalAspectRatio},
+        {'aspect': _displayAspectRatio},
       );
       if (ok != true && mounted) {
         showToast(context, '当前设备/系统不支持画中画', success: false);

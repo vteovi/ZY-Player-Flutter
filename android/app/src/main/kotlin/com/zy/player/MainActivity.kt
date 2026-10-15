@@ -64,12 +64,13 @@ class MainActivity : FlutterActivity() {
                 "enterPip" -> {
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                         try {
-                            // 按视频真实比例设置 PiP 窗口形状（Dart 侧传 aspect 双精度），
-                            // 让小窗贴合画面、少黑边；拿不到时退回 16:9。
+                            // 按视频实际显示比例设置 PiP 窗口形状（Dart 侧传 aspect 双精度，
+                            // 已含用户手动设置的比例 + 交换宽高），让小窗贴合画面、少黑边；
+                            // 拿不到时退回 16:9。
                             val aspect = call.argument<Double>("aspect") ?: (16.0 / 9.0)
-                            val num = (aspect * 100.0).roundToInt().coerceAtLeast(1)
+                            val num = (aspect * 1000.0).roundToInt().coerceAtLeast(1)
                             val params = PictureInPictureParams.Builder()
-                                .setAspectRatio(Rational(num, 100))
+                                .setAspectRatio(Rational(num, 1000))
                                 .build()
                             enterPictureInPictureMode(params)
                             result.success(true)
