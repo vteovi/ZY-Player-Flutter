@@ -430,10 +430,13 @@ class _PlayPageState extends State<PlayPage> {
   /// 进入系统级画中画（安卓 8+）：视频缩进系统 PiP 角落，切到其他 App 也继续播。
   /// 不支持时提示用户。
   Future<void> _enterPip() async {
-    if (_fullscreen) {
+    if (_fullscreen || _nativeFullscreen) {
       SystemChrome.setPreferredOrientations([]);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       _fullscreen = false;
+      // 进入画中画与「原生全屏」互斥：原生侧 EnterPip 会同时复位窗口全屏状态，
+      // 这里同步清掉 Dart 标志，避免按钮状态与实际不一致。
+      _nativeFullscreen = false;
       if (mounted) setState(() {});
     }
     try {

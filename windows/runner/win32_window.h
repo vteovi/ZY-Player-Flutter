@@ -136,17 +136,17 @@ class Win32Window {
   // window handle for hosted content.
   HWND child_content_ = nullptr;
 
-  // Simulated PiP state: window style and position/size saved before entering
-  // and restored on exit.
+  // Current special display mode. PiP and fullscreen are mutually exclusive.
   bool in_pip_ = false;
-  DWORD saved_style_ = 0;
-  RECT saved_rect_ = {0, 0, 0, 0};
-
-  // Real window fullscreen state: window style and position/size saved before
-  // entering and restored on exit.
   bool in_fullscreen_ = false;
-  DWORD saved_fs_style_ = 0;
-  RECT saved_fs_rect_ = {0, 0, 0, 0};
+
+  // Normal (non-PiP, non-fullscreen) window style and position/size, captured
+  // when entering any special mode from the normal state and restored on exit.
+  // A single pair suffices because the special modes are mutually exclusive,
+  // and it guarantees exits always return to the true normal geometry even if
+  // the special modes are switched directly from one to the other.
+  DWORD normal_style_ = 0;
+  RECT normal_rect_ = {0, 0, 0, 0};
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

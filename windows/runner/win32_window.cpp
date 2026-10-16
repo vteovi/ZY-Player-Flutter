@@ -322,12 +322,17 @@ void Win32Window::EnterPip(double aspect) {
   if (in_pip_ || !window_handle_) {
     return;
   }
-  // Save the current style and position/size (screen physical pixels) so they
-  // can be restored exactly on exit.
-  saved_style_ = static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
-  GetWindowRect(window_handle_, &saved_rect_);
-  pending_pip_aspect_ = aspect;
+  // Capture the normal geometry only when coming from the normal state (not
+  // from fullscreen), so exiting PiP always returns to the true normal window.
+  if (!in_fullscreen_) {
+    normal_style_ =
+        static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
+    GetWindowRect(window_handle_, &normal_rect_);
+  }
+  in_fullscreen_ = false;  // PiP and fullscreen are mutually exclusive.
   in_pip_ = true;
+  pending_pip_aspect_ = aspect;
+  pending_pip_ = PipAction::kEnter;
   // Defer the actual style/size change to the message loop (see ApplyPipEnter).
   PostMessage(window_handle_, kMsgApplyPip, 0, 0);
 }
@@ -337,6 +342,10 @@ void Win32Window::ExitPip() {
     return;
   }
   in_pip_ = false;
+  // Mark the pending action so the deferred handler actually restores the
+  // window (without this the handler sees kNone and does nothing, so PiP can
+  // never be exited).
+  pending_pip_ = PipAction::kExit;
   PostMessage(window_handle_, kMsgApplyPip, 0, 0);
 }
 
@@ -372,12 +381,12 @@ void Win32Window::ApplyPipExit() {
   if (!window_handle_) {
     return;
   }
-  SetWindowLongPtr(window_handle_, GWL_STYLE, saved_style_);
+  SetWindowLongPtr(window_handle_, GWL_STYLE, normal_style_);
   SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-  SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_rect_.left,
-               saved_rect_.top, saved_rect_.right - saved_rect_.left,
-               saved_rect_.bottom - saved_rect_.top, SWP_NOACTIVATE);
+  SetWindowPos(window_handle_, HWND_NOTOPMOST, normal_rect_.left,
+               normal_rect_.top, normal_rect_.right - normal_rect_.left,
+               normal_rect_.bottom - normal_rect_.top, SWP_NOACTIVATE);
 }
 
 bool Win32Window::IsInPip() const {
@@ -388,15 +397,16 @@ void Win32Window::EnterFullscreen() {
   if (in_fullscreen_ || !window_handle_) {
     return;
   }
-  // If currently in simulated PiP, exit the floating window first; the two
-  // states are mutually exclusive.
-  if (in_pip_) {
-    ExitPip();
+  // Capture the normal geometry only when coming from the normal state (not
+  // from PiP), so exiting fullscreen always returns to the true normal window.
+  if (!in_pip_) {
+    normal_style_ =
+        static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
+    GetWindowRect(window_handle_, &normal_rect_);
   }
-  saved_fs_style_ =
-      static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
-  GetWindowRect(window_handle_, &saved_fs_rect_);
+  in_pip_ = false;  // PiP and fullscreen are mutually exclusive.
   in_fullscreen_ = true;
+  pending_fs_ = FsAction::kEnter;
   // Defer the actual style/size change to the message loop (see
   // ApplyFullscreenEnter) to avoid the WM_SIZE re-entrancy deadlock that made
   // the window "freeze" when entering fullscreen.
@@ -408,6 +418,9 @@ void Win32Window::ExitFullscreen() {
     return;
   }
   in_fullscreen_ = false;
+  // Mark the pending action so the deferred handler actually restores the
+  // window (without this the handler sees kNone and does nothing).
+  pending_fs_ = FsAction::kExit;
   PostMessage(window_handle_, kMsgApplyFs, 0, 0);
 }
 
@@ -433,12 +446,12 @@ void Win32Window::ApplyFullscreenExit() {
   if (!window_handle_) {
     return;
   }
-  SetWindowLongPtr(window_handle_, GWL_STYLE, saved_fs_style_);
+  SetWindowLongPtr(window_handle_, GWL_STYLE, normal_style_);
   SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-  SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_fs_rect_.left,
-               saved_fs_rect_.top, saved_fs_rect_.right - saved_fs_rect_.left,
-               saved_fs_rect_.bottom - saved_fs_rect_.top, SWP_NOACTIVATE);
+  SetWindowPos(window_handle_, HWND_NOTOPMOST, normal_rect_.left,
+               normal_rect_.top, normal_rect_.right - normal_rect_.left,
+               normal_rect_.bottom - normal_rect_.top, SWP_NOACTIVATE);
 }
 
 bool Win32Window::IsFullscreen() const {
