@@ -72,6 +72,13 @@ bool FlutterWindow::OnCreate() {
               "onPipModeChanged",
               std::make_unique<flutter::EncodableValue>(false));
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "startDrag") {
+          // The PiP window is borderless, so dragging is handed over to the
+          // system move loop (see StartPipDrag). This call blocks until the
+          // user releases the mouse button; Dart fires it without awaiting.
+          Win32Window::Trace("channel pip.startDrag");
+          this->StartPipDrag();
+          result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
         }

@@ -66,14 +66,23 @@ class Win32Window {
   static void TraceReset();
 
   // Desktop simulated picture-in-picture: turns the main window into a
-  // top-most, borderless, draggable/resizable floating window. Since fvp
-  // renders into a Flutter Texture, shrinking the window shrinks the video,
-  // so it floats above other windows. |aspect| is the video aspect ratio
-  // (width / height) used to compute the small window size. The current window
-  // style and position/size are saved before entering and restored on exit.
+  // top-most, completely borderless floating window (no title bar and no frame
+  // at all, so it reads as a pure video overlay). Since fvp renders into a
+  // Flutter Texture, shrinking the window shrinks the video, so it floats above
+  // other windows. |aspect| is the video aspect ratio (width / height) used to
+  // compute the small window size. The current window style and position/size
+  // are saved before entering and restored on exit.
   void EnterPip(double aspect);
   void ExitPip();
   bool IsInPip() const;
+
+  // Starts a native window move for the borderless PiP window. A window without
+  // a caption has no drag area of its own and mouse input goes to the Flutter
+  // child view, so Flutter calls this on the first pan of a drag: it hands the
+  // move over to the system's own modal move loop (the same approach as the
+  // window_manager plugin). Must be called on the platform thread while the
+  // left mouse button is held down.
+  void StartPipDrag();
 
   // Desktop real window fullscreen: turns the main window borderless and fills
   // the whole monitor (including the taskbar area), pinned on top. If currently

@@ -540,6 +540,17 @@ class _PlayPageState extends State<PlayPage> {
     }
   }
 
+  /// 桌面端小窗（模拟画中画）改成**无边框**后没有标题栏，也就没有原生可拖动的
+  /// 区域，而且鼠标消息是由 Flutter 子视图接收的 —— 所以在 Flutter 侧一检测到
+  /// 开始拖拽，就把「移动窗口」交还给系统的窗口移动循环（原生执行
+  /// ReleaseCapture + WM_NCLBUTTONDOWN/HTCAPTION），原生会一直阻塞到用户松开鼠标，
+  /// 因此这里 await 只是等它结束，不会卡住 UI 线程。
+  Future<void> _startPipDrag() async {
+    try {
+      await _pipChannel.invokeMethod('startDrag');
+    } catch (_) {}
+  }
+
   /// 桌面端「真正窗口全屏」：把应用窗口铺满整个显示器（无边框、盖住任务栏）。
   /// 进入时一并打开「填满」(_fullscreen=true) 让视频铺满；退出时还原窗口并关闭填满。
   /// Android/iOS 无此通道，调用会被忽略（NotImplemented）。
@@ -978,11 +989,18 @@ class _PlayPageState extends State<PlayPage> {
         return Stack(
           children: [
             if (isDesktop)
-              GestureDetector(
-                onDoubleTap: _exitPip,
-                child: Container(
-                  color: Colors.black,
-                  child: Center(child: _buildStage(frame)),
+              // 悬停时显示「移动」光标，提示这个无边框小窗可以直接拖。
+              MouseRegion(
+                cursor: SystemMouseCursors.move,
+                child: GestureDetector(
+                  // 小窗无边框，拖动只能交给系统移动循环（原生 startDrag）；
+                  // 双击画面还原窗口。
+                  onPanStart: (_) => _startPipDrag(),
+                  onDoubleTap: _exitPip,
+                  child: Container(
+                    color: Colors.black,
+                    child: Center(child: _buildStage(frame)),
+                  ),
                 ),
               )
             else
