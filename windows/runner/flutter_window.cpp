@@ -59,12 +59,14 @@ bool FlutterWindow::OnCreate() {
               }
             }
           }
+          Win32Window::Trace("channel pip.enterPip");
           this->EnterPip(aspect);
           this->pip_channel_->InvokeMethod(
               "onPipModeChanged",
               std::make_unique<flutter::EncodableValue>(true));
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "exitPip") {
+          Win32Window::Trace("channel pip.exitPip");
           this->ExitPip();
           this->pip_channel_->InvokeMethod(
               "onPipModeChanged",
@@ -87,9 +89,11 @@ bool FlutterWindow::OnCreate() {
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
         if (call.method_name() == "enterFullscreen") {
+          Win32Window::Trace("channel window.enterFullscreen");
           this->EnterFullscreen();
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "exitFullscreen") {
+          Win32Window::Trace("channel window.exitFullscreen");
           this->ExitFullscreen();
           result->Success(flutter::EncodableValue(true));
         } else {
@@ -97,6 +101,7 @@ bool FlutterWindow::OnCreate() {
         }
       });
 
+  Win32Window::Trace("OnCreate: channels ready");
   return true;
 }
 
@@ -118,13 +123,53 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
         flutter_controller_->HandleTopLevelWindowProc(hwnd, message, wparam,
                                                       lparam);
     if (result) {
+      if (message == WM_SIZE) {
+        Win32Window::Trace("  WM_SIZE consumed by engine");
+      }
       return *result;
     }
   }
 
+  if (message == WM_SIZE) {
+    Win32Window::Trace("  WM_SIZE falls through to runner");
+  }
+
   switch (message) {
+    case WM_CLOSE:
+      // Closing the window (title-bar X / Alt+F4) while in simulated PiP or in
+      // real fullscreen must not quit the app: the window has to be restored
+      // first, and Flutter has to be told so that its UI leaves the special
+      // mode (otherwise the app is left showing video only, with no controls to
+      // get back, which looks like a freeze).
+      //
+      // The restore itself is always initiated from Dart (see
+      // 'onPipExitRequested' / 'onFullscreenExitRequested'): Dart temporarily
+      // detaches the video texture around the window change, which avoids the
+      // engine / video-plugin deadlock that used to freeze the app here.
+      if (IsInPip()) {
+        Win32Window::Trace("WM_CLOSE -> ask Dart to exit PiP");
+        if (pip_channel_) {
+          pip_channel_->InvokeMethod(
+              "onPipExitRequested",
+              std::make_unique<flutter::EncodableValue>(true));
+        }
+        return 0;
+      }
+      if (IsFullscreen()) {
+        Win32Window::Trace("WM_CLOSE -> ask Dart to exit fullscreen");
+        if (window_channel_) {
+          window_channel_->InvokeMethod(
+              "onFullscreenExitRequested",
+              std::make_unique<flutter::EncodableValue>(true));
+        }
+        return 0;
+      }
+      break;
+
     case WM_FONTCHANGE:
-      flutter_controller_->engine()->ReloadSystemFonts();
+      if (flutter_controller_) {
+        flutter_controller_->engine()->ReloadSystemFonts();
+      }
       break;
   }
 

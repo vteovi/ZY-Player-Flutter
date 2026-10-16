@@ -78,6 +78,13 @@ class _PlayPageState extends State<PlayPage> {
   /// 与「填满窗口」(_fullscreen 在桌面只是视频铺满应用窗口) 区分。
   bool _nativeFullscreen = false;
 
+  /// 桌面端窗口形状切换（全屏 / 画中画）期间为 true：此时临时把视频纹理从
+  /// 控件树里摘掉（换成纯黑占位），见 [_detachVideoForWindowChange]。
+  bool _windowSwitching = false;
+
+  /// 桌面端窗口形状切换进行中（防连点重入）。
+  bool _windowChangeBusy = false;
+
   /// 是否桌面平台（Windows/macOS/Linux）——这些平台需要窗口级原生操作
   /// （画中画浮窗、真正全屏），且 SystemChrome 的沉浸模式对它们无效。
   bool get _isDesktop {
@@ -202,6 +209,7 @@ class _PlayPageState extends State<PlayPage> {
     _loadDetail();
     _loadSystemLevels();
     _pipChannel.setMethodCallHandler(_onPipCall);
+    _windowChannel.setMethodCallHandler(_onWindowCall);
     // 每 10 秒写一次播放进度
     _historyTimer = Timer.periodic(
       const Duration(seconds: 10),
@@ -212,6 +220,7 @@ class _PlayPageState extends State<PlayPage> {
   @override
   void dispose() {
     _pipChannel.setMethodCallHandler(null);
+    _windowChannel.setMethodCallHandler(null);
     _historyTimer?.cancel();
     _statsTimer?.cancel();
     _hideTimer?.cancel();
@@ -418,66 +427,152 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
-  /// 原生侧 `onPictureInPictureModeChanged` 回传：进入 / 退出 PiP 时切换 [_inPip]，
-  /// 驱动 build 隐藏 / 恢复全部 Flutter UI，使 PiP 窗口里只剩纯播放画面。
+  /// 原生侧回传：
+  /// - `onPipModeChanged`：进入 / 退出 PiP 时切换 [_inPip]，驱动 build 隐藏 /
+  ///   恢复全部 Flutter UI，使 PiP 窗口里只剩纯播放画面。
+  /// - `onPipExitRequested`：用户点了小窗标题栏的 X（或 Alt+F4）——原生侧不再
+  ///   自己动窗口，而是交给 Dart 走 [_exitPip]，这样才能在改窗口前先摘掉视频纹理。
   Future<dynamic> _onPipCall(MethodCall call) async {
-    if (call.method == 'onPipModeChanged' && mounted) {
+    if (!mounted) return;
+    if (call.method == 'onPipModeChanged') {
       setState(() => _inPip = call.arguments == true);
+    } else if (call.method == 'onPipExitRequested') {
+      await _exitPip();
     }
     return;
+  }
+
+  /// 桌面端窗口通道回传：`onFullscreenExitRequested` = 用户在全屏下点了标题栏 X /
+  /// Alt+F4，原生侧请求 Dart 来退出全屏（同理，改窗口必须由 Dart 发起）。
+  Future<dynamic> _onWindowCall(MethodCall call) async {
+    if (call.method == 'onFullscreenExitRequested' && mounted) {
+      await _toggleNativeFullscreen();
+    }
+    return;
+  }
+
+  /// 桌面端改窗口形状（全屏 / 画中画）前的过渡：把视频纹理从控件树里摘掉。
+  ///
+  /// ⚠️ Windows 上 fvp 走的是 D3D11 共享纹理输出（见 fvp 的 `TexturePlayer`）：
+  /// 视频正在出帧时改变窗口尺寸，引擎重建渲染表面会和插件的纹理回调相互等待，
+  /// 把 UI 线程锁死（表现就是「整个程序无响应」）。这里先摘掉 `Texture`
+  /// （引擎不再取纹理）并等两帧确认生效，再改窗口，改完立刻挂回来。
+  /// 播放不中断（画面黑一瞬），音频继续。
+  Future<void> _detachVideoForWindowChange() async {
+    if (!mounted || !_isDesktop) return;
+    setState(() => _windowSwitching = true);
+    // 等两帧 + 一点余量，确保「不画纹理」那一帧已经真正提交出去。
+    await WidgetsBinding.instance.endOfFrame;
+    await WidgetsBinding.instance.endOfFrame;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+  }
+
+  void _reattachVideoAfterWindowChange() {
+    if (!_windowSwitching) return;
+    if (mounted) {
+      setState(() => _windowSwitching = false);
+    } else {
+      _windowSwitching = false;
+    }
+  }
+
+  /// 统一的「桌面端改窗口形状」包装：先摘掉视频纹理 → 执行改窗口 → 等变更真正
+  /// 落地 → 再把纹理挂回来。整个窗口变更期间引擎都不会去取 fvp 的 D3D 共享纹理。
+  Future<void> _withVideoDetached(Future<void> Function() change) async {
+    await _detachVideoForWindowChange();
+    try {
+      await change();
+      // 原生侧改窗口是 PostMessage 到消息循环里执行的，invokeMethod 返回时还没落地，
+      // 这里等一小会让它完成后再恢复取纹理。
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    } finally {
+      _reattachVideoAfterWindowChange();
+    }
   }
 
   /// 进入系统级画中画（安卓 8+）：视频缩进系统 PiP 角落，切到其他 App 也继续播。
   /// 不支持时提示用户。
   Future<void> _enterPip() async {
     if (_fullscreen || _nativeFullscreen) {
-      SystemChrome.setPreferredOrientations([]);
-      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      // SystemChrome 的沉浸模式 / 方向锁对桌面没有实现，只在移动端调，
+      // 免得在桌面上产生一堆 MissingPluginException。
+      if (!_isDesktop) {
+        SystemChrome.setPreferredOrientations([]);
+        SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      }
       _fullscreen = false;
       // 进入画中画与「原生全屏」互斥：原生侧 EnterPip 会同时复位窗口全屏状态，
       // 这里同步清掉 Dart 标志，避免按钮状态与实际不一致。
       _nativeFullscreen = false;
       if (mounted) setState(() {});
     }
-    try {
-      // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应；把**实际显示比例**
-      // （_displayAspectRatio，已含用户手动设置的比例 + 交换宽高）带过去，
-      // 让 PiP 窗口形状贴合画面，避免「手动设了 9:16 但小窗还按 16:9 留黑边」。
-      final ok = await _pipChannel.invokeMethod<bool>(
-        'enterPip',
-        {'aspect': _displayAspectRatio},
-      );
-      if (ok != true && mounted) {
-        showToast(context, '当前设备/系统不支持画中画', success: false);
+    await _withVideoDetached(() async {
+      try {
+        // 与安卓端 MainActivity 的 'com.zy.player/pip' 通道对应；把**实际显示比例**
+        // （_displayAspectRatio，已含用户手动设置的比例 + 交换宽高）带过去，
+        // 让 PiP 窗口形状贴合画面，避免「手动设了 9:16 但小窗还按 16:9 留黑边」。
+        final ok = await _pipChannel.invokeMethod<bool>(
+          'enterPip',
+          {'aspect': _displayAspectRatio},
+        );
+        if (ok != true && mounted) {
+          showToast(context, '当前设备/系统不支持画中画', success: false);
+        }
+      } catch (_) {
+        if (mounted) showToast(context, '当前设备/系统不支持画中画', success: false);
       }
-    } catch (_) {
-      if (mounted) showToast(context, '当前设备/系统不支持画中画', success: false);
-    }
+    });
   }
 
   /// 退出桌面端「模拟画中画」：还原主窗尺寸/位置/取消置顶。
   /// Android 端走系统原生 PiP，由系统管理退出，此处调用会被忽略（NotImplemented）。
   Future<void> _exitPip() async {
+    if (_windowChangeBusy) return;
+    _windowChangeBusy = true;
     try {
-      await _pipChannel.invokeMethod('exitPip');
-    } catch (_) {}
+      await _withVideoDetached(() async {
+        try {
+          await _pipChannel.invokeMethod('exitPip');
+        } catch (_) {}
+      });
+    } finally {
+      _windowChangeBusy = false;
+    }
   }
 
   /// 桌面端「真正窗口全屏」：把应用窗口铺满整个显示器（无边框、盖住任务栏）。
   /// 进入时一并打开「填满」(_fullscreen=true) 让视频铺满；退出时还原窗口并关闭填满。
   /// Android/iOS 无此通道，调用会被忽略（NotImplemented）。
   Future<void> _toggleNativeFullscreen() async {
+    // 防重入：退出全屏时用户可能连点。
+    if (_windowChangeBusy) return;
+    _windowChangeBusy = true;
     try {
-      if (_nativeFullscreen) {
-        await _windowChannel.invokeMethod('exitFullscreen');
-        _nativeFullscreen = false;
-        if (mounted) setState(() => _fullscreen = false);
-      } else {
-        await _windowChannel.invokeMethod('enterFullscreen');
-        _nativeFullscreen = true;
-        if (mounted) setState(() => _fullscreen = true);
-      }
-    } catch (_) {}
+      await _withVideoDetached(() async {
+        try {
+          if (_nativeFullscreen) {
+            await _windowChannel.invokeMethod('exitFullscreen');
+            _nativeFullscreen = false;
+            if (mounted) setState(() => _fullscreen = false);
+          } else {
+            await _windowChannel.invokeMethod('enterFullscreen');
+            _nativeFullscreen = true;
+            if (mounted) {
+              // 进全屏时把控制层亮出来，保证「退出全屏」按钮一定可见可点——否则
+              // 若点进全屏前控制层刚好是收起的，全屏里会像「卡住」一样没有出口。
+              setState(() {
+                _fullscreen = true;
+                _controlsVisible = true;
+              });
+              _hideTimer?.cancel();
+              _scheduleHideControls();
+            }
+          }
+        } catch (_) {}
+      });
+    } finally {
+      _windowChangeBusy = false;
+    }
   }
 
   /// 每 10 秒记录一次播放进度。
@@ -895,25 +990,26 @@ class _PlayPageState extends State<PlayPage> {
                 color: Colors.black,
                 child: Center(child: _buildStage(frame)),
               ),
-            // 右上角退出按钮：点一下还原主窗（仅非桌面端需要——桌面端 PiP 用
-            // 原生窗口标题栏的 X 关闭，Flutter 按钮会被标题栏盖住，故桌面端不显示）。
-            if (!isDesktop)
-              Positioned(
-                top: 6,
-                right: 6,
-                child: Material(
-                  color: Colors.black54,
-                  shape: const CircleBorder(),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: _exitPip,
-                    child: const Padding(
-                      padding: EdgeInsets.all(6),
-                      child: Icon(Icons.close, size: 18, color: Colors.white),
-                    ),
+            // 右上角退出按钮：点一下还原主窗。
+            // 桌面端本来靠原生小窗标题栏的 X 退出，但这里再留一个兜底按钮——
+            // 一旦标题栏不可用（或用户找不到 X），界面里至少还有个明确的出口，
+            // 不至于像「卡住」一样出不来。按钮画在客户区顶部，不会被标题栏遮住。
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Material(
+                color: Colors.black54,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: _exitPip,
+                  child: const Padding(
+                    padding: EdgeInsets.all(6),
+                    child: Icon(Icons.close, size: 18, color: Colors.white),
                   ),
                 ),
               ),
+            ),
           ],
         );
       },
@@ -1342,11 +1438,17 @@ class _PlayPageState extends State<PlayPage> {
     final natural = _naturalAspectRatio;
     // ① 纹理先铺进一个「视频原始方向」的盒子里；开了「交换宽高」就把整个盒子转 90°，
     //    这才是真的把宽高对调 —— 只改画框形状那是拉伸，不是交换。
-    Widget surface = SizedBox(
-      width: natural * 1000,
-      height: 1000,
-      child: VideoPlayer(_controller),
-    );
+    //
+    // ⚠️ 桌面端切换窗口形状（全屏 / 画中画）时会先把 `Texture` 摘掉、换成同尺寸的
+    //    黑盒子（见 `_detachVideoForWindowChange`）：Windows 上 fvp 走 D3D11 共享
+    //    纹理，视频出帧时改窗口尺寸会让引擎重建渲染表面与插件纹理回调互等而死锁。
+    Widget surface = _windowSwitching
+        ? SizedBox(width: natural * 1000, height: 1000)
+        : SizedBox(
+            width: natural * 1000,
+            height: 1000,
+            child: VideoPlayer(_controller),
+          );
     if (_flip) {
       surface = RotatedBox(quarterTurns: 1, child: surface);
     }

@@ -55,6 +55,16 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Appends one diagnostic line to <exe dir>\zy_player_debug.log.
+  //
+  // The native window transitions (fullscreen / picture-in-picture) cannot be
+  // debugged with a debugger in this project, so every step is traced to a file
+  // that the user can send back to pinpoint a hang.
+  static void Trace(const char* text);
+
+  // Truncates the diagnostic log; called once at startup.
+  static void TraceReset();
+
   // Desktop simulated picture-in-picture: turns the main window into a
   // top-most, borderless, draggable/resizable floating window. Since fvp
   // renders into a Flutter Texture, shrinking the window shrinks the video,

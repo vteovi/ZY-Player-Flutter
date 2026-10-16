@@ -3,9 +3,70 @@
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
+#include <cstdio>
+#include <fstream>
+#include <mutex>
+#include <string>
+
 #include "resource.h"
 
 namespace {
+
+/// Appends a diagnostic line to <exe dir>\zy_player_debug.log.
+///
+/// The native window transitions (real fullscreen / simulated picture-in-picture)
+/// can only be exercised by the user's Windows build, so each step is written to
+/// a log file next to the executable. If the app becomes unresponsive, the log
+/// shows exactly which call was the last one to run.
+const std::wstring& DebugLogPath() {
+  static const std::wstring path = [] {
+    wchar_t module_path[MAX_PATH] = {};
+    const DWORD length =
+        ::GetModuleFileNameW(nullptr, module_path, MAX_PATH);
+    std::wstring result(module_path, length);
+    const size_t slash = result.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) {
+      return std::wstring(L"zy_player_debug.log");
+    }
+    return result.substr(0, slash + 1) + L"zy_player_debug.log";
+  }();
+  return path;
+}
+
+std::mutex& TraceMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+/// Name of the window messages worth tracing, or nullptr to skip.
+const char* MessageName(UINT message) {
+  switch (message) {
+    case WM_SIZE:
+      return "WM_SIZE";
+    case WM_NCCALCSIZE:
+      return "WM_NCCALCSIZE";
+    case WM_WINDOWPOSCHANGING:
+      return "WM_WINDOWPOSCHANGING";
+    case WM_WINDOWPOSCHANGED:
+      return "WM_WINDOWPOSCHANGED";
+    case WM_NCACTIVATE:
+      return "WM_NCACTIVATE";
+    case WM_SHOWWINDOW:
+      return "WM_SHOWWINDOW";
+    case WM_STYLECHANGING:
+      return "WM_STYLECHANGING";
+    case WM_STYLECHANGED:
+      return "WM_STYLECHANGED";
+    case WM_ACTIVATE:
+      return "WM_ACTIVATE";
+    case WM_DPICHANGED:
+      return "WM_DPICHANGED";
+    case WM_CLOSE:
+      return "WM_CLOSE";
+    default:
+      return nullptr;
+  }
+}
 
 /// Window attribute that enables dark mode window decorations.
 ///
@@ -123,6 +184,7 @@ Win32Window::~Win32Window() {
 bool Win32Window::Create(const std::wstring& title,
                          const Point& origin,
                          const Size& size) {
+  TraceReset();
   Destroy();
 
   const wchar_t* window_class =
@@ -178,6 +240,12 @@ Win32Window::MessageHandler(HWND hwnd,
                             UINT const message,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
+  if (const char* name = MessageName(message)) {
+    char buffer[96];
+    sprintf_s(buffer, sizeof(buffer), "msg %s wparam=%llu", name,
+              static_cast<unsigned long long>(wparam));
+    Trace(buffer);
+  }
   switch (message) {
     case WM_DESTROY:
       window_handle_ = nullptr;
@@ -217,20 +285,8 @@ Win32Window::MessageHandler(HWND hwnd,
       UpdateTheme(hwnd);
       return 0;
 
-    case WM_CLOSE:
-      // In simulated PiP or real fullscreen, closing the window (Alt+F4 or the
-      // title-bar X) must restore the normal window instead of quitting the app.
-      if (in_pip_) {
-        ExitPip();
-        return 0;
-      }
-      if (in_fullscreen_) {
-        ExitFullscreen();
-        return 0;
-      }
-      break;
-
     case kMsgApplyPip:
+      Trace("  apply-pip message");
       if (pending_pip_ == PipAction::kEnter) {
         ApplyPipEnter(pending_pip_aspect_);
       } else if (pending_pip_ == PipAction::kExit) {
@@ -240,6 +296,7 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case kMsgApplyFs:
+      Trace("  apply-fullscreen message");
       if (pending_fs_ == FsAction::kEnter) {
         ApplyFullscreenEnter();
       } else if (pending_fs_ == FsAction::kExit) {
@@ -318,6 +375,29 @@ void Win32Window::UpdateTheme(HWND const window) {
   }
 }
 
+void Win32Window::Trace(const char* text) {
+  std::lock_guard<std::mutex> lock(TraceMutex());
+  std::ofstream out(DebugLogPath().c_str(), std::ios::app);
+  if (!out) {
+    return;
+  }
+  SYSTEMTIME now{};
+  ::GetLocalTime(&now);
+  char stamp[32];
+  sprintf_s(stamp, sizeof(stamp), "%02u:%02u:%02u.%03u",
+            static_cast<unsigned>(now.wHour),
+            static_cast<unsigned>(now.wMinute),
+            static_cast<unsigned>(now.wSecond),
+            static_cast<unsigned>(now.wMilliseconds));
+  out << stamp << "  " << text << "\n";
+}
+
+void Win32Window::TraceReset() {
+  std::lock_guard<std::mutex> lock(TraceMutex());
+  std::ofstream out(DebugLogPath().c_str(), std::ios::trunc);
+  out << "=== zy_player native window trace ===\n";
+}
+
 void Win32Window::EnterPip(double aspect) {
   if (in_pip_ || !window_handle_) {
     return;
@@ -333,7 +413,9 @@ void Win32Window::EnterPip(double aspect) {
   in_pip_ = true;
   pending_pip_aspect_ = aspect;
   pending_pip_ = PipAction::kEnter;
-  // Defer the actual style/size change to the message loop (see ApplyPipEnter).
+  Trace("EnterPip: posted apply");
+  // Defer the real style/size change to the message loop: doing it inside the
+  // Flutter method-channel callback re-enters the engine's window handling.
   PostMessage(window_handle_, kMsgApplyPip, 0, 0);
 }
 
@@ -346,6 +428,7 @@ void Win32Window::ExitPip() {
   // window (without this the handler sees kNone and does nothing, so PiP can
   // never be exited).
   pending_pip_ = PipAction::kExit;
+  Trace("ExitPip: posted apply");
   PostMessage(window_handle_, kMsgApplyPip, 0, 0);
 }
 
@@ -359,34 +442,42 @@ void Win32Window::ApplyPipEnter(double aspect) {
   int w = static_cast<int>(360 * scale);
   double a = (aspect > 0.1 && aspect < 10.0) ? aspect : (16.0 / 9.0);
   int h = static_cast<int>(w / a);
-
-  // A real, complete title bar (WS_CAPTION) gives native drag + a working
-  // close button; WS_THICKFRAME keeps resizable edges, WS_SYSMENU the system
-  // menu. This avoids the broken "half title bar" that a WS_POPUP + WS_SYSMENU
-  // combo draws, and is fully movable / restorable / closable.
-  SetWindowLongPtr(window_handle_, GWL_STYLE,
-                   WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
-  // Force the non-client frame to be recomputed (no leftover caption pixels).
-  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   MONITORINFO mi{};
   mi.cbSize = sizeof(mi);
   GetMonitorInfo(monitor, &mi);
   int x = mi.rcWork.right - w - 24;
   int y = mi.rcWork.bottom - h - 24;
-  SetWindowPos(window_handle_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+
+  // Modify the current style in place instead of assigning a brand new style:
+  // a real, complete title bar (WS_CAPTION) gives native drag / resize / close
+  // without the broken "half title bar" that WS_POPUP + WS_SYSMENU draws, while
+  // read-modify-write keeps every other bit (WS_VISIBLE, WS_CLIPCHILDREN, ...).
+  LONG_PTR style = GetWindowLongPtr(window_handle_, GWL_STYLE);
+  style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+  style |= WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_CLIPCHILDREN |
+           WS_VISIBLE;
+  Trace("ApplyPipEnter: set style");
+  SetWindowLongPtr(window_handle_, GWL_STYLE, style);
+  // A single SetWindowPos that applies style + position + size at once (the
+  // same shape of call used by the well tested window_manager plugin).
+  Trace("ApplyPipEnter: set window pos");
+  SetWindowPos(window_handle_, HWND_TOPMOST, x, y, w, h,
+               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  Trace("ApplyPipEnter: done");
 }
 
 void Win32Window::ApplyPipExit() {
   if (!window_handle_) {
     return;
   }
+  Trace("ApplyPipExit: restore style");
   SetWindowLongPtr(window_handle_, GWL_STYLE, normal_style_);
-  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  Trace("ApplyPipExit: restore window pos");
   SetWindowPos(window_handle_, HWND_NOTOPMOST, normal_rect_.left,
                normal_rect_.top, normal_rect_.right - normal_rect_.left,
-               normal_rect_.bottom - normal_rect_.top, SWP_NOACTIVATE);
+               normal_rect_.bottom - normal_rect_.top,
+               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  Trace("ApplyPipExit: done");
 }
 
 bool Win32Window::IsInPip() const {
@@ -407,9 +498,7 @@ void Win32Window::EnterFullscreen() {
   in_pip_ = false;  // PiP and fullscreen are mutually exclusive.
   in_fullscreen_ = true;
   pending_fs_ = FsAction::kEnter;
-  // Defer the actual style/size change to the message loop (see
-  // ApplyFullscreenEnter) to avoid the WM_SIZE re-entrancy deadlock that made
-  // the window "freeze" when entering fullscreen.
+  Trace("EnterFullscreen: posted apply");
   PostMessage(window_handle_, kMsgApplyFs, 0, 0);
 }
 
@@ -421,6 +510,7 @@ void Win32Window::ExitFullscreen() {
   // Mark the pending action so the deferred handler actually restores the
   // window (without this the handler sees kNone and does nothing).
   pending_fs_ = FsAction::kExit;
+  Trace("ExitFullscreen: posted apply");
   PostMessage(window_handle_, kMsgApplyFs, 0, 0);
 }
 
@@ -433,25 +523,33 @@ void Win32Window::ApplyFullscreenEnter() {
   mi.cbSize = sizeof(mi);
   GetMonitorInfo(monitor, &mi);
   // Borderless fill of the whole monitor (rcMonitor includes the taskbar area),
-  // pinned on top to cover the taskbar.
-  SetWindowLongPtr(window_handle_, GWL_STYLE, WS_POPUP);
-  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  // pinned on top to cover the taskbar. Style bits are modified in place so that
+  // WS_VISIBLE etc. survive (see ApplyPipEnter).
+  LONG_PTR style = GetWindowLongPtr(window_handle_, GWL_STYLE);
+  style &= ~(WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+  style |= WS_POPUP | WS_CLIPCHILDREN | WS_VISIBLE;
+  Trace("ApplyFullscreenEnter: set style");
+  SetWindowLongPtr(window_handle_, GWL_STYLE, style);
+  Trace("ApplyFullscreenEnter: set window pos");
   SetWindowPos(window_handle_, HWND_TOPMOST, mi.rcMonitor.left,
                mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
-               mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOACTIVATE);
+               mi.rcMonitor.bottom - mi.rcMonitor.top,
+               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  Trace("ApplyFullscreenEnter: done");
 }
 
 void Win32Window::ApplyFullscreenExit() {
   if (!window_handle_) {
     return;
   }
+  Trace("ApplyFullscreenExit: restore style");
   SetWindowLongPtr(window_handle_, GWL_STYLE, normal_style_);
-  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
-               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  Trace("ApplyFullscreenExit: restore window pos");
   SetWindowPos(window_handle_, HWND_NOTOPMOST, normal_rect_.left,
                normal_rect_.top, normal_rect_.right - normal_rect_.left,
-               normal_rect_.bottom - normal_rect_.top, SWP_NOACTIVATE);
+               normal_rect_.bottom - normal_rect_.top,
+               SWP_NOOWNERZORDER | SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  Trace("ApplyFullscreenExit: done");
 }
 
 bool Win32Window::IsFullscreen() const {
