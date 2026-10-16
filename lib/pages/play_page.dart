@@ -1187,7 +1187,7 @@ class _PlayPageState extends State<PlayPage> {
             ),
             // 手势层铺满整屏（两侧留黑也能滑），但压在控制层之下。
             // 全屏时单击开关控制层，所以这里要多接管 onTap。
-            _buildGestureLayer(allowTapToggle: true),
+            _buildGestureLayer(onTap: _toggleControls),
             // 控制层：淡入淡出；收起时用 IgnorePointer 让点击穿透到手势层
             Positioned(
               left: 0,
@@ -1405,9 +1405,15 @@ class _PlayPageState extends State<PlayPage> {
   /// 必须是 `HitTestBehavior.opaque`：竖屏时它盖在 `_buildStage` 之上，
   /// 命中即止，所以下层的点击收不到 —— 双击也得在本层处理。
   ///
-  /// [allowTapToggle] 只有全屏才开：单击画面显示 / 收起控制层。
-  /// 竖屏的控制层常驻，不需要这个手势，留着反而会白白吃掉一次点击。
-  Widget _buildGestureLayer({bool allowTapToggle = false}) {
+  /// [onTap] 是单击回调，两处传的不一样：
+  /// - 全屏传 `_toggleControls`：单击画面显示 / 收起进度条与按钮行；
+  /// - 竖屏播放页传 `_toggleFullscreen`：单击画面直接进全屏。
+  /// 不传则本层不接管单击（例如加载中 / 失败时压根不挂这一层）。
+  ///
+  /// ⚠️ 本层同时挂了 `onDoubleTap`，两者在手势竞技场里会竞争：单击必须等
+  /// 双击判定超时（约 300ms）才触发，所以「点一下进全屏」会有约 0.3 秒延迟。
+  /// 想做到即点即全屏，只能去掉竖屏的双击暂停。
+  Widget _buildGestureLayer({VoidCallback? onTap}) {
     return Positioned.fill(
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1417,8 +1423,8 @@ class _PlayPageState extends State<PlayPage> {
               constraints.maxHeight * 0.7 > 0 ? constraints.maxHeight * 0.7 : 400.0;
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
-            // 全屏单击：显示 / 收起进度条与按钮行
-            onTap: allowTapToggle ? _toggleControls : null,
+            // 单击：全屏是「显示 / 收起控制层」，竖屏是「进全屏」
+            onTap: onTap,
             // 双击暂停 / 继续，与竖屏一致
             onDoubleTap: _togglePlay,
             // 左半屏上下滑调亮度、右半屏调音量，向上滑为增大
@@ -1528,7 +1534,8 @@ class _PlayPageState extends State<PlayPage> {
   /// 竖屏：黑底容器的高度就是画面区域的高度，区域形状见 `_stageAreaSize`。
   ///
   /// 画面之上再叠一层手势层（与全屏同一套实现）：左半屏上下滑调亮度、
-  /// 右半屏调音量、双击暂停。只在视频就绪后挂上，加载中 / 失败时不拦点击。
+  /// 右半屏调音量、双击暂停，**单击画面进全屏**。只在视频就绪后挂上，
+  /// 加载中 / 失败时不拦点击（失败界面上还有「用外部播放器打开」按钮要点）。
   Widget _buildVideoArea(Size area) {
     final interactive = _initialized && !_hasError;
     return ColoredBox(
@@ -1539,7 +1546,7 @@ class _PlayPageState extends State<PlayPage> {
         child: Stack(
           children: [
             Positioned.fill(child: _buildStage(area)),
-            if (interactive) _buildGestureLayer(),
+            if (interactive) _buildGestureLayer(onTap: _toggleFullscreen),
             if (interactive && _gestureActive)
               Positioned.fill(child: IgnorePointer(child: _buildGestureHud())),
           ],
