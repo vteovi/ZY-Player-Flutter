@@ -36,6 +36,44 @@ bool FlutterWindow::OnCreate() {
   // window is shown. It is a no-op if the first frame hasn't completed yet.
   flutter_controller_->ForceRedraw();
 
+  // Windows 桌面端「模拟画中画」通道：与 Android 端 'com.zy.player/pip' 对应。
+  // Dart 调 enterPip/exitPip，原生把主窗变为置顶无边框小浮窗，并回传
+  // onPipModeChanged 事件，驱动 Flutter 隐藏/恢复全部 UI（只留纯播放画面）。
+  auto messenger = flutter_controller_->engine()->GetBinaryMessenger();
+  pip_channel_ = std::make_shared<flutter::MethodChannel<flutter::EncodableValue>>(
+      messenger, "com.zy.player/pip",
+      &flutter::StandardMethodCodec::GetInstance());
+  pip_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "enterPip") {
+          double aspect = 16.0 / 9.0;
+          if (const auto* args =
+                  std::get_if<flutter::EncodableMap>(call.arguments())) {
+            if (auto it = args->find(flutter::EncodableValue("aspect"));
+                it != args->end()) {
+              if (const auto* d = std::get_if<double>(&it->second)) {
+                aspect = *d;
+              }
+            }
+          }
+          this->EnterPip(aspect);
+          this->pip_channel_->InvokeMethod(
+              "onPipModeChanged",
+              std::make_unique<flutter::EncodableValue>(true));
+          result->Success(std::make_unique<flutter::EncodableValue>(true));
+        } else if (call.method_name() == "exitPip") {
+          this->ExitPip();
+          this->pip_channel_->InvokeMethod(
+              "onPipModeChanged",
+              std::make_unique<flutter::EncodableValue>(false));
+          result->Success(std::make_unique<flutter::EncodableValue>(true));
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   return true;
 }
 

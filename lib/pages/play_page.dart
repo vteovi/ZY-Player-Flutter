@@ -434,6 +434,14 @@ class _PlayPageState extends State<PlayPage> {
     }
   }
 
+  /// 退出桌面端「模拟画中画」：还原主窗尺寸/位置/取消置顶。
+  /// Android 端走系统原生 PiP，由系统管理退出，此处调用会被忽略（NotImplemented）。
+  Future<void> _exitPip() async {
+    try {
+      await _pipChannel.invokeMethod('exitPip');
+    } catch (_) {}
+  }
+
   /// 每 10 秒记录一次播放进度。
   /// 直接写库而不触发通知：播放中的界面不需要重绘，历史页进入时会重新读库。
   Future<void> _updateHistory() async {
@@ -821,12 +829,47 @@ class _PlayPageState extends State<PlayPage> {
   /// （无标题栏、无进度条、无控制按钮、无详情）。这样 PiP 窗口里就是「全屏视频」，
   /// 而不是把整页（含控件）缩小塞进角落。
   Widget _buildPipBody() {
+    // 仅桌面端（Windows/macOS/Linux）需要手动退出浮窗：系统无原生 PiP 关闭键。
+    final isDesktop = Theme.of(context).platform == TargetPlatform.windows ||
+        Theme.of(context).platform == TargetPlatform.macOS ||
+        Theme.of(context).platform == TargetPlatform.linux;
     return LayoutBuilder(
       builder: (context, constraints) {
         final frame = _stageAreaSize(constraints.maxWidth, constraints.maxHeight);
-        return Container(
-          color: Colors.black,
-          child: Center(child: _buildStage(frame)),
+        return Stack(
+          children: [
+            if (isDesktop)
+              GestureDetector(
+                onDoubleTap: _exitPip,
+                child: Container(
+                  color: Colors.black,
+                  child: Center(child: _buildStage(frame)),
+                ),
+              )
+            else
+              Container(
+                color: Colors.black,
+                child: Center(child: _buildStage(frame)),
+              ),
+            // 右上角退出按钮：点一下还原主窗（桌面模拟 PiP 专用）
+            if (isDesktop)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _exitPip,
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.close, size: 18, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         );
       },
     );

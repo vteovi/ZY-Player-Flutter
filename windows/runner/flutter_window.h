@@ -3,6 +3,7 @@
 
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <flutter/method_channel.h>
 
 #include <memory>
 
@@ -28,6 +29,10 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  // 与 Dart 端 'com.zy.player/pip' 对应的通道：处理桌面端模拟画中画
+  // (enterPip/exitPip)，并回传 onPipModeChanged 事件。
+  std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>> pip_channel_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

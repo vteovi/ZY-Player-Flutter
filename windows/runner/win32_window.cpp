@@ -216,6 +216,20 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_NCHITTEST: {
+      // 模拟画中画时：去掉了标题栏，需让客户区可拖动（点视频任意处拖动），
+      // 但保留 WS_THICKFRAME 的边缘缩放命中。交给 DefWindowProc 判定边缘，
+      // 仅把命中客户区的部分改为 HTCAPTION 即可实现「无标题栏但可拖动」。
+      if (in_pip_) {
+        LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
+        if (hit == HTCLIENT) {
+          return HTCAPTION;
+        }
+        return hit;
+      }
+      break;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
@@ -285,4 +299,50 @@ void Win32Window::UpdateTheme(HWND const window) {
     DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
                           &enable_dark_mode, sizeof(enable_dark_mode));
   }
+}
+
+void Win32Window::EnterPip(double aspect) {
+  if (in_pip_ || !window_handle_) {
+    return;
+  }
+  // 保存当前样式与位置/尺寸（屏幕物理像素），退出时精确还原。
+  saved_style_ = static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
+  GetWindowRect(window_handle_, &saved_rect_);
+
+  // 小窗逻辑宽 360，按当前显示器 DPI 缩放；高按传入宽高比(宽/高)推算。
+  HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
+  UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+  double scale = dpi / 96.0;
+  int w = static_cast<int>(360 * scale);
+  double a = (aspect > 0.1 && aspect < 10.0) ? aspect : (16.0 / 9.0);
+  int h = static_cast<int>(w / a);
+
+  // 去掉标题栏/菜单（WS_POPUP），保留可缩放边缘（WS_THICKFRAME）与系统菜单，
+  // 并置顶浮于其他窗口之上。
+  SetWindowLongPtr(window_handle_, GWL_STYLE,
+                   WS_POPUP | WS_THICKFRAME | WS_SYSMENU);
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  GetMonitorInfo(monitor, &mi);
+  int x = mi.rcWork.right - w - 24;
+  int y = mi.rcWork.bottom - h - 24;
+  SetWindowPos(window_handle_, HWND_TOPMOST, x, y, w, h,
+               SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  in_pip_ = true;
+}
+
+void Win32Window::ExitPip() {
+  if (!in_pip_ || !window_handle_) {
+    return;
+  }
+  SetWindowLongPtr(window_handle_, GWL_STYLE, saved_style_);
+  SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_rect_.left,
+               saved_rect_.top, saved_rect_.right - saved_rect_.left,
+               saved_rect_.bottom - saved_rect_.top,
+               SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  in_pip_ = false;
+}
+
+bool Win32Window::IsInPip() const {
+  return in_pip_;
 }

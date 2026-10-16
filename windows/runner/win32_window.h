@@ -55,6 +55,14 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
+  // Windows 桌面端「模拟画中画」：把主窗变为置顶、无标题栏、可拖拽/可缩放的
+  // 小浮窗（fvp 视频渲染进 Flutter Texture，主窗缩小视频即随之缩小，从而浮在
+  // 其他窗口之上）。|aspect| 为视频宽高比(宽/高)，用于计算小窗尺寸。
+  // 进入前会保存当前窗口样式与位置/尺寸，退出时精确还原。
+  void EnterPip(double aspect);
+  void ExitPip();
+  bool IsInPip() const;
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -97,6 +105,11 @@ class Win32Window {
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // 模拟画中画状态：进入前保存窗口样式与位置/尺寸，退出时还原。
+  bool in_pip_ = false;
+  DWORD saved_style_ = 0;
+  RECT saved_rect_ = {0, 0, 0, 0};
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_
