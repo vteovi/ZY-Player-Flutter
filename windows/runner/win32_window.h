@@ -108,6 +108,26 @@ class Win32Window {
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
 
+  // Apply the pending PiP / fullscreen window change on the message loop
+  // (posted from Enter*/Exit*). Performing the style/size change synchronously
+  // inside the Flutter method-channel handler re-enters the engine's WM_SIZE
+  // handling and deadlocks the UI thread (the window "freezes"); deferring the
+  // work onto the message loop avoids that.
+  void ApplyPipEnter(double aspect);
+  void ApplyPipExit();
+  void ApplyFullscreenEnter();
+  void ApplyFullscreenExit();
+
+  static constexpr UINT kMsgApplyPip = WM_APP + 1;
+  static constexpr UINT kMsgApplyFs = WM_APP + 2;
+
+  enum class PipAction { kNone, kEnter, kExit };
+  enum class FsAction { kNone, kEnter, kExit };
+
+  PipAction pending_pip_ = PipAction::kNone;
+  double pending_pip_aspect_ = 16.0 / 9.0;
+  FsAction pending_fs_ = FsAction::kNone;
+
   bool quit_on_close_ = false;
 
   // window handle for top level window.

@@ -892,8 +892,9 @@ class _PlayPageState extends State<PlayPage> {
                 color: Colors.black,
                 child: Center(child: _buildStage(frame)),
               ),
-            // 右上角退出按钮：点一下还原主窗（桌面模拟 PiP 专用）
-            if (isDesktop)
+            // 右上角退出按钮：点一下还原主窗（仅非桌面端需要——桌面端 PiP 用
+            // 原生窗口标题栏的 X 关闭，Flutter 按钮会被标题栏盖住，故桌面端不显示）。
+            if (!isDesktop)
               Positioned(
                 top: 6,
                 right: 6,

@@ -217,20 +217,36 @@ Win32Window::MessageHandler(HWND hwnd,
       UpdateTheme(hwnd);
       return 0;
 
-    case WM_NCHITTEST: {
-      // In simulated PiP the title bar is removed, so the client area must be
-      // draggable (drag anywhere on the video). Keep the WS_THICKFRAME edge
-      // resize hit-test by letting DefWindowProc decide edges, and only map a
-      // client-area hit to HTCAPTION to allow dragging without a title bar.
+    case WM_CLOSE:
+      // In simulated PiP or real fullscreen, closing the window (Alt+F4 or the
+      // title-bar X) must restore the normal window instead of quitting the app.
       if (in_pip_) {
-        LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
-        if (hit == HTCLIENT) {
-          return HTCAPTION;
-        }
-        return hit;
+        ExitPip();
+        return 0;
+      }
+      if (in_fullscreen_) {
+        ExitFullscreen();
+        return 0;
       }
       break;
-    }
+
+    case kMsgApplyPip:
+      if (pending_pip_ == PipAction::kEnter) {
+        ApplyPipEnter(pending_pip_aspect_);
+      } else if (pending_pip_ == PipAction::kExit) {
+        ApplyPipExit();
+      }
+      pending_pip_ = PipAction::kNone;
+      return 0;
+
+    case kMsgApplyFs:
+      if (pending_fs_ == FsAction::kEnter) {
+        ApplyFullscreenEnter();
+      } else if (pending_fs_ == FsAction::kExit) {
+        ApplyFullscreenExit();
+      }
+      pending_fs_ = FsAction::kNone;
+      return 0;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);
@@ -310,9 +326,24 @@ void Win32Window::EnterPip(double aspect) {
   // can be restored exactly on exit.
   saved_style_ = static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
   GetWindowRect(window_handle_, &saved_rect_);
+  pending_pip_aspect_ = aspect;
+  in_pip_ = true;
+  // Defer the actual style/size change to the message loop (see ApplyPipEnter).
+  PostMessage(window_handle_, kMsgApplyPip, 0, 0);
+}
 
-  // Small window logical width 360, scaled by the current monitor DPI; height
-  // derived from the supplied aspect ratio (width / height).
+void Win32Window::ExitPip() {
+  if (!in_pip_ || !window_handle_) {
+    return;
+  }
+  in_pip_ = false;
+  PostMessage(window_handle_, kMsgApplyPip, 0, 0);
+}
+
+void Win32Window::ApplyPipEnter(double aspect) {
+  if (!window_handle_) {
+    return;
+  }
   HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale = dpi / 96.0;
@@ -320,30 +351,33 @@ void Win32Window::EnterPip(double aspect) {
   double a = (aspect > 0.1 && aspect < 10.0) ? aspect : (16.0 / 9.0);
   int h = static_cast<int>(w / a);
 
-  // Drop the title bar/menu (WS_POPUP), keep resizable edges (WS_THICKFRAME)
-  // and the system menu, and pin on top of other windows.
+  // A real, complete title bar (WS_CAPTION) gives native drag + a working
+  // close button; WS_THICKFRAME keeps resizable edges, WS_SYSMENU the system
+  // menu. This avoids the broken "half title bar" that a WS_POPUP + WS_SYSMENU
+  // combo draws, and is fully movable / restorable / closable.
   SetWindowLongPtr(window_handle_, GWL_STYLE,
-                   WS_POPUP | WS_THICKFRAME | WS_SYSMENU);
+                   WS_CAPTION | WS_THICKFRAME | WS_SYSMENU);
+  // Force the non-client frame to be recomputed (no leftover caption pixels).
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   MONITORINFO mi{};
   mi.cbSize = sizeof(mi);
   GetMonitorInfo(monitor, &mi);
   int x = mi.rcWork.right - w - 24;
   int y = mi.rcWork.bottom - h - 24;
-  SetWindowPos(window_handle_, HWND_TOPMOST, x, y, w, h,
-               SWP_FRAMECHANGED | SWP_NOACTIVATE);
-  in_pip_ = true;
+  SetWindowPos(window_handle_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
 }
 
-void Win32Window::ExitPip() {
-  if (!in_pip_ || !window_handle_) {
+void Win32Window::ApplyPipExit() {
+  if (!window_handle_) {
     return;
   }
   SetWindowLongPtr(window_handle_, GWL_STYLE, saved_style_);
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_rect_.left,
                saved_rect_.top, saved_rect_.right - saved_rect_.left,
-               saved_rect_.bottom - saved_rect_.top,
-               SWP_FRAMECHANGED | SWP_NOACTIVATE);
-  in_pip_ = false;
+               saved_rect_.bottom - saved_rect_.top, SWP_NOACTIVATE);
 }
 
 bool Win32Window::IsInPip() const {
@@ -362,31 +396,49 @@ void Win32Window::EnterFullscreen() {
   saved_fs_style_ =
       static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
   GetWindowRect(window_handle_, &saved_fs_rect_);
-
-  // Borderless fill of the whole monitor (rcMonitor includes the taskbar area),
-  // pinned on top to cover the taskbar.
-  HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
-  MONITORINFO mi{};
-  mi.cbSize = sizeof(mi);
-  GetMonitorInfo(monitor, &mi);
-  SetWindowLongPtr(window_handle_, GWL_STYLE, WS_POPUP);
-  SetWindowPos(window_handle_, HWND_TOPMOST, mi.rcMonitor.left,
-               mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
-               mi.rcMonitor.bottom - mi.rcMonitor.top,
-               SWP_FRAMECHANGED | SWP_NOACTIVATE);
   in_fullscreen_ = true;
+  // Defer the actual style/size change to the message loop (see
+  // ApplyFullscreenEnter) to avoid the WM_SIZE re-entrancy deadlock that made
+  // the window "freeze" when entering fullscreen.
+  PostMessage(window_handle_, kMsgApplyFs, 0, 0);
 }
 
 void Win32Window::ExitFullscreen() {
   if (!in_fullscreen_ || !window_handle_) {
     return;
   }
+  in_fullscreen_ = false;
+  PostMessage(window_handle_, kMsgApplyFs, 0, 0);
+}
+
+void Win32Window::ApplyFullscreenEnter() {
+  if (!window_handle_) {
+    return;
+  }
+  HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  GetMonitorInfo(monitor, &mi);
+  // Borderless fill of the whole monitor (rcMonitor includes the taskbar area),
+  // pinned on top to cover the taskbar.
+  SetWindowLongPtr(window_handle_, GWL_STYLE, WS_POPUP);
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+  SetWindowPos(window_handle_, HWND_TOPMOST, mi.rcMonitor.left,
+               mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+               mi.rcMonitor.bottom - mi.rcMonitor.top, SWP_NOACTIVATE);
+}
+
+void Win32Window::ApplyFullscreenExit() {
+  if (!window_handle_) {
+    return;
+  }
   SetWindowLongPtr(window_handle_, GWL_STYLE, saved_fs_style_);
+  SetWindowPos(window_handle_, nullptr, 0, 0, 0, 0,
+               SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
   SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_fs_rect_.left,
                saved_fs_rect_.top, saved_fs_rect_.right - saved_fs_rect_.left,
-               saved_fs_rect_.bottom - saved_fs_rect_.top,
-               SWP_FRAMECHANGED | SWP_NOACTIVATE);
-  in_fullscreen_ = false;
+               saved_fs_rect_.bottom - saved_fs_rect_.top, SWP_NOACTIVATE);
 }
 
 bool Win32Window::IsFullscreen() const {
