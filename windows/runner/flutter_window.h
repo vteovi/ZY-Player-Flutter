@@ -4,6 +4,7 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
 #include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 
 #include <memory>
 
@@ -30,12 +31,13 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
 
-  // 与 Dart 端 'com.zy.player/pip' 对应的通道：处理桌面端模拟画中画
-  // (enterPip/exitPip)，并回传 onPipModeChanged 事件。
+  // Method channel matching the Dart side 'com.zy.player/pip': handles the
+  // desktop simulated picture-in-picture (enterPip/exitPip) and emits the
+  // onPipModeChanged event back to Flutter.
   std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>> pip_channel_;
 
-  // 与 Dart 端 'com.zy.player/window' 对应的通道：处理桌面端真正窗口全屏
-  // (enterFullscreen/exitFullscreen)。
+  // Method channel matching the Dart side 'com.zy.player/window': handles the
+  // desktop real window fullscreen (enterFullscreen/exitFullscreen).
   std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
 };

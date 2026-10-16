@@ -55,16 +55,20 @@ class Win32Window {
   // Return a RECT representing the bounds of the current client area.
   RECT GetClientArea();
 
-  // Windows 桌面端「模拟画中画」：把主窗变为置顶、无标题栏、可拖拽/可缩放的
-  // 小浮窗（fvp 视频渲染进 Flutter Texture，主窗缩小视频即随之缩小，从而浮在
-  // 其他窗口之上）。|aspect| 为视频宽高比(宽/高)，用于计算小窗尺寸。
-  // 进入前会保存当前窗口样式与位置/尺寸，退出时精确还原。
+  // Desktop simulated picture-in-picture: turns the main window into a
+  // top-most, borderless, draggable/resizable floating window. Since fvp
+  // renders into a Flutter Texture, shrinking the window shrinks the video,
+  // so it floats above other windows. |aspect| is the video aspect ratio
+  // (width / height) used to compute the small window size. The current window
+  // style and position/size are saved before entering and restored on exit.
   void EnterPip(double aspect);
   void ExitPip();
   bool IsInPip() const;
 
-  // 桌面端「真正窗口全屏」：把主窗变为无边框、铺满整个显示器（含任务栏区域）、
-  // 并置顶盖住任务栏。进入前若处于模拟画中画浮窗则先退出，二者互斥。
+  // Desktop real window fullscreen: turns the main window borderless and fills
+  // the whole monitor (including the taskbar area), pinned on top. If currently
+  // in simulated PiP, it exits the floating window first; the two are mutually
+  // exclusive.
   void EnterFullscreen();
   void ExitFullscreen();
   bool IsFullscreen() const;
@@ -112,12 +116,14 @@ class Win32Window {
   // window handle for hosted content.
   HWND child_content_ = nullptr;
 
-  // 模拟画中画状态：进入前保存窗口样式与位置/尺寸，退出时还原。
+  // Simulated PiP state: window style and position/size saved before entering
+  // and restored on exit.
   bool in_pip_ = false;
   DWORD saved_style_ = 0;
   RECT saved_rect_ = {0, 0, 0, 0};
 
-  // 真正窗口全屏状态：进入前保存窗口样式与位置/尺寸，退出时还原。
+  // Real window fullscreen state: window style and position/size saved before
+  // entering and restored on exit.
   bool in_fullscreen_ = false;
   DWORD saved_fs_style_ = 0;
   RECT saved_fs_rect_ = {0, 0, 0, 0};

@@ -36,10 +36,11 @@ bool FlutterWindow::OnCreate() {
   // window is shown. It is a no-op if the first frame hasn't completed yet.
   flutter_controller_->ForceRedraw();
 
-  // Windows 桌面端「模拟画中画」通道：与 Android 端 'com.zy.player/pip' 对应。
-  // Dart 调 enterPip/exitPip，原生把主窗变为置顶无边框小浮窗，并回传
-  // onPipModeChanged 事件，驱动 Flutter 隐藏/恢复全部 UI（只留纯播放画面）。
-  auto messenger = flutter_controller_->engine()->GetBinaryMessenger();
+  // Desktop simulated picture-in-picture channel, matching the Android side
+  // 'com.zy.player/pip'. Dart calls enterPip/exitPip; the native side turns the
+  // main window into a top-most borderless floating window and emits the
+  // onPipModeChanged event so Flutter can hide/restore its UI (video only).
+  auto messenger = flutter_controller_->engine()->messenger();
   pip_channel_ = std::make_shared<flutter::MethodChannel<flutter::EncodableValue>>(
       messenger, "com.zy.player/pip",
       &flutter::StandardMethodCodec::GetInstance());
@@ -74,9 +75,10 @@ bool FlutterWindow::OnCreate() {
         }
       });
 
-  // 桌面端「真正窗口全屏」通道：与 Dart 端 'com.zy.player/window' 对应，
-  // 处理 enterFullscreen/exitFullscreen，把应用窗口铺满整个显示器（无边框、盖任务栏）。
-  auto window_messenger = flutter_controller_->engine()->GetBinaryMessenger();
+  // Desktop real window fullscreen channel, matching the Dart side
+  // 'com.zy.player/window'. Handles enterFullscreen/exitFullscreen to make the
+  // app window borderless and fill the whole monitor (covering the taskbar).
+  auto window_messenger = flutter_controller_->engine()->messenger();
   window_channel_ = std::make_shared<flutter::MethodChannel<flutter::EncodableValue>>(
       window_messenger, "com.zy.player/window",
       &flutter::StandardMethodCodec::GetInstance());

@@ -218,9 +218,10 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_NCHITTEST: {
-      // 模拟画中画时：去掉了标题栏，需让客户区可拖动（点视频任意处拖动），
-      // 但保留 WS_THICKFRAME 的边缘缩放命中。交给 DefWindowProc 判定边缘，
-      // 仅把命中客户区的部分改为 HTCAPTION 即可实现「无标题栏但可拖动」。
+      // In simulated PiP the title bar is removed, so the client area must be
+      // draggable (drag anywhere on the video). Keep the WS_THICKFRAME edge
+      // resize hit-test by letting DefWindowProc decide edges, and only map a
+      // client-area hit to HTCAPTION to allow dragging without a title bar.
       if (in_pip_) {
         LRESULT hit = DefWindowProc(hwnd, message, wparam, lparam);
         if (hit == HTCLIENT) {
@@ -305,11 +306,13 @@ void Win32Window::EnterPip(double aspect) {
   if (in_pip_ || !window_handle_) {
     return;
   }
-  // 保存当前样式与位置/尺寸（屏幕物理像素），退出时精确还原。
+  // Save the current style and position/size (screen physical pixels) so they
+  // can be restored exactly on exit.
   saved_style_ = static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
   GetWindowRect(window_handle_, &saved_rect_);
 
-  // 小窗逻辑宽 360，按当前显示器 DPI 缩放；高按传入宽高比(宽/高)推算。
+  // Small window logical width 360, scaled by the current monitor DPI; height
+  // derived from the supplied aspect ratio (width / height).
   HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale = dpi / 96.0;
@@ -317,8 +320,8 @@ void Win32Window::EnterPip(double aspect) {
   double a = (aspect > 0.1 && aspect < 10.0) ? aspect : (16.0 / 9.0);
   int h = static_cast<int>(w / a);
 
-  // 去掉标题栏/菜单（WS_POPUP），保留可缩放边缘（WS_THICKFRAME）与系统菜单，
-  // 并置顶浮于其他窗口之上。
+  // Drop the title bar/menu (WS_POPUP), keep resizable edges (WS_THICKFRAME)
+  // and the system menu, and pin on top of other windows.
   SetWindowLongPtr(window_handle_, GWL_STYLE,
                    WS_POPUP | WS_THICKFRAME | WS_SYSMENU);
   MONITORINFO mi{};
@@ -351,7 +354,8 @@ void Win32Window::EnterFullscreen() {
   if (in_fullscreen_ || !window_handle_) {
     return;
   }
-  // 若当前处于模拟画中画浮窗，先退出浮窗再全屏，二者互斥。
+  // If currently in simulated PiP, exit the floating window first; the two
+  // states are mutually exclusive.
   if (in_pip_) {
     ExitPip();
   }
@@ -359,7 +363,8 @@ void Win32Window::EnterFullscreen() {
       static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
   GetWindowRect(window_handle_, &saved_fs_rect_);
 
-  // 无边框铺满整个显示器（rcMonitor 含任务栏区域），并置顶确保盖住任务栏。
+  // Borderless fill of the whole monitor (rcMonitor includes the taskbar area),
+  // pinned on top to cover the taskbar.
   HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
   MONITORINFO mi{};
   mi.cbSize = sizeof(mi);
