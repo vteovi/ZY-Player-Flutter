@@ -78,3 +78,11 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写，页面/数据一一对应（首�
 - 本项目用 `dart-single-process-analyze` 技能跑单进程静态检查（生成环境到 `C:/Users/VTE/AppData/Local/Temp/zyanalyze/analyze.dart`，再 `C:/flutter/bin/dart .../analyze.dart --no-lints`）。
 - 沙箱注入 tsbx.dll 使**部分**派生子进程失败（CreateFile failed 231）；但 2026-10-15 起实测 `C:/flutter/bin/cache/dart-sdk/bin/dart.exe analyze` 可直接跑通（flutter.bat 子进程也正常）。若单进程技能不可用，直接 `dart analyze` 是可行兜底。注意 `--no-lints` 在该 SDK 不是合法参数，用裸 `dart analyze` 即可（info 级 lint 不影响编译）。
 - `android/local.properties` 被 gitignore（本地不入库），`git add` 它会被拒；提交时注意只加仓库内文件。
+
+## Windows 桌面端原生窗口（1.9.13/1.9.14 起，勿回退）
+- **C++ 只能写英文注释**：`windows/runner/` 的 C++ 文件是 UTF-8 无 BOM，MSVC 按 GBK(936) 读中文注释 → C4819 →（工程开了警告即错误）C2220 直接构建失败。改完数一遍非 ASCII，必须为 0。
+- **一切窗口形状变更必须由 Dart 发起**。原生 `WM_CLOSE`（标题栏 X / Alt+F4）在 PiP/全屏下**不再自己改窗口**，只回传 `onPipExitRequested` / `onFullscreenExitRequested`（返回 0、不销毁窗口）请 Dart 退出；否则 Dart 会停在「只剩视频、没有控件」的状态，看起来像卡死。
+- **改窗口前后必须「摘视频纹理」**：Windows 上 fvp 用 D3D11 共享纹理输出（`fvp_plugin.cpp` 的 `TexturePlayer`：光栅线程 `ObtainDescriptorCallback` 持 `mtx` 做 `CopyResource`+`Flush`，mdk 渲染回调持同一 `mtx`）。视频出帧时改窗口尺寸 → 引擎重建渲染表面与插件纹理回调互等 → **UI 线程死锁、整个程序无响应**（同步、延迟 PostMessage 两种写法都一样）。Dart 侧 `_withVideoDetached()`：`_windowSwitching=true` → `_buildStage` 换同尺寸黑盒 → 等两帧 + 60ms → 调原生 → **再等 250ms**（原生是 PostMessage 异步落地）→ 挂回纹理。播放不中断。
+- 改窗口用**单次** `SetWindowPos(位置+尺寸, SWP_FRAMECHANGED|SWP_NOOWNERZORDER|SWP_NOACTIVATE)`，样式在**当前样式上增删位**（保留 `WS_VISIBLE`/`WS_CLIPCHILDREN`），不要整个替换；写法对齐 `window_manager` 插件。
+- 原生诊断日志：`Win32Window::Trace/TraceReset` → `<exe目录>\zy_player_debug.log`（启动截断），记录关注的窗口消息 + 是否被引擎 `HandleTopLevelWindowProc` 消费 + `Apply*` 每步；卡住时日志末行即卡点。
+- 三个模式语义：**填满** = 纯 Flutter（视频铺满应用窗口，`_fullscreen`）；**全屏** = 原生无边框铺满显示器盖住任务栏（`_nativeFullscreen`）；**画中画** = 原生置顶小窗（`WS_CAPTION|WS_THICKFRAME|WS_SYSMENU`，可拖/可缩放，标题栏 X 退出，Dart 侧另留兜底 × 按钮）。
