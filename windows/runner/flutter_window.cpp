@@ -63,13 +63,13 @@ bool FlutterWindow::OnCreate() {
           this->pip_channel_->InvokeMethod(
               "onPipModeChanged",
               std::make_unique<flutter::EncodableValue>(true));
-          result->Success(std::make_unique<flutter::EncodableValue>(true));
+          result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "exitPip") {
           this->ExitPip();
           this->pip_channel_->InvokeMethod(
               "onPipModeChanged",
               std::make_unique<flutter::EncodableValue>(false));
-          result->Success(std::make_unique<flutter::EncodableValue>(true));
+          result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
         }
@@ -88,10 +88,10 @@ bool FlutterWindow::OnCreate() {
                  result) {
         if (call.method_name() == "enterFullscreen") {
           this->EnterFullscreen();
-          result->Success(std::make_unique<flutter::EncodableValue>(true));
+          result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "exitFullscreen") {
           this->ExitFullscreen();
-          result->Success(std::make_unique<flutter::EncodableValue>(true));
+          result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
         }
