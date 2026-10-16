@@ -33,6 +33,11 @@ class FlutterWindow : public Win32Window {
   // 与 Dart 端 'com.zy.player/pip' 对应的通道：处理桌面端模拟画中画
   // (enterPip/exitPip)，并回传 onPipModeChanged 事件。
   std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>> pip_channel_;
+
+  // 与 Dart 端 'com.zy.player/window' 对应的通道：处理桌面端真正窗口全屏
+  // (enterFullscreen/exitFullscreen)。
+  std::shared_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      window_channel_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

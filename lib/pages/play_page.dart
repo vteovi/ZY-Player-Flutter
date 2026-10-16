@@ -42,6 +42,11 @@ class _PlayPageState extends State<PlayPage> {
   /// 也用于接收原生侧回传的 PiP 模式变化事件 (onPipModeChanged)。
   final MethodChannel _pipChannel = const MethodChannel('com.zy.player/pip');
 
+  /// 桌面端窗口通道：处理「真正窗口全屏」(enterFullscreen/exitFullscreen)。
+  /// Android/iOS 不走窗口级全屏（系统级全屏由 SystemChrome 处理），无此通道。
+  final MethodChannel _windowChannel =
+      const MethodChannel('com.zy.player/window');
+
   /// 竖屏时画面区域最多占屏幕高度的比例，防止 9:16 这类竖版比例把布局撑爆
   static const double _portraitMaxHeightRatio = 0.42;
 
@@ -68,6 +73,19 @@ class _PlayPageState extends State<PlayPage> {
   /// 是否处于系统画中画（PiP）模式。进入后隐藏一切 Flutter UI（标题栏 / 进度条 /
   /// 控制按钮 / 详情），只留纯播放画面，让 PiP 窗口里是「全屏视频」而非缩小的整页。
   bool _inPip = false;
+
+  /// 桌面端是否处于「真正窗口全屏」(无边框铺满整个显示器，盖住任务栏)。
+  /// 与「填满窗口」(_fullscreen 在桌面只是视频铺满应用窗口) 区分。
+  bool _nativeFullscreen = false;
+
+  /// 是否桌面平台（Windows/macOS/Linux）——这些平台需要窗口级原生操作
+  /// （画中画浮窗、真正全屏），且 SystemChrome 的沉浸模式对它们无效。
+  bool get _isDesktop {
+    final p = Theme.of(context).platform;
+    return p == TargetPlatform.windows ||
+        p == TargetPlatform.macOS ||
+        p == TargetPlatform.linux;
+  }
 
   /// 当前画面比例 / 大小（初始化时从设置读入，改动后写回）
   late AspectOption _aspect;
@@ -442,6 +460,23 @@ class _PlayPageState extends State<PlayPage> {
     } catch (_) {}
   }
 
+  /// 桌面端「真正窗口全屏」：把应用窗口铺满整个显示器（无边框、盖住任务栏）。
+  /// 进入时一并打开「填满」(_fullscreen=true) 让视频铺满；退出时还原窗口并关闭填满。
+  /// Android/iOS 无此通道，调用会被忽略（NotImplemented）。
+  Future<void> _toggleNativeFullscreen() async {
+    try {
+      if (_nativeFullscreen) {
+        await _windowChannel.invokeMethod('exitFullscreen');
+        _nativeFullscreen = false;
+        if (mounted) setState(() => _fullscreen = false);
+      } else {
+        await _windowChannel.invokeMethod('enterFullscreen');
+        _nativeFullscreen = true;
+        if (mounted) setState(() => _fullscreen = true);
+      }
+    } catch (_) {}
+  }
+
   /// 每 10 秒记录一次播放进度。
   /// 直接写库而不触发通知：播放中的界面不需要重绘，历史页进入时会重新读库。
   Future<void> _updateHistory() async {
@@ -635,6 +670,12 @@ class _PlayPageState extends State<PlayPage> {
   }
 
   Future<void> _toggleFullscreen() async {
+    // 桌面端：若处于原生窗口全屏，优先退出窗口全屏（连带退出「填满」），
+    // 让现有「全屏/填满」按钮与新增的「窗口全屏」按钮互斥、状态一致。
+    if (_nativeFullscreen) {
+      await _toggleNativeFullscreen();
+      return;
+    }
     // 退出 / 进入全屏前，若正在长按加速，先恢复正常速度，避免状态卡住
     if (_longPressActive) {
       _controller.setPlaybackSpeed(1.0);
@@ -1499,12 +1540,26 @@ class _PlayPageState extends State<PlayPage> {
               onTap: _rotateFullscreen,
             ),
           _controlButton(
-            icon: _fullscreen
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-            label: _fullscreen ? '退出全屏' : '全屏',
+            icon: _isDesktop && !_fullscreen
+                ? Icons.crop_free_rounded
+                : (_fullscreen
+                    ? Icons.fullscreen_exit_rounded
+                    : Icons.fullscreen_rounded),
+            label: _fullscreen
+                ? '退出全屏'
+                : (_isDesktop ? '填满' : '全屏'),
             onTap: _toggleFullscreen,
           ),
+          // 桌面端独有：真正把窗口铺满整个屏幕（无边框、盖任务栏），区别于上面的
+          // 「填满」(仅视频铺满应用窗口)。移动端系统级全屏已足够，不显示。
+          if (_isDesktop)
+            _controlButton(
+              icon: _nativeFullscreen
+                  ? Icons.fullscreen_exit_rounded
+                  : Icons.fullscreen_rounded,
+              label: _nativeFullscreen ? '退出全屏' : '全屏',
+              onTap: _toggleNativeFullscreen,
+            ),
         ],
       ),
     );

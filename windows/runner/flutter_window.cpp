@@ -74,6 +74,27 @@ bool FlutterWindow::OnCreate() {
         }
       });
 
+  // 桌面端「真正窗口全屏」通道：与 Dart 端 'com.zy.player/window' 对应，
+  // 处理 enterFullscreen/exitFullscreen，把应用窗口铺满整个显示器（无边框、盖任务栏）。
+  auto window_messenger = flutter_controller_->engine()->GetBinaryMessenger();
+  window_channel_ = std::make_shared<flutter::MethodChannel<flutter::EncodableValue>>(
+      window_messenger, "com.zy.player/window",
+      &flutter::StandardMethodCodec::GetInstance());
+  window_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() == "enterFullscreen") {
+          this->EnterFullscreen();
+          result->Success(std::make_unique<flutter::EncodableValue>(true));
+        } else if (call.method_name() == "exitFullscreen") {
+          this->ExitFullscreen();
+          result->Success(std::make_unique<flutter::EncodableValue>(true));
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   return true;
 }
 

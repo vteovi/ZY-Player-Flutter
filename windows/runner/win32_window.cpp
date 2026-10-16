@@ -346,3 +346,44 @@ void Win32Window::ExitPip() {
 bool Win32Window::IsInPip() const {
   return in_pip_;
 }
+
+void Win32Window::EnterFullscreen() {
+  if (in_fullscreen_ || !window_handle_) {
+    return;
+  }
+  // 若当前处于模拟画中画浮窗，先退出浮窗再全屏，二者互斥。
+  if (in_pip_) {
+    ExitPip();
+  }
+  saved_fs_style_ =
+      static_cast<DWORD>(GetWindowLongPtr(window_handle_, GWL_STYLE));
+  GetWindowRect(window_handle_, &saved_fs_rect_);
+
+  // 无边框铺满整个显示器（rcMonitor 含任务栏区域），并置顶确保盖住任务栏。
+  HMONITOR monitor = MonitorFromWindow(window_handle_, MONITOR_DEFAULTTONEAREST);
+  MONITORINFO mi{};
+  mi.cbSize = sizeof(mi);
+  GetMonitorInfo(monitor, &mi);
+  SetWindowLongPtr(window_handle_, GWL_STYLE, WS_POPUP);
+  SetWindowPos(window_handle_, HWND_TOPMOST, mi.rcMonitor.left,
+               mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+               mi.rcMonitor.bottom - mi.rcMonitor.top,
+               SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  in_fullscreen_ = true;
+}
+
+void Win32Window::ExitFullscreen() {
+  if (!in_fullscreen_ || !window_handle_) {
+    return;
+  }
+  SetWindowLongPtr(window_handle_, GWL_STYLE, saved_fs_style_);
+  SetWindowPos(window_handle_, HWND_NOTOPMOST, saved_fs_rect_.left,
+               saved_fs_rect_.top, saved_fs_rect_.right - saved_fs_rect_.left,
+               saved_fs_rect_.bottom - saved_fs_rect_.top,
+               SWP_FRAMECHANGED | SWP_NOACTIVATE);
+  in_fullscreen_ = false;
+}
+
+bool Win32Window::IsFullscreen() const {
+  return in_fullscreen_;
+}

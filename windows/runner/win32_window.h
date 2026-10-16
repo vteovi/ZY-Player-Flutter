@@ -63,6 +63,12 @@ class Win32Window {
   void ExitPip();
   bool IsInPip() const;
 
+  // 桌面端「真正窗口全屏」：把主窗变为无边框、铺满整个显示器（含任务栏区域）、
+  // 并置顶盖住任务栏。进入前若处于模拟画中画浮窗则先退出，二者互斥。
+  void EnterFullscreen();
+  void ExitFullscreen();
+  bool IsFullscreen() const;
+
  protected:
   // Processes and route salient window messages for mouse handling,
   // size change and DPI. Delegates handling of these to member overloads that
@@ -110,6 +116,11 @@ class Win32Window {
   bool in_pip_ = false;
   DWORD saved_style_ = 0;
   RECT saved_rect_ = {0, 0, 0, 0};
+
+  // 真正窗口全屏状态：进入前保存窗口样式与位置/尺寸，退出时还原。
+  bool in_fullscreen_ = false;
+  DWORD saved_fs_style_ = 0;
+  RECT saved_fs_rect_ = {0, 0, 0, 0};
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_
