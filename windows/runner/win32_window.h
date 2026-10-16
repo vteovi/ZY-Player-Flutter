@@ -84,6 +84,15 @@ class Win32Window {
   // left mouse button is held down.
   void StartPipDrag();
 
+  // Starts a native window resize for the borderless PiP window. |ht| is the
+  // Win32 hit-test code for the grabbed border (HTLEFT=10, HTRIGHT=11, HTTOP=12,
+  // HTTOPLEFT=13, HTTOPRIGHT=14, HTBOTTOM=15, HTBOTTOMLEFT=16,
+  // HTBOTTOMRIGHT=17). The window keeps WS_THICKFRAME so the system's modal
+  // resize loop works, while WM_NCCALCSIZE makes the frame invisible. Must be
+  // called on the platform thread while the left mouse button is held down;
+  // it returns once the user releases the button.
+  void StartPipResize(int ht);
+
   // Desktop real window fullscreen: turns the main window borderless and fills
   // the whole monitor (including the taskbar area), pinned on top. If currently
   // in simulated PiP, it exits the floating window first; the two are mutually

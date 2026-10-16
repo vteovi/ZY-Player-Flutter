@@ -50,6 +50,20 @@ class _PlayPageState extends State<PlayPage> {
   /// 竖屏时画面区域最多占屏幕高度的比例，防止 9:16 这类竖版比例把布局撑爆
   static const double _portraitMaxHeightRatio = 0.42;
 
+  /// 桌面端小窗（模拟画中画）的缩放把手尺寸：边缘条宽 / 角块边长（逻辑像素）。
+  static const double _kPipEdge = 8;
+  static const double _kPipCorner = 22;
+
+  /// Win32 边框命中码（与 windows.h 的 HT* 常量一致），传给原生 startPipResize。
+  static const int _kHtLeft = 10;
+  static const int _kHtRight = 11;
+  static const int _kHtTop = 12;
+  static const int _kHtTopLeft = 13;
+  static const int _kHtTopRight = 14;
+  static const int _kHtBottom = 15;
+  static const int _kHtBottomLeft = 16;
+  static const int _kHtBottomRight = 17;
+
   /// 内置播放器请求头：很多影视源站/CDN 会按 User-Agent 拦掉 ExoPlayer 的
   /// `ExoPlayer/2.x` UA（返回 403 或 HTML 而非视频流），导致「播放失败」。
   /// 带上浏览器 UA 后大多能直接过。Referer 一般不强制（外部播放器也没带却能播），
@@ -988,33 +1002,102 @@ class _PlayPageState extends State<PlayPage> {
         final frame = _stageAreaSize(constraints.maxWidth, constraints.maxHeight);
         return Stack(
           children: [
-            if (isDesktop)
-              // 悬停时显示「移动」光标，提示这个无边框小窗可以直接拖。
-              MouseRegion(
-                cursor: SystemMouseCursors.move,
-                child: GestureDetector(
-                  // 小窗无边框，拖动只能交给系统移动循环（原生 startDrag）；
-                  // 双击画面还原窗口。
-                  onPanStart: (_) => _startPipDrag(),
-                  onDoubleTap: _exitPip,
-                  child: Container(
-                    color: Colors.black,
-                    child: Center(child: _buildStage(frame)),
-                  ),
-                ),
-              )
-            else
-              Container(
-                color: Colors.black,
-                child: Center(child: _buildStage(frame)),
+            Positioned.fill(
+              child: isDesktop
+                  // 悬停时显示「移动」光标，提示这个无边框小窗可以直接拖。
+                  ? MouseRegion(
+                      cursor: SystemMouseCursors.move,
+                      child: GestureDetector(
+                        // 小窗无边框，拖动只能交给系统移动循环（原生 startDrag）；
+                        // 双击画面还原窗口。
+                        onPanStart: (_) => _startPipDrag(),
+                        onDoubleTap: _exitPip,
+                        child: Container(
+                          color: Colors.black,
+                          child: Center(child: _buildStage(frame)),
+                        ),
+                      ),
+                    )
+                  : Container(
+                      color: Colors.black,
+                      child: Center(child: _buildStage(frame)),
+                    ),
+            ),
+            // 缩放热区：无边框小窗没有系统可命中的边框（鼠标消息又都发给 Flutter
+            // 子视图），所以在 Flutter 侧沿四边/四角铺一圈透明热区，拖到就让原生
+            // 进入系统的缩放循环。压在视频之上、退出按钮之下。
+            if (isDesktop) ...[
+              _pipResizeHandle(
+                ht: _kHtLeft,
+                cursor: SystemMouseCursors.resizeLeftRight,
+                left: 0,
+                top: _kPipCorner,
+                bottom: _kPipCorner,
+                width: _kPipEdge,
               ),
+              _pipResizeHandle(
+                ht: _kHtRight,
+                cursor: SystemMouseCursors.resizeLeftRight,
+                right: 0,
+                top: _kPipCorner,
+                bottom: _kPipCorner,
+                width: _kPipEdge,
+              ),
+              _pipResizeHandle(
+                ht: _kHtTop,
+                cursor: SystemMouseCursors.resizeUpDown,
+                top: 0,
+                left: _kPipCorner,
+                right: _kPipCorner,
+                height: _kPipEdge,
+              ),
+              _pipResizeHandle(
+                ht: _kHtBottom,
+                cursor: SystemMouseCursors.resizeUpDown,
+                bottom: 0,
+                left: _kPipCorner,
+                right: _kPipCorner,
+                height: _kPipEdge,
+              ),
+              _pipResizeHandle(
+                ht: _kHtTopLeft,
+                cursor: SystemMouseCursors.resizeUpLeftDownRight,
+                left: 0,
+                top: 0,
+                width: _kPipCorner,
+                height: _kPipCorner,
+              ),
+              _pipResizeHandle(
+                ht: _kHtTopRight,
+                cursor: SystemMouseCursors.resizeUpRightDownLeft,
+                right: 0,
+                top: 0,
+                width: _kPipCorner,
+                height: _kPipCorner,
+              ),
+              _pipResizeHandle(
+                ht: _kHtBottomLeft,
+                cursor: SystemMouseCursors.resizeUpRightDownLeft,
+                left: 0,
+                bottom: 0,
+                width: _kPipCorner,
+                height: _kPipCorner,
+              ),
+              _pipResizeHandle(
+                ht: _kHtBottomRight,
+                cursor: SystemMouseCursors.resizeUpLeftDownRight,
+                right: 0,
+                bottom: 0,
+                width: _kPipCorner,
+                height: _kPipCorner,
+              ),
+            ],
             // 右上角退出按钮：点一下还原主窗。
-            // 桌面端本来靠原生小窗标题栏的 X 退出，但这里再留一个兜底按钮——
-            // 一旦标题栏不可用（或用户找不到 X），界面里至少还有个明确的出口，
-            // 不至于像「卡住」一样出不来。按钮画在客户区顶部，不会被标题栏遮住。
+            // 位置往内收（right 让开右上角的缩放热区、top 让开上边缘热区），
+            // 否则按钮会盖住右上角的缩放把手。
             Positioned(
-              top: 6,
-              right: 6,
+              top: _kPipCorner + 4,
+              right: _kPipCorner - 6,
               child: Material(
                 color: Colors.black54,
                 shape: const CircleBorder(),
@@ -1032,6 +1115,58 @@ class _PlayPageState extends State<PlayPage> {
         );
       },
     );
+  }
+
+  /// 小窗（模拟画中画）的一个缩放把手。[ht] 是 Win32 的边框命中码
+  /// （HTLEFT=10 / HTRIGHT=11 / HTTOP=12 / HTTOPLEFT=13 / HTTOPRIGHT=14 /
+  /// HTBOTTOM=15 / HTBOTTOMLEFT=16 / HTBOTTOMRIGHT=17），原生据此让系统进入
+  /// 对应方向的缩放循环（StartPipResize）。
+  Widget _pipResizeHandle({
+    required int ht,
+    required MouseCursor cursor,
+    double? left,
+    double? top,
+    double? right,
+    double? bottom,
+    double? width,
+    double? height,
+  }) {
+    return Positioned(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+      width: width,
+      height: height,
+      child: MouseRegion(
+        cursor: cursor,
+        child: GestureDetector(
+          // opaque：热区必须吃掉指针，否则下面的「拖动窗口」手势会和缩放抢同一个
+          // 指针（两者都会进手势竞技场，谁赢不确定）。
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (_) => _startPipResize(ht),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+
+  /// 桌面端小窗缩放：**先摘掉视频纹理**再让原生进入系统缩放循环。
+  /// 改窗口「尺寸」才是之前让整个程序卡死的那条路径（fvp 的 D3D11 共享纹理
+  /// 出帧与引擎重建渲染表面互等），所以整个拖拽期间都不挂纹理（画面黑一会儿，
+  /// 音频继续）；松开鼠标后循环返回，再挂回纹理。
+  Future<void> _startPipResize(int ht) async {
+    if (_windowChangeBusy) return;
+    _windowChangeBusy = true;
+    try {
+      await _withVideoDetached(() async {
+        try {
+          await _pipChannel.invokeMethod('resizeStart', {'edge': ht});
+        } catch (_) {}
+      });
+    } finally {
+      _windowChangeBusy = false;
+    }
   }
 
   Widget _buildFullscreenBody() {

@@ -79,6 +79,26 @@ bool FlutterWindow::OnCreate() {
           Win32Window::Trace("channel pip.startDrag");
           this->StartPipDrag();
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "resizeStart") {
+          // |edge| is a Win32 border hit-test code (HTLEFT..HTBOTTOMRIGHT), see
+          // StartPipResize. Dart detaches the video texture before calling this:
+          // changing the window *size* while fvp streams into the D3D11 shared
+          // texture is what used to freeze the whole app.
+          int ht = 0;
+          if (const auto* args =
+                  std::get_if<flutter::EncodableMap>(call.arguments())) {
+            if (auto it = args->find(flutter::EncodableValue("edge"));
+                it != args->end()) {
+              if (const auto* i32 = std::get_if<int32_t>(&it->second)) {
+                ht = *i32;
+              } else if (const auto* i64 = std::get_if<int64_t>(&it->second)) {
+                ht = static_cast<int>(*i64);
+              }
+            }
+          }
+          Win32Window::Trace("channel pip.resizeStart");
+          this->StartPipResize(ht);
+          result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
         }
@@ -124,6 +144,17 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Simulated picture-in-picture keeps WS_THICKFRAME (the system's modal resize
+  // loop and its minimum tracking size need a sizing border) but must not paint
+  // or inset any frame. Answering WM_NCCALCSIZE (wParam TRUE) with 0 and without
+  // touching the rect makes the client area cover the whole window rect, i.e. a
+  // borderless window that is still resizable. Handled before the engine so
+  // nothing else can answer it first; it only applies while in PiP, so the
+  // normal window frame comes back on exit.
+  if (message == WM_NCCALCSIZE && wparam == TRUE && IsInPip()) {
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
