@@ -45,11 +45,24 @@ class _PlayPageState extends State<PlayPage> {
   /// 竖屏时画面区域最多占屏幕高度的比例，防止 9:16 这类竖版比例把布局撑爆
   static const double _portraitMaxHeightRatio = 0.42;
 
+  /// 内置播放器请求头：很多影视源站/CDN 会按 User-Agent 拦掉 ExoPlayer 的
+  /// `ExoPlayer/2.x` UA（返回 403 或 HTML 而非视频流），导致「播放失败」。
+  /// 带上浏览器 UA 后大多能直接过。Referer 一般不强制（外部播放器也没带却能播），
+  /// 故这里只补 UA，避免乱带 Referer 反而被严格防盗链拦。
+  static const Map<String, String> _kPlayerHeaders = {
+    'User-Agent':
+        'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 '
+        '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+  };
+
   late VideoPlayerController _controller;
   Timer? _historyTimer;
 
   bool _initialized = false;
   bool _hasError = false;
+  /// 最近一次播放错误的原始描述（来自异常或 ExoPlayer 的 errorDescription），
+  /// 用于在失败界面展示，便于定位是 403 / mime / codec 哪种问题。
+  String? _lastError;
   bool _fullscreen = false;
 
   /// 是否处于系统画中画（PiP）模式。进入后隐藏一切 Flutter UI（标题栏 / 进度条 /
@@ -162,7 +175,10 @@ class _PlayPageState extends State<PlayPage> {
 
     _title = widget.title;
     _currentUrl = widget.url;
-    _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(widget.url),
+      httpHeaders: _kPlayerHeaders,
+    );
     _controller.addListener(_onControllerUpdate);
     _initPlayer(seekTo: widget.initialTime);
     _loadDetail();
@@ -208,8 +224,13 @@ class _PlayPageState extends State<PlayPage> {
       if (mounted) setState(() => _initialized = true);
       // 换集后视频自身的比例可能变了，全屏中要跟着重新选横竖屏
       if (_fullscreen) await _applyFullscreenOrientation();
-    } catch (_) {
-      if (mounted) setState(() => _hasError = true);
+    } catch (e) {
+      if (mounted) {
+        _lastError = e.toString();
+        setState(() => _hasError = true);
+      }
+      // 暴露真实报错，便于定位是 403 / mime / codec 哪种（之前被 catch(_) 吞掉）
+      debugPrint('[PlayPage] 内置播放器初始化失败: $e');
     }
   }
 
@@ -246,6 +267,7 @@ class _PlayPageState extends State<PlayPage> {
     }
     // 播放中出错时刷新一次
     if (_controller.value.hasError && !_hasError) {
+      _lastError = _controller.value.errorDescription;
       setState(() => _hasError = true);
       return;
     }
@@ -448,10 +470,33 @@ class _PlayPageState extends State<PlayPage> {
     _controller.removeListener(_onControllerUpdate);
     await _controller.dispose();
     if (!mounted) return;
-    _controller = VideoPlayerController.networkUrl(Uri.parse(item.value));
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(item.value),
+      httpHeaders: _kPlayerHeaders,
+    );
     _controller.addListener(_onControllerUpdate);
     await _initPlayer();
     await _updateHistory();
+  }
+
+  /// 内置播放失败时的一键兜底：把当前地址交给外部播放器（与外部播放入口同一逻辑）。
+  Future<void> _openExternalFromError() async {
+    final status = await SystemControl.openWithExternalPlayer(
+      url: _currentUrl,
+      title: _title.isNotEmpty ? _title : (_detail?.name ?? ''),
+      customPath: context.read<AppState>().config.externalPlayerPath,
+    );
+    if (!mounted) return;
+    switch (status) {
+      case 'no_app':
+        showToast(context, '没找到能播放该地址的播放器', success: false);
+      case 'no_url':
+        showToast(context, '没有可播放的地址', success: false);
+      case 'error':
+        showToast(context, '调起外部播放失败', success: false);
+      default:
+        break;
+    }
   }
 
   void _showEpisodePicker() {
@@ -1170,11 +1215,33 @@ class _PlayPageState extends State<PlayPage> {
 
   Widget _buildStageContent() {
     if (_hasError) {
-      return const ColoredBox(
+      return ColoredBox(
         color: Colors.black,
         child: Center(
-          child: Text('播放失败，请更换视频源或线路',
-              style: TextStyle(color: Colors.white70)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('播放失败，请更换视频源或线路',
+                    style: TextStyle(color: Colors.white70)),
+                if (_lastError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(_lastError!,
+                      style: const TextStyle(color: Colors.white38, fontSize: 12),
+                      textAlign: TextAlign.center,
+                      maxLines: 6,
+                      overflow: TextOverflow.ellipsis),
+                ],
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: _openExternalFromError,
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('用外部播放器打开'),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
