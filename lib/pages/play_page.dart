@@ -1092,25 +1092,32 @@ class _PlayPageState extends State<PlayPage> {
                 height: _kPipCorner,
               ),
             ],
-            // 右上角退出按钮：点一下还原主窗。
+            // 右上角退出按钮：**只在桌面端显示**。
+            //
+            // 桌面端的无边框小窗没有任何系统装饰，只能靠这个按钮 / 双击画面 /
+            // Alt+F4 退出，所以必须给一个可见入口。
+            // Android / iOS 的系统 PiP 窗口**自带关闭按钮**（右上角 ×），再叠一个
+            // Flutter 按钮既多余、在 PiP 里又点不动（用户 2026-10-16 反馈），故隐藏。
+            //
             // 位置往内收（right 让开右上角的缩放热区、top 让开上边缘热区），
             // 否则按钮会盖住右上角的缩放把手。
-            Positioned(
-              top: _kPipCorner + 4,
-              right: _kPipCorner - 6,
-              child: Material(
-                color: Colors.black54,
-                shape: const CircleBorder(),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: _exitPip,
-                  child: const Padding(
-                    padding: EdgeInsets.all(6),
-                    child: Icon(Icons.close, size: 18, color: Colors.white),
+            if (isDesktop)
+              Positioned(
+                top: _kPipCorner + 4,
+                right: _kPipCorner - 6,
+                child: Material(
+                  color: Colors.black54,
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: _exitPip,
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: Icon(Icons.close, size: 18, color: Colors.white),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         );
       },
