@@ -100,6 +100,14 @@ class HttpService {
 
   static const Duration _timeout = Duration(seconds: 15);
 
+  /// 详情请求专用超时：比列表短一些，配合下面的重试把最坏等待压住。
+  static const Duration _detailTimeout = Duration(seconds: 12);
+
+  /// 详情请求对**瞬时错误**的重试次数。
+  ///
+  /// 采集站大多是个人小水管，偶发超时 / 连接被重置 / 5xx；重试大概率能救回来。
+  static const int _detailMaxRetries = 2;
+
   static const Map<String, String> _headers = {
     'User-Agent':
         'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
@@ -192,6 +200,19 @@ class HttpService {
     if (code == 404) return 'HTTP 404（接口不存在）';
     if (code >= 500) return 'HTTP $code（服务端错误）';
     return 'HTTP $code';
+  }
+
+  /// 判断失败原因是否值得重试。
+  ///
+  /// 瞬时错误（网络层抖动 / 源站偶发 5xx / 超时 / 连接被重置）重试大概率能成功；
+  /// 永久错误（403 / 404 / 接口改版返回网页）重试毫无意义，直接放弃。
+  static bool _isTransientReason(String reason) {
+    return reason.contains('超时') ||
+        reason.contains('被重置') ||
+        reason.contains('服务端错误') ||
+        reason.contains('网络不可达') ||
+        reason.contains('域名解析失败') ||
+        reason.contains('网络错误');
   }
 
   /// ⚠️ 只做字符串匹配，不 import `dart:io` —— 保持本文件不依赖平台库。
@@ -597,17 +618,36 @@ class HttpService {
     }
   }
 
-  /// 获取资源详情（含播放列表）
+  /// 获取资源详情（含播放列表）。
+  ///
+  /// 采集站大多是个人小水管，偶发超时 / 连接被重置 / 5xx。详情页只在进入时请求
+  /// 一次，若直接挂掉就表现为"点卡片/搜索结果/收藏记录，有时候显示获取详情失败"。
+  /// 这里对**瞬时错误**重试 [_detailMaxRetries] 次（指数退避），非瞬时错误
+  /// （403 / 404 / 改版）不重试；最终仍失败则把原因抛给上层，由详情页提示并
+  /// 给出"重试"按钮，而不是静默返回一个死掉的 null。
   Future<VideoDetail?> fetchDetail(Site site, String id) async {
-    try {
-      final payload =
-          await _load(_apiUrl(site, {'ac': 'videolist', 'ids': id}));
-      final fromJson = _detailFromJson(payload.json);
-      if (fromJson != null) return fromJson;
-      return _detailFromXml(payload.xmlDoc);
-    } catch (_) {
-      return null;
+    late HttpRequestException lastErr;
+    for (var attempt = 0; attempt <= _detailMaxRetries; attempt++) {
+      try {
+        final payload = await _load(
+          _apiUrl(site, {'ac': 'videolist', 'ids': id}),
+          timeout: _detailTimeout,
+        );
+        final detail =
+            _detailFromJson(payload.json) ?? _detailFromXml(payload.xmlDoc);
+        if (detail == null && payload.looksLikeHtml) {
+          throw const HttpRequestException('接口返回了网页而非数据（站点可能已改版）');
+        }
+        return detail;
+      } on HttpRequestException catch (e) {
+        lastErr = e;
+        if (attempt == _detailMaxRetries || !_isTransientReason(e.reason)) {
+          break;
+        }
+        await Future.delayed(Duration(milliseconds: 300 * (attempt + 1)));
+      }
     }
+    throw lastErr;
   }
 
   static VideoDetail? _detailFromJson(Map<String, dynamic>? json) {

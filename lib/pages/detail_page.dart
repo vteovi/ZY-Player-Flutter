@@ -30,6 +30,7 @@ class DetailPage extends StatefulWidget {
 class _DetailPageState extends State<DetailPage> {
   VideoDetail? _detail;
   bool _loading = true;
+  String? _error;
   List<PlayItem> _playList = <PlayItem>[];
 
   @override
@@ -41,21 +42,40 @@ class _DetailPageState extends State<DetailPage> {
   String get _recordKey => '${widget.siteKey}-${widget.videoId}';
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     final site = context.read<AppState>().siteOf(widget.siteKey);
     if (site == null) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = '未找到对应的视频源，可能已被移除';
+        });
+      }
       return;
     }
-    final detail =
-        await HttpService.instance.fetchDetail(site, widget.videoId);
-    if (!mounted) return;
-    setState(() {
-      _detail = detail;
-      _playList = detail == null
-          ? <PlayItem>[]
-          : _buildPlayList(detail, widget.siteKey, widget.videoId);
-      _loading = false;
-    });
+    try {
+      final detail =
+          await HttpService.instance.fetchDetail(site, widget.videoId);
+      if (!mounted) return;
+      setState(() {
+        _detail = detail;
+        _playList = detail == null
+            ? <PlayItem>[]
+            : _buildPlayList(detail, widget.siteKey, widget.videoId);
+        _loading = false;
+        // 源站连通但没返回这条影片：多半是被下架 / 改版，给出比通用文案更准的提示
+        _error = detail == null ? '源站未返回该影片的数据' : null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = HttpService.describeRequestError(e);
+      });
+    }
   }
 
   /// 把 m3u8List 里的「名称$地址」解析成可播放项
@@ -297,7 +317,12 @@ class _DetailPageState extends State<DetailPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_detail == null
-                    ? const EmptyHint(message: '获取详情失败', icon: Icons.error_outline)
+                    ? EmptyHint(
+                        message: _error ?? '获取详情失败',
+                        icon: Icons.error_outline,
+                        actionText: '重试',
+                        onAction: _load,
+                      )
                     : _buildContent(size)),
           ),
           Positioned(
