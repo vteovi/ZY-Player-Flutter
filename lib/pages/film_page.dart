@@ -373,7 +373,7 @@ class CategoryTab extends StatefulWidget {
 }
 
 class CategoryTabState extends State<CategoryTab>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   final List<Video> _videos = <Video>[];
   final ScrollController _scrollController = ScrollController();
 
@@ -382,6 +382,10 @@ class CategoryTabState extends State<CategoryTab>
   bool _loading = false;
   bool _loadingMore = false;
   bool _showBackTop = false;
+
+  /// 连续「加载了但列表没增长」的次数：给「内容没撑满可视区就续拉」兜底，
+  /// 防止对返回重复页的源站空转狂刷。
+  int _noGrowStreak = 0;
 
   /// 已加载的页号集合：用于「后台刷新」时只替换最新尾页、不抹掉用户已下滑加载的
   /// 更早页面，并让「加载更多」接着已加载的最早一页继续往前翻（不重复取页）。
@@ -393,14 +397,23 @@ class CategoryTabState extends State<CategoryTab>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 旋转 / 分屏改变可视区大小：横屏列变多后内容可能不再溢出，没有滚动事件就
+    // 触发不了加载更多。这里重新检查是否要补内容（否则同样会卡在「滑不动」）。
+    _maybeContinueLoad();
   }
 
   void _onScroll() {
@@ -508,6 +521,10 @@ class CategoryTabState extends State<CategoryTab>
         : _loadedPages.reduce((a, b) => a < b ? a : b);
     // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
     unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
+    // 横屏 / 大屏列多时这几页可能整屏放得下 —— 没有滚动事件就等于「加载更多」永不
+    // 触发，这里主动检查并续拉，修掉「打开就已经到底、上滑没反应」。
+    _noGrowStreak = 0;
+    _maybeContinueLoad();
   }
 
   /// 取某一页的片单并写入缓存。
@@ -568,17 +585,34 @@ class CategoryTabState extends State<CategoryTab>
         _loadingMore = false;
       }
     }
-    // 成功且列表增长、仍贴底：自动续拉，免去「往下滑一下再往上滑一下」
-    if (mounted) {
-      final grew = _videos.length > before;
+    if (!mounted) return;
+    // 成功且列表增长、仍贴底（或内容还没撑满可视区）：自动续拉，
+    // 免去「往下滑一下再往上滑一下」，也修掉横屏下根本滑不动导致的卡死
+    _noGrowStreak = _videos.length > before ? 0 : _noGrowStreak + 1;
+    _maybeContinueLoad();
+  }
+
+  /// 内容没撑满可视区时主动续拉。
+  ///
+  /// 横屏（或平板 / 大屏）列数多、行高相对可视区更小，首屏那几页可能**完全放得下**。
+  /// 这时 GridView 的 maxScrollExtent 为 0，根本产生不了滚动事件，
+  /// [_onScroll] 里的 [_loadMore] 永远不会被调用 —— 用户看到的就是
+  /// 「打开就已经到底、上滑没反应、只有左右切分类能用」。
+  ///
+  /// 这里在每帧布局完成后检查：仍然不可滚动 / 仍然贴底就继续翻页，直到能滑、
+  /// 翻到第一页，或连续两页都没新增（源站在返回重复页）为止。
+  void _maybeContinueLoad() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_loading || _loadingMore || _pageCount <= 1) return;
+      if (_noGrowStreak >= 2) return;
+      if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
-      if (grew &&
-          _pageCount > 1 &&
-          _scrollController.hasClients &&
-          pos.pixels >= pos.maxScrollExtent - 400) {
-        _loadMore();
-      }
-    }
+      final notScrollable = pos.maxScrollExtent <= 0;
+      final atBottom = pos.pixels >= pos.maxScrollExtent - 400;
+      if (!notScrollable && !atBottom) return;
+      _loadMore();
+    });
   }
 
   @override
