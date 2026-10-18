@@ -112,6 +112,10 @@ class ZyDatabase {
 
   /// 批量写入（upsert 合并）：已存在的 key 覆盖、新增的追加。
   /// 用于局域网同步把远端数据合并进本地库。返回成功写入（新增或更新）的条数。
+  ///
+  /// 写完后重排 key 列表，使同步过来的条目按**来源顺序**排在前面、接收端独有的
+  /// 条目保持在后面（保留其原有相对顺序）。这样来源的排序（尤其是视频源的手动
+  /// 排序 / 置顶 / 检测后重排结果）也能一并同步过来，而不是把新源全堆到末尾。
   Future<int> importRaw(String db, List<Map<String, dynamic>> items) async {
     if (items.isEmpty) return 0;
     var count = 0;
@@ -120,7 +124,33 @@ class ZyDatabase {
       if (key.isEmpty) continue;
       if (await put(db, item)) count++;
     }
+    await _reorderKeysAfterImport(db, items);
     return count;
+  }
+
+  /// 导入后重排 key 列表：来源顺序在前、接收端独有在后。
+  Future<void> _reorderKeysAfterImport(
+    String db,
+    List<Map<String, dynamic>> items,
+  ) async {
+    final sourceOrder = items
+        .map((e) => (e['key'] ?? '').toString())
+        .where((k) => k.isNotEmpty)
+        .toList();
+    if (sourceOrder.isEmpty) return;
+    final keys = await getAllKeys(db);
+    final sourceSet = sourceOrder.toSet();
+    final reordered = <String>[];
+    final seen = <String>{};
+    // 1) 来源条目按来源相对顺序排前（去重）
+    for (final k in sourceOrder) {
+      if (seen.add(k)) reordered.add(k);
+    }
+    // 2) 接收端独有的条目排后（保持原有相对顺序）
+    for (final k in keys) {
+      if (!sourceSet.contains(k) && seen.add(k)) reordered.add(k);
+    }
+    await _saveKeys(db, reordered);
   }
 
   /// 移除单条记录

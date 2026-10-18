@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：1.10.1+176（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
+- 版本：1.10.2+177（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 
@@ -92,6 +92,8 @@ Android 不需要额外权限；iOS 需要本地网络权限（已配置 `NSLoca
      处手动填写发送端显示的 IP 和端口作为兜底。
 3. 在接收端勾选要同步的数据类别，点「开始同步」即可拉取并合并到本机。
    合并按记录 key 做 upsert（同 key 覆盖、新 key 追加），不会清除本机已有数据；同步完立即生效。
+   **排序也会一并同步**：同步过来的条目按发送端的顺序排在前面，接收端独有的条目保持在后面，
+   因此发送端手动排好的视频源顺序、置顶、检测后重排的结果都会原样带过来。
 
 ### 注意事项
 
