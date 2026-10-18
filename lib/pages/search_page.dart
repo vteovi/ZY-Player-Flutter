@@ -81,7 +81,9 @@ class _SearchPageState extends State<SearchPage> {
   Future<void> _doSearch(String rawKeyword) async {
     final kw = rawKeyword.trim();
     if (kw.isEmpty) return;
-    FocusScope.of(context).unfocus();
+    // 彻底取消搜索框焦点（而非只上移一级），否则从详情页返回时
+    // Flutter 会恢复"最后聚焦节点"又把键盘弹出来
+    _focusNode.unfocus();
     final app = Provider.of<AppState>(context, listen: false);
     await app.addSearchKeyword(kw);
     await _loadHistory();
@@ -131,7 +133,7 @@ class _SearchPageState extends State<SearchPage> {
   void _resetToHistory() {
     _searchGen++; // 作废进行中的搜索
     _controller.clear();
-    FocusScope.of(context).unfocus();
+    _focusNode.unfocus();
     if (mounted) setState(() {
       _searched = false;
       _results.clear();
@@ -154,12 +156,20 @@ class _SearchPageState extends State<SearchPage> {
     // VideoCard 持有的就是 _results 里的同一对象，按对象身份找回所属源
     for (final hit in _results) {
       if (identical(hit.video, video)) {
-        Navigator.of(context).push(
+        // 离开搜索页前先清掉搜索框焦点，避免从详情页 pop 回来时
+        // Flutter 恢复焦点又把键盘弹出来
+        _focusNode.unfocus();
+        Navigator.of(context)
+            .push(
           MaterialPageRoute(
             builder: (_) =>
                 DetailPage(siteKey: hit.site.key, videoId: video.id),
           ),
-        );
+        )
+            .then((_) {
+          // 兜底：返回后确保键盘不自动弹出
+          if (mounted) _focusNode.unfocus();
+        });
         return;
       }
     }
