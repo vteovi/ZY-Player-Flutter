@@ -55,8 +55,17 @@ class SourceImport {
     try {
       decoded = jsonDecode(text);
     } catch (_) {
+      // JSONP：`callback({...})` / `var config = {...};`
+      final unwrapped = _stripJsonp(text);
+      if (unwrapped != null) {
+        try {
+          decoded = jsonDecode(unwrapped);
+        } catch (_) {
+          decoded = null;
+        }
+      }
       // 有些配置正文前面带广告/说明文字，尝试截取其中内嵌的 JSON
-      decoded = _embeddedJson(text);
+      decoded ??= _embeddedJson(unwrapped ?? text);
       if (decoded == null) {
         return const ImportSummary(
           sites: [],
@@ -94,14 +103,23 @@ class SourceImport {
 
     final format = _detectFormat(root);
     final sites = <Site>[];
+    // TVBox 配置里常见同一个 api 被多个名字重复登记（「备用」等），
+    // 按 api + key 去重，避免导入一堆完全一样的源。
+    final seenApis = <String>{};
+    final seenKeys = <String>{};
     var skipped = 0;
     for (final raw in rawSites) {
       final site = _toSite(raw);
       if (site == null) {
         skipped++;
-      } else {
-        sites.add(site);
+        continue;
       }
+      if (!seenApis.add(_apiSignature(site.api)) ||
+          !seenKeys.add(site.key)) {
+        skipped++;
+        continue;
+      }
+      sites.add(site);
     }
     if (sites.isEmpty) {
       return ImportSummary(
@@ -194,13 +212,17 @@ class SourceImport {
   }
 
   /// 把一条原始站点映射成 Site；接口地址缺失或类型不支持（spider 等）时返回 null。
+  ///
+  /// TVBox 的 `type: 3/4`（spider）本身本应用跑不了，但很多配置把**真实的
+  /// maccms 接口地址**放在 `ext` 里（`ext.url` / `ext.api`，`ext` 可能是对象
+  /// 也可能是 JSON 字符串）。这种情况按 `ext` 里的接口导入，比整条丢掉更有用。
   static Site? _toSite(Map<dynamic, dynamic> raw) {
-    var api = _str(raw['api']);
-    if (api == null || api.isEmpty) api = _str(raw['url']);
-    if (api == null || api.isEmpty) return null;
+    final api = _resolveApi(raw);
+    if (api == null) return null;
 
-    final type = _mapType(raw['type']);
-    if (type == null) return null; // spider / drpy / 其他需要插件，跳过
+    // type 能识别就用它；类型标成 spider 但 api 是真实地址时，按地址推断
+    // （maccms 的 xml 接口路径通常带 `at/xml`，其余当 json）。
+    final type = _mapType(raw['type']) ?? _inferType(api);
 
     var key = _str(raw['key']) ?? '';
     final name = _str(raw['name']) ?? '';
@@ -228,6 +250,132 @@ class SourceImport {
       isActive: isActive,
       status: status,
     );
+  }
+
+  /// 找出这条站点真正可用的 maccms 接口地址。
+  ///
+  /// 优先 `api`（必须是 http 地址），其次是 `url`，最后从 `ext` 里挖
+  /// （spider 源的真实接口通常藏在这里）。
+  static String? _resolveApi(Map<dynamic, dynamic> raw) {
+    for (final key in const <String>['api', 'url']) {
+      final value = _str(raw[key]);
+      if (value != null && _looksLikeHttp(value)) return value;
+    }
+    return _extUrl(raw['ext']);
+  }
+
+  /// 从 TVBox 的 `ext` 字段里找接口地址。
+  ///
+  /// `ext` 可能是：
+  /// - 对象：`{"url":"http://..."}`
+  /// - JSON 字符串：`"{\"url\":\"http://...\"}"`
+  /// - 直接就是地址：`"http://..."`
+  /// - 数组：逐项递归
+  static String? _extUrl(dynamic ext) {
+    if (ext == null) return null;
+    if (ext is Map) {
+      for (final key in const <String>['url', 'api', 'extend', 'siteUrl']) {
+        final value = _str(ext[key]);
+        if (value != null && _looksLikeHttp(value)) return value;
+      }
+      for (final value in ext.values) {
+        final nested = _extUrl(value);
+        if (nested != null) return nested;
+      }
+      return null;
+    }
+    if (ext is List) {
+      for (final item in ext) {
+        final nested = _extUrl(item);
+        if (nested != null) return nested;
+      }
+      return null;
+    }
+    final text = ext.toString().trim();
+    if (text.isEmpty) return null;
+    if (_looksLikeHttp(text)) return text;
+    if (!text.startsWith('{') && !text.startsWith('[')) {
+      // 宽松匹配 ext 字符串里的地址（配置作者偶尔写坏 JSON）
+      final m = RegExp(
+        r'''["']?(?:url|api|extend|siteUrl)["']?\s*[:=]\s*["']([^"']+)["']''',
+        caseSensitive: false,
+      ).firstMatch(text);
+      final found = m?.group(1);
+      return (found != null && _looksLikeHttp(found)) ? found : null;
+    }
+    try {
+      return _extUrl(jsonDecode(text));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _looksLikeHttp(String value) {
+    final v = value.trim().toLowerCase();
+    return v.startsWith('http://') || v.startsWith('https://');
+  }
+
+  /// 类型字段不可用时，按接口地址猜：maccms 的 xml 接口路径通常带 `at/xml`。
+  static String _inferType(String api) {
+    final lower = api.toLowerCase();
+    if (lower.contains('at/xml') || lower.contains('/xml')) return 'xml';
+    return 'json';
+  }
+
+  /// 去重用的接口指纹：忽略大小写与末尾斜杠。
+  static String _apiSignature(String api) {
+    var v = api.trim().toLowerCase();
+    while (v.endsWith('/')) {
+      v = v.substring(0, v.length - 1);
+    }
+    return v;
+  }
+
+  /// 去掉 JSONP 外壳，返回里面的 JSON 文本；不像 JSONP 时返回 null。
+  static String? _stripJsonp(String text) {
+    final t = text.trim();
+    if (t.isEmpty || t.startsWith('{') || t.startsWith('[')) return null;
+    // callback({...}); / jsonp({...}) / var config = {...};
+    final m = RegExp(
+      r'^(?:[\w$.]+\s*[=:(]\s*)?([\s\S]*?)\s*\)?\s*;?\s*$',
+    ).firstMatch(t);
+    if (m == null) return null;
+    var inner = m.group(1)?.trim() ?? '';
+    while (inner.endsWith(')')) {
+      inner = inner.substring(0, inner.length - 1).trim();
+    }
+    if (inner.endsWith(';')) {
+      inner = inner.substring(0, inner.length - 1).trim();
+    }
+    if (!inner.startsWith('{') && !inner.startsWith('[')) return null;
+    return inner;
+  }
+
+  /// 多仓配置：`{"urls":[{"url":"...","name":"..."}]}` 里的子配置地址。
+  static List<String> repoUrls(String content) {
+    var text = content.trim();
+    if (text.startsWith('\ufeff')) text = text.substring(1);
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(text);
+    } catch (_) {
+      final unwrapped = _stripJsonp(text);
+      decoded = unwrapped == null ? null : jsonDecode(unwrapped);
+    }
+    if (decoded is! Map) return const [];
+    final urls = decoded['urls'];
+    if (urls is! List) return const [];
+    final out = <String>[];
+    for (final item in urls) {
+      String? url;
+      if (item is Map) {
+        url = _str(item['url']) ?? _str(item['api']) ?? _str(item['ext']);
+      } else if (item is String) {
+        url = _str(item);
+      }
+      if (url != null && url.isNotEmpty) out.add(url);
+    }
+    return out;
   }
 
   /// type → 本应用支持的 'xml' / 'json'；不支持的类型返回 null。

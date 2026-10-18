@@ -181,18 +181,38 @@ class AppState extends ChangeNotifier {
     return removed;
   }
 
-  /// 导入视频源（json 地址），与现有源**合并**（按 key 更新/追加，不清空已有源）。
+  /// 导入视频源（配置地址），与现有源**合并**（按 key 更新/追加，不清空已有源）。
   ///
   /// 区别于早期的「覆盖」导入：同名 key 的源被新数据更新，其余追加到现有源之后；
   /// 需要插件的 spider 源在 [SourceImport.parse] 中已被跳过。
-  Future<bool> importSites(String url) async {
-    final list = await HttpService.instance.importSites(url);
-    if (list.isEmpty) return false;
-    for (final s in list) {
-      await ZyDatabase.instance.put(DbNames.site, s.toJson());
+  ///
+  /// 返回导入摘要（新增 / 更新 / 跳过数量、识别到的格式、失败原因），
+  /// 供源管理页给出准确反馈。
+  Future<ImportSummary> importSites(String url) async {
+    final parsed = await HttpService.instance.importSites(url);
+    if (parsed.sites.isEmpty) return parsed;
+
+    var added = 0;
+    var updated = 0;
+    for (final site in parsed.sites) {
+      final existed =
+          await ZyDatabase.instance.containsKey(DbNames.site, site.key);
+      await ZyDatabase.instance.put(DbNames.site, site.toJson());
+      if (existed) {
+        updated++;
+      } else {
+        added++;
+      }
     }
     await loadSites();
-    return true;
+    return ImportSummary(
+      sites: parsed.sites,
+      skipped: parsed.skipped,
+      format: parsed.format,
+      message: parsed.message,
+      added: added,
+      updated: updated,
+    );
   }
 
   /// 从 TVBox / ZYFun 的 JSON 文本导入视频源（合并导入，保留现有源）。

@@ -6,6 +6,7 @@ import 'package:xml/xml.dart' as xml;
 
 import '../models/site.dart';
 import '../models/video.dart';
+import '../utils/config_url.dart';
 import 'source_import.dart';
 
 /// 请求失败时抛出，携带**可直接展示给用户**的中文原因。
@@ -251,12 +252,6 @@ class HttpService {
     return '网络错误';
   }
 
-  Future<String> _get(String url) async {
-    final res =
-        await http.get(Uri.parse(url), headers: _headers).timeout(_timeout);
-    return _decode(res);
-  }
-
   /// 按响应推断编码后再解码。
   ///
   /// `http` 包的 `res.body` 在响应头**没有 `charset` 时按 latin1 解码**，
@@ -316,10 +311,14 @@ class HttpService {
   }
 
   static bool _looksLikeHtml(String trimmed) {
-    final head = trimmed.length > 400
-        ? trimmed.substring(0, 400).toLowerCase()
-        : trimmed.toLowerCase();
-    return head.contains('<!doctype html') || head.contains('<html');
+    final t = trimmed.trimLeft();
+    final head = t.length > 400
+        ? t.substring(0, 400).toLowerCase()
+        : t.toLowerCase();
+    return head.contains('<!doctype html') ||
+        head.contains('<html') ||
+        head.contains('<head') ||
+        head.contains('<body');
   }
 
   static Map<String, dynamic>? _tryJson(String raw) {
@@ -683,17 +682,287 @@ class HttpService {
     return VideoDetail.fromVideo(detail, m3u8List: m3u8List);
   }
 
-  /// 通过 json 地址导入视频源。
+  // --------------------------------------------------------------------------
+  // 配置导入（TVBox / ZYFun）
+  // --------------------------------------------------------------------------
+
+  /// 配置导入的单次请求超时（导航页还要接着拉子配置，别拖太久）
+  static const Duration _configTimeout = Duration(seconds: 15);
+  static const Duration _configSubTimeout = Duration(seconds: 8);
+
+  /// 像是 maccms 接口地址（用户直接粘贴接口而不是配置时用）
+  static final RegExp _maccmsApiRe =
+      RegExp(r'api\.php|provide/vod', caseSensitive: false);
+
+  /// 网页里提取链接用
+  static final RegExp _attrRe = RegExp(
+    r'''(?:href|src|data-url|data-src|data-href)\s*=\s*["']([^"']+)["']''',
+    caseSensitive: false,
+  );
+  static final RegExp _bareUrlRe = RegExp(
+    r'''https?://[^\s"'<>()]+''',
+    caseSensitive: false,
+  );
+
+  /// 静态资源 / 普通网页，不当作配置候选
+  static final RegExp _skipAssetRe = RegExp(
+    r'''\.(?:css|js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|mp4|m3u8|html?)(?:[?#]|$)''',
+    caseSensitive: false,
+  );
+
+  /// 地址里带这些词才当作配置候选
+  static final RegExp _configHintRe = RegExp(
+    r'''(?:tvbox|config|interface|接口|\.json|\.txt|api\.php|provide/vod)''',
+    caseSensitive: false,
+  );
+
+  /// 通过配置地址导入视频源。
   ///
-  /// 与本地文件导入走**同一套解析**（[SourceImport]），
-  /// 这样 `tbl_site` / 裸数组 / TVBox 等几种导出格式的表现完全一致。
-  Future<List<Site>> importSites(String jsonUrl) async {
-    try {
-      final raw = await _get(jsonUrl);
-      return SourceImport.parse(raw).sites;
-    } catch (_) {
-      return <Site>[];
+  /// 与本地文件导入走**同一套解析**（[SourceImport]），并对真实场景做了这些
+  /// 兜底：
+  /// - 地址不规范：`box.xxx.com`、`http:box.xxx.com`、中文域名；
+  /// - 返回 JSONP / 夹带说明文字；
+  /// - 直接给了 TVBox「导航页」：自动从页面里找 `.json` 配置链接再拉一次；
+  /// - TVBox 多仓配置：`{"urls":[...]}` 自动拉取子配置并合并；
+  /// - 直接粘贴了 maccms 接口地址：识别后作为单个源导入。
+  Future<ImportSummary> importSites(String rawUrl) async {
+    final start = normalizeConfigUrl(rawUrl);
+    if (start.isEmpty) {
+      return const ImportSummary(
+        sites: [],
+        skipped: 0,
+        format: 'unknown',
+        message: '请输入配置地址',
+      );
     }
+
+    final tried = <String>{};
+    final errors = <String>[];
+    // 输入 http 时也试试 https（很多站点强制跳转），反之亦然
+    for (final candidate in _schemeVariants(start)) {
+      if (!tried.add(candidate)) continue;
+      final summary =
+          await _importFrom(candidate, tried, errors, depth: 0);
+      if (summary != null && summary.sites.isNotEmpty) return summary;
+    }
+
+    return ImportSummary(
+      sites: const [],
+      skipped: 0,
+      format: 'unknown',
+      message: errors.isEmpty ? '没有找到可用的视频源' : errors.first,
+    );
+  }
+
+  List<String> _schemeVariants(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme) return <String>[url];
+    final out = <String>[url];
+    if (uri.scheme == 'https') {
+      out.add(uri.replace(scheme: 'http').toString());
+    } else if (uri.scheme == 'http') {
+      out.add(uri.replace(scheme: 'https').toString());
+    }
+    return out;
+  }
+
+  /// 拉一个地址并尝试解析成源清单；失败返回 null（原因写入 [errors]）。
+  Future<ImportSummary?> _importFrom(
+    String url,
+    Set<String> tried,
+    List<String> errors, {
+    required int depth,
+  }) async {
+    final String text;
+    try {
+      text = await _fetch(
+        url,
+        timeout: depth == 0 ? _configTimeout : _configSubTimeout,
+      );
+    } catch (e) {
+      errors.add('$url：${describeRequestError(e)}');
+      return null;
+    }
+    if (text.trim().isEmpty) {
+      errors.add('$url：返回内容为空');
+      return null;
+    }
+
+    final parsed = SourceImport.parse(text);
+    if (parsed.sites.isNotEmpty) return parsed;
+
+    if (_looksEncrypted(text)) {
+      errors.add('$url：配置已加密，暂不支持');
+      return null;
+    }
+
+    // 用户直接粘贴了 maccms 接口地址（返回的是片单而不是配置）
+    final direct = _directMaccmsSite(url, text);
+    if (direct != null) return direct;
+
+    // 多仓配置：{"urls":[{"url":"..."}]}
+    if (depth < 2) {
+      final repos = SourceImport.repoUrls(text);
+      if (repos.isNotEmpty) {
+        final merged = await _importRepos(repos, tried, errors, depth);
+        if (merged != null) return merged;
+      }
+    }
+
+    // 导航网页：自动找页面里的配置链接（只对用户输入的首个地址做一层）
+    if (depth == 0 && _looksLikeHtml(text)) {
+      final links = _extractConfigLinks(text, url);
+      // 导航页可能列几十个链接，逐个超时会等到天荒地老；
+      // 给整轮尝试一个总时限，超时就带着已收集的原因返回。
+      final deadline = DateTime.now().add(const Duration(seconds: 25));
+      for (final link in links.take(6)) {
+        if (DateTime.now().isAfter(deadline)) break;
+        if (!tried.add(link)) continue;
+        final summary = await _importFrom(link, tried, errors, depth: 1);
+        if (summary != null && summary.sites.isNotEmpty) {
+          return ImportSummary(
+            sites: summary.sites,
+            skipped: summary.skipped,
+            format: summary.format,
+            message: '已从页面自动识别配置：$link',
+          );
+        }
+      }
+    }
+
+    if (parsed.message.isNotEmpty) {
+      errors.add('$url：${parsed.message}');
+    }
+    return null;
+  }
+
+  /// 多仓配置：逐个拉子配置并合并（最多 6 个，避免一个仓库拖很久）。
+  Future<ImportSummary?> _importRepos(
+    List<String> repos,
+    Set<String> tried,
+    List<String> errors,
+    int depth,
+  ) async {
+    final sites = <Site>[];
+    final seen = <String>{};
+    var skipped = 0;
+    var format = 'unknown';
+    for (final repo in repos.take(5)) {
+      final url = normalizeConfigUrl(repo);
+      if (url.isEmpty || !tried.add(url)) continue;
+      final summary =
+          await _importFrom(url, tried, errors, depth: depth + 1);
+      if (summary == null || summary.sites.isEmpty) continue;
+      skipped += summary.skipped;
+      if (summary.format != 'unknown') format = summary.format;
+      for (final site in summary.sites) {
+        final sig = site.api.trim().toLowerCase();
+        if (seen.add(sig)) sites.add(site);
+      }
+    }
+    if (sites.isEmpty) return null;
+    return ImportSummary(
+      sites: sites,
+      skipped: skipped,
+      format: format,
+      message: '已导入多仓配置中的 ${sites.length} 个源',
+    );
+  }
+
+  /// 直接给的地址本身就是 maccms 接口时，把它当成单个源导入。
+  ImportSummary? _directMaccmsSite(String url, String text) {
+    if (!_maccmsApiRe.hasMatch(url)) return null;
+    final head = text.trimLeft();
+    String? type;
+    if (head.startsWith('<?xml') || head.startsWith('<rss')) {
+      type = 'xml';
+    } else {
+      try {
+        final decoded = jsonDecode(head);
+        if (decoded is Map && decoded.containsKey('list')) type = 'json';
+      } catch (_) {
+        // 不是 maccms 返回，交给后续流程
+      }
+    }
+    if (type == null) return null;
+
+    final host = Uri.tryParse(url)?.host ?? '';
+    final key = host.isNotEmpty ? host : 'maccms';
+    return ImportSummary(
+      sites: <Site>[
+        Site(
+          id: 0,
+          key: key,
+          name: host.isNotEmpty ? host : 'maccms 接口',
+          api: url,
+          type: type,
+          group: '导入',
+        ),
+      ],
+      skipped: 0,
+      format: 'maccms',
+      message: '已识别为 maccms 接口',
+    );
+  }
+
+  /// TVBox 的加密配置是一大段纯十六进制，直接给出明确提示。
+  bool _looksEncrypted(String text) {
+    final t = text.trim();
+    if (t.length < 200 || t.contains('{')) return false;
+    return RegExp(r'^[0-9a-fA-F\s]+$').hasMatch(t);
+  }
+
+  /// 从导航网页里提取可能的配置地址：`href/src` 属性 + 正文裸链接。
+  List<String> _extractConfigLinks(String html, String baseUrl) {
+    final base = Uri.tryParse(baseUrl);
+    final out = <String>[];
+    final seen = <String>{};
+
+    void add(String raw) {
+      var value = raw.trim().replaceAll('&amp;', '&');
+      // 正文里的裸链接后面常跟着中文标点，去掉再解析
+      while (value.isNotEmpty &&
+          '.,;，。、:：'.contains(value[value.length - 1])) {
+        value = value.substring(0, value.length - 1);
+      }
+      if (value.isEmpty) return;
+      final lowerRaw = value.toLowerCase();
+      if (lowerRaw.startsWith('javascript:') ||
+          lowerRaw.startsWith('mailto:') ||
+          lowerRaw.startsWith('data:') ||
+          lowerRaw.startsWith('#')) {
+        return;
+      }
+      Uri? uri;
+      try {
+        uri = base == null ? Uri.parse(value) : base.resolve(value);
+      } catch (_) {
+        return;
+      }
+      if (uri.scheme != 'http' && uri.scheme != 'https') return;
+      final full = uri.toString();
+      final lower = full.toLowerCase();
+      if (lower == baseUrl.toLowerCase()) return;
+      if (!_maccmsApiRe.hasMatch(lower)) {
+        if (_skipAssetRe.hasMatch(lower)) return;
+        if (!_configHintRe.hasMatch(lower)) return;
+      }
+      if (seen.add(full)) out.add(full);
+    }
+
+    for (final m in _attrRe.allMatches(html)) {
+      add(m.group(1)!);
+    }
+    for (final m in _bareUrlRe.allMatches(html)) {
+      add(m.group(0)!);
+    }
+    // .json 结尾的优先试
+    out.sort((a, b) {
+      final aj = a.toLowerCase().endsWith('.json') ? 0 : 1;
+      final bj = b.toLowerCase().endsWith('.json') ? 0 : 1;
+      return aj.compareTo(bj);
+    });
+    return out;
   }
 
   static String _s(dynamic v) => v == null ? '' : v.toString();

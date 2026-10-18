@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：1.10.4+179（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
+- 版本：1.11.0+180（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 
@@ -16,7 +16,7 @@
 | 播放 | m3u8/HLS 播放、播放暂停、进度拖拽、全屏、选集、每 10 秒记录进度 |
 | 收藏 | 收藏列表、跳转详情、单项删除 |
 | 播放记录 | 显示观看进度百分比、从上次位置续播 |
-| 源管理 | 视频源启用停用、置顶、从 JSON 地址/文件导入、可用性检测（单条 / 全部）、一键停用失效源、清除死站、清空所有源 |
+| 源管理 | 视频源启用停用、置顶、从配置地址/文件导入（TVBox / ZYFun、多仓、导航页自动识别）、可用性检测（单条 / 全部）、一键停用失效源、清除死站、清空所有源 |
 | 我 | 播放记录入口、源管理入口、清空记录/收藏、重置软件 |
 
 ## 与原版的对应关系
@@ -74,6 +74,27 @@ flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
 - **搜索性能**：原版搜索后会对每条结果再请求一次详情，本版直接用列表数据渲染，
   进入详情页时才拉取播放地址。
 - **存储兼容**：沿用原版「key 列表 + 单条记录」的存储结构，升级安装不会丢数据（仅指同为 Flutter 版之间）。
+
+## 视频源导入（TVBox / ZYFun）
+
+入口：源管理页 →「导入视频源」，粘贴配置地址即可。地址不用写得很规范，以下都能识别：
+
+- **缺协议头**：`box.example.com` → 自动补 `http://`；
+- **缺 `//`**：`http:box.example.com` → 自动纠正为 `http://box.example.com`；
+- **中文域名**：如 `http://www.饭太硬.cc/tv`，自动转成 punycode（`xn--...`）再请求。
+
+支持的配置形态：
+
+- **TVBox / ZYFun 的 JSON 配置**：标准 `{"sites":[...]}`、`tbl_site`、裸数组、JSONP 包装都能解析；
+- **TVBox spider 源**：本应用只支持 maccms json/xml 接口。`type` 为 3/4/7/15 的 spider 源会
+  自动从 `ext.url`（对象或 JSON 字符串）里提取真实接口导入；没有真实接口的跳过；
+- **多仓配置**：`{"urls":[{"url":"..."}]}` 会逐个拉取子配置并合并（最多 5 个）；
+- **导航 / 分享网页**：如果地址返回的是 HTML（TVBox 导航页），会自动从页面里找
+  `.json` / tvbox 配置链接并尝试导入；
+- **直接粘贴 maccms 接口**：地址形如 `.../api.php/provide/vod/` 时，识别为单个源导入。
+
+导入按 key 合并（同 key 更新、新 key 追加），不会清空已有源；同接口 / 同 key 的重复项会去重。
+导入结束后会提示新增、更新、跳过的数量；失败时会显示具体原因（超时 / 403 / 配置加密等）。
 
 ## 设备同步（局域网）
 

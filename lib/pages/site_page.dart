@@ -47,17 +47,33 @@ class _SitePageState extends State<SitePage> {
     final url = _urlController.text.trim();
     if (url.isEmpty) return;
     setState(() => _importing = true);
-    final ok = await context.read<AppState>().importSites(url);
+    final summary = await context.read<AppState>().importSites(url);
     if (!mounted) return;
     setState(() {
       _importing = false;
-      _showImport = !ok;
+      _showImport = !summary.ok;
     });
-    showToast(
-      context,
-      ok ? '导入成功' : '导入失败，请检查地址是否为可直接访问的 JSON',
-      success: ok,
-    );
+    if (summary.ok) {
+      final parts = <String>['新增 ${summary.added} 个'];
+      if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
+      if (summary.skipped > 0) parts.add('跳过 ${summary.skipped} 个');
+      final note = summary.message.isEmpty ? '' : '\n${summary.message}';
+      showToast(
+        context,
+        '导入成功：${parts.join('，')}$note',
+        success: true,
+        duration: const Duration(seconds: 4),
+      );
+    } else {
+      showToast(
+        context,
+        summary.message.isEmpty
+            ? '导入失败，请检查地址是否为有效的配置地址'
+            : '导入失败：${summary.message}',
+        success: false,
+        duration: const Duration(seconds: 5),
+      );
+    }
   }
 
   void _toggleImport() {
@@ -333,7 +349,7 @@ class _SitePageState extends State<SitePage> {
                       autofocus: true,
                       style: const TextStyle(fontSize: 14),
                       decoration: const InputDecoration(
-                        hintText: '请输入 JSON 后缀的网址',
+                        hintText: '粘贴 TVBox / ZYFun 配置地址，或导航页地址',
                         isDense: true,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(10)),
@@ -671,7 +687,7 @@ class _EmptySites extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '点上方「导入视频源」添加，支持 TVBox / ZYFun 配置',
+            '点上方「导入视频源」添加，支持 TVBox / ZYFun 配置、多仓与导航页',
             style: TextStyle(
               fontSize: 12,
               color: isDark ? const Color(0xFF6E6E73) : const Color(0xFFB4B8BE),
