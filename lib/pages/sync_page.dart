@@ -311,7 +311,8 @@ class _SyncPageState extends State<SyncPage>
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('局域网内发现的设备：', style: TextStyle(fontWeight: FontWeight.w600)),
+        const Text('局域网内发现的设备（点击自动填入 IP 和端口）：',
+            style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 10),
         if (_devices.isEmpty)
           const Padding(
@@ -321,12 +322,24 @@ class _SyncPageState extends State<SyncPage>
           )
         else
           ..._devices.map((d) {
-            return RadioListTile<LanDevice>(
+            // 点击发现的设备：自动把它的 IP 和端口填入下方输入框，
+            // 并高亮当前选中的那台（同步时仍以输入框内容为准）。
+            final isSel = _selectedDevice == d;
+            return ListTile(
+              selected: isSel,
+              selectedTileColor:
+                  isDark ? Colors.white12 : Colors.black12,
+              leading: const Icon(Icons.phone_android_outlined),
               title: Text(d.name),
-              subtitle: Text(d.ip),
-              value: d,
-              groupValue: _selectedDevice,
-              onChanged: (v) => setState(() => _selectedDevice = v),
+              subtitle: Text('${d.ip} : ${d.httpPort}'),
+              trailing: isSel
+                  ? const Icon(Icons.check_circle, color: Colors.green)
+                  : const Icon(Icons.arrow_forward_ios, size: 16),
+              onTap: () => setState(() {
+                _selectedDevice = d;
+                _ipController.text = d.ip;
+                _portController.text = '${d.httpPort}';
+              }),
             );
           }),
         const SizedBox(height: 18),
