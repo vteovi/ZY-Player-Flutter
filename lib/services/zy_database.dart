@@ -110,6 +110,19 @@ class ZyDatabase {
     return result;
   }
 
+  /// 批量写入（upsert 合并）：已存在的 key 覆盖、新增的追加。
+  /// 用于局域网同步把远端数据合并进本地库。返回成功写入（新增或更新）的条数。
+  Future<int> importRaw(String db, List<Map<String, dynamic>> items) async {
+    if (items.isEmpty) return 0;
+    var count = 0;
+    for (final item in items) {
+      final key = (item['key'] ?? '').toString();
+      if (key.isEmpty) continue;
+      if (await put(db, item)) count++;
+    }
+    return count;
+  }
+
   /// 移除单条记录
   Future<bool> remove(String db, String key) async {
     final keys = await getAllKeys(db);

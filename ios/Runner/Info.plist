@@ -12,6 +12,9 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<!-- 局域网设备同步使用 UDP 组播发现，iOS 14+ 需要本地网络权限说明 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>用于在局域网内发现并同步其他设备上的视频源、配置与记录</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

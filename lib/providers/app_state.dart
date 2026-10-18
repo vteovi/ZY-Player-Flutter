@@ -486,6 +486,36 @@ class AppState extends ChangeNotifier {
   }
 
   // --------------------------------------------------------------------------
+  // 局域网设备同步
+  // --------------------------------------------------------------------------
+
+  /// 导出指定库（site / setting / star / history 等）的原始数据，用于局域网同步。
+  /// 直接读取存储层 JSON，不关心具体模型字段，保证两端格式一致。
+  Future<Map<String, List<Map<String, dynamic>>>> exportDbs(
+    Iterable<String> dbs,
+  ) async {
+    final result = <String, List<Map<String, dynamic>>>{};
+    for (final db in dbs) {
+      result[db] = await ZyDatabase.instance.getAll(db);
+    }
+    return result;
+  }
+
+  /// 把远端拉取的数据合并进本地（按 key upsert）。返回各库写入（新增/更新）条数。
+  Future<Map<String, int>> importDbs(
+    Map<String, List<Map<String, dynamic>>> data,
+  ) async {
+    final summary = <String, int>{};
+    for (final entry in data.entries) {
+      final written = await ZyDatabase.instance.importRaw(entry.key, entry.value);
+      summary[entry.key] = written;
+    }
+    // 同步完后统一刷新内存，让收藏 / 历史 / 源 / 配置实时生效
+    await reloadAll();
+    return summary;
+  }
+
+  // --------------------------------------------------------------------------
   // 重置
   // --------------------------------------------------------------------------
 

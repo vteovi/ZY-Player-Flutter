@@ -13,6 +13,7 @@ import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import 'site_page.dart';
 import 'star_page.dart';
+import 'sync_page.dart';
 
 /// 「设置」：播放相关开关 + 数据入口 + 清理/重置
 class MePage extends StatelessWidget {
@@ -385,6 +386,11 @@ class MePage extends StatelessWidget {
             subtitle: '从备份文件恢复（覆盖当前数据）',
             onTap: () => _restoreData(context),
           ),
+          _MenuItem(
+            title: '设备同步',
+            subtitle: '通过局域网在设备间同步视频源、配置、收藏与历史',
+            onTap: () => _push(context, const SyncPage()),
+          ),
           SwitchListTile(
             title: const Text('横向卡片模式'),
             subtitle: const Text(
@@ -443,7 +449,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.9.20',
+            subtitle: '1.10.0',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(
