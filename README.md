@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：1.11.0+180（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
+- 版本：1.11.1+181（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 
@@ -86,8 +86,15 @@ flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
 支持的配置形态：
 
 - **TVBox / ZYFun 的 JSON 配置**：标准 `{"sites":[...]}`、`tbl_site`、裸数组、JSONP 包装都能解析；
+- **TVBox 加密配置**：很多大配置只放一个域名（如 `https://box.iqinu.com`），返回的是
+  一大段十六进制文本（`$#key#$` + AES-128-CBC 密文）。本应用会自动解密后再解析，
+  不依赖任何第三方加密库；
+- **按 UA 分发的站点**：部分配置站只在 `okhttp/*` 的 User-Agent 下才返回真配置，
+  浏览器 UA 只会拿到「站点创建成功」的占位页。配置请求会先按 TVBox 的 UA 拉取，
+  拿不到再退回浏览器 UA；
 - **TVBox spider 源**：本应用只支持 maccms json/xml 接口。`type` 为 3/4/7/15 的 spider 源会
-  自动从 `ext.url`（对象或 JSON 字符串）里提取真实接口导入；没有真实接口的跳过；
+  自动从 `ext.url`（对象或 JSON 字符串）里提取真实接口导入；没有真实接口的跳过
+  （drpy 的 `.json` 脚本、多域名列表、加密串不算接口，会一并跳过，避免导入一堆坏源）；
 - **多仓配置**：`{"urls":[{"url":"..."}]}` 会逐个拉取子配置并合并（最多 5 个）；
 - **导航 / 分享网页**：如果地址返回的是 HTML（TVBox 导航页），会自动从页面里找
   `.json` / tvbox 配置链接并尝试导入；
@@ -95,6 +102,9 @@ flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
 
 导入按 key 合并（同 key 更新、新 key 追加），不会清空已有源；同接口 / 同 key 的重复项会去重。
 导入结束后会提示新增、更新、跳过的数量；失败时会显示具体原因（超时 / 403 / 配置加密等）。
+
+> 实测：`https://box.iqinu.com` 解密后含 82 条站点记录，其中 41 条是可直接播放的
+> maccms json 接口，另外 41 条是需要 spider 插件的源（本应用不支持，会跳过）。
 
 ## 设备同步（局域网）
 

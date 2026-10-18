@@ -7,6 +7,7 @@ import 'package:xml/xml.dart' as xml;
 import '../models/site.dart';
 import '../models/video.dart';
 import '../utils/config_url.dart';
+import '../utils/tvbox_crypto.dart';
 import 'source_import.dart';
 
 /// 请求失败时抛出，携带**可直接展示给用户**的中文原因。
@@ -110,8 +111,7 @@ class HttpService {
   static const int _detailMaxRetries = 2;
 
   static const Map<String, String> _headers = {
-    'User-Agent':
-        'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
+    'User-Agent': _browserUserAgent,
     'Accept': '*/*',
   };
 
@@ -187,6 +187,78 @@ class HttpService {
       }
     }
     throw HttpRequestException(reason);
+  }
+
+  /// 拉取 TVBox / 视频源配置时可用的 UA，按优先级排列。
+  ///
+  /// ⚠️ 很多配置站**按 UA 分发内容**：带 `okhttp/*` 才返回真配置，浏览器 UA
+  /// 只给一个「站点创建成功」的占位页（实测 `https://box.iqinu.com` 就是这样，
+  /// 用浏览器 UA 拿到 623 字节的占位 HTML，用 `okhttp/3.15` 拿到 67KB 配置）。
+  /// 所以配置请求先按 TVBox 的 UA 试，拿不到配置文件再退回浏览器 UA。
+  static const List<String> _configUserAgents = <String>[
+    'okhttp/3.15',
+    'okhttp/3.12.0',
+    _browserUserAgent,
+  ];
+
+  static const String _browserUserAgent =
+      'Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36';
+
+  /// 配置请求的 Accept（与 TVBox 一致，部分站点也看这个头）。
+  static const String _configAccept =
+      'text/html,application/xhtml+xml,application/xml;q=0.9,'
+      'image/avif,image/webp,image/apng,*/*;q=0.8';
+
+  /// 按指定 UA 拉一次配置。
+  Future<String> _fetchConfigWithUa(
+    String url,
+    String userAgent,
+    Duration limit,
+  ) async {
+    final res = await http.get(
+      Uri.parse(url),
+      headers: <String, String>{
+        'User-Agent': userAgent,
+        'Accept': _configAccept,
+      },
+    ).timeout(limit);
+    if (res.statusCode >= 200 && res.statusCode < 300 && res.body.isNotEmpty) {
+      return _decode(res);
+    }
+    throw HttpRequestException(_httpReason(res.statusCode));
+  }
+
+  /// 拉配置：挨个 UA 试，返回第一个「像配置」的响应。
+  ///
+  /// 全部 UA 都只拿到网页时，返回那份 HTML —— 导航页流程还要从里面找配置链接。
+  Future<String> _fetchConfig(String url, Duration limit) async {
+    String? fallback;
+    String? firstError;
+    for (final ua in _configUserAgents) {
+      try {
+        final text = await _fetchConfigWithUa(url, ua, limit);
+        if (_looksLikeConfigPayload(text)) return text;
+        fallback ??= text;
+      } catch (e) {
+        firstError ??= describeRequestError(e);
+      }
+    }
+    if (fallback != null) return fallback;
+    throw HttpRequestException(firstError ?? '配置拉取失败');
+  }
+
+  /// 内容是否像「配置本体」：JSON、TVBox 加密十六进制，或其它非网页文本。
+  static bool _looksLikeConfigPayload(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return false;
+    if (t.startsWith('{') || t.startsWith('[')) return true;
+    if (t.startsWith('2423') || t.startsWith(r'$#')) return true;
+    // 够长又不是网页 —— 基本就是配置正文（含未知的加密格式）
+    if (t.length > 200 && !_looksLikeHtml(t) && !t.startsWith('<')) {
+      return true;
+    }
+    return false;
   }
 
   /// 把请求异常翻译成能直接展示给用户的中文原因。
@@ -775,9 +847,9 @@ class HttpService {
   }) async {
     final String text;
     try {
-      text = await _fetch(
+      text = await _fetchConfig(
         url,
-        timeout: depth == 0 ? _configTimeout : _configSubTimeout,
+        depth == 0 ? _configTimeout : _configSubTimeout,
       );
     } catch (e) {
       errors.add('$url：${describeRequestError(e)}');
@@ -788,11 +860,19 @@ class HttpService {
       return null;
     }
 
-    final parsed = SourceImport.parse(text);
+    // TVBox 加密配置（`$#key#$` + hex + AES-128-CBC）：先解密再走普通解析
+    final decrypted = TvBoxCrypto.decode(text);
+    final config = decrypted ?? text;
+
+    final parsed = SourceImport.parse(config);
     if (parsed.sites.isNotEmpty) return parsed;
 
     if (_looksEncrypted(text)) {
-      errors.add('$url：配置已加密，暂不支持');
+      errors.add(
+        decrypted == null
+            ? '$url：配置已加密，且无法用 TVBox 通用算法解密'
+            : '$url：配置解密成功，但里面没有可直接播放的视频源',
+      );
       return null;
     }
 
@@ -802,7 +882,7 @@ class HttpService {
 
     // 多仓配置：{"urls":[{"url":"..."}]}
     if (depth < 2) {
-      final repos = SourceImport.repoUrls(text);
+      final repos = SourceImport.repoUrls(config);
       if (repos.isNotEmpty) {
         final merged = await _importRepos(repos, tried, errors, depth);
         if (merged != null) return merged;

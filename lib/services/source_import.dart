@@ -256,12 +256,47 @@ class SourceImport {
   ///
   /// 优先 `api`（必须是 http 地址），其次是 `url`，最后从 `ext` 里挖
   /// （spider 源的真实接口通常藏在这里）。
+  ///
+  /// ⚠️ `ext` 的兜底要**严格**：TVBox 大配置里 spider 源的 `ext` 五花八门
+  /// （drpy 的 `.../douban.json`、多域名逗号列表、加密串）。原样拿来当接口会
+  /// 导入一堆永远加载失败的假源，所以只接受**像 maccms 接口**的地址。
   static String? _resolveApi(Map<dynamic, dynamic> raw) {
     for (final key in const <String>['api', 'url']) {
       final value = _str(raw[key]);
-      if (value != null && _looksLikeHttp(value)) return value;
+      if (value == null || !_looksLikeHttp(value)) continue;
+      if (_looksLikeAssetUrl(value)) continue; // 脚本 / 配置 / 多域名列表
+      return value;
     }
-    return _extUrl(raw['ext']);
+    final ext = _extUrl(raw['ext']);
+    if (ext == null) return null;
+    return _looksLikeMaccmsApi(ext) ? ext : null;
+  }
+
+  /// 明显不是采集接口的地址：`.js`/`.json` 等资源文件、逗号分隔的多域名。
+  ///
+  /// TVBox 大配置里 spider 源的 `api` 字段常直接指向自己的 drpy 脚本
+  /// （如 `http://box.iqinu.com/js/lib/drpy.min.js`），导进来只会是个坏源。
+  static bool _looksLikeAssetUrl(String url) {
+    final v = url.trim().toLowerCase();
+    if (v.contains(',') || v.contains(' ')) return true; // 多域名列表
+    return _hasAssetExtension(v);
+  }
+
+  /// 是否像一个 maccms 采集接口（`api.php/provide/vod`、`api.php/v1.vod`、
+  /// `inc/api_mac10_all.php` 这类）。
+  ///
+  /// 用来过滤 spider 源 `ext` 里的干扰项：配置文件（`.json/.txt`）、
+  /// 多域名逗号列表都不是可用的采集接口。
+  static bool _looksLikeMaccmsApi(String url) {
+    final v = url.trim().toLowerCase();
+    if (!_looksLikeHttp(v)) return false;
+    if (v.contains(',') || v.contains(' ')) return false;
+    if (_hasAssetExtension(v)) return false;
+    return v.contains('api') || v.contains('.php') || v.contains('provide/vod');
+  }
+
+  static bool _hasAssetExtension(String lowerUrl) {
+    return RegExp(r'\.(?:json|txt|js|mjs|ya?ml)(?:[?#]|$)').hasMatch(lowerUrl);
   }
 
   /// 从 TVBox 的 `ext` 字段里找接口地址。
