@@ -22,9 +22,10 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - Windows 版：`tools/build_windows.bat`（管理员权限，同样交用户跑）。
 
 ## 视频源
-- 引擎只认 maccms json/xml（`Site.api` 须真实 URL）。`SourceImport._mapType` 收 0=xml / 1=json，type 3/4/7/15（SpiderJS/drpy）跳过。猫影视 CatVod config 是 SpiderJS 跑不了，只抽其中真实 maccms 端点（藏在 ext.url）。
+- 引擎只认 maccms json/xml（`Site.api` 须真实 URL）。`SourceImport._mapType` 收 0=xml / 1=json；type 3/4/7/15（SpiderJS/drpy）**现在会先从 ext.url（对象或 JSON 字符串）提取真实 maccms 端点再导入**，没有真实端点才跳过。`ext` 里常见 `{"url":"..."}`，也有直接是地址或数组。
 - 内置默认源 `assets/data/init_site.json`（22 个），源库为空时种子化；老用户源库非空不覆盖，需「重置软件」。
 - 导入合并（1.7.5）：`importSites`(URL) / `importSitesFromContent`(本地) 都按 `Site.key` upsert，不清空已有源。
+- **配置导入增强（1.11.0，分支 feature/tvbox-import）**：`HttpService.importSites` 返回 `ImportSummary`（不再 bool）。支持：地址规范化（`lib/utils/config_url.dart`：缺协议补 http、缺 // 纠正、中文域名 RFC3492 punycode）、JSONP、多仓 `{"urls":[...]}`（最多 5 个子配置）、导航网页自动从 HTML 找 `.json`/tvbox 链接（最多 6 个，总时限 25s）、直接粘贴 maccms 接口（`api.php/provide/vod`）识别为单源、同 api/同 key 去重、加密配置（纯 hex）明确提示。HTML 候选链接靠 `_configHintRe`/`_skipAssetRe` 过滤。
 - 接口地址一律 `HttpService._apiUrl(site, params)`，别拼字符串（zyfun api 自带查询串，拼错返精简列表且不报错）。type 不可信，按响应首字符判定 JSON/XML；先 GET，仅 4xx 回退 POST；无 charset 按 UTF-8。`Site.id` 只是装饰，身份用 `key`。
 - 很多源站 / CDN 会按 UA 拦 ExoPlayer 的 UA → 「播放失败」（play_page 的 `_kPlayerHeaders` 用浏览器 UA 解决）。
 
