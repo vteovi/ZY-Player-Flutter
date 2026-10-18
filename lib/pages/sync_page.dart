@@ -218,7 +218,6 @@ class _SyncPageState extends State<SyncPage>
       ),
       body: TabBarView(
         controller: _tabController,
-        physics: const NeverScrollableScrollPhysics(),
         children: [
           _buildSharePane(isDark),
           _buildPullPane(isDark),
