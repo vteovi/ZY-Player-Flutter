@@ -135,9 +135,9 @@ class _StarPageState extends State<StarPage>
         title: const Text('收藏与历史'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: '收藏'),
-            Tab(text: '历史记录'),
+          tabs: [
+            Tab(text: '收藏 ${app.stars.length}'),
+            Tab(text: '历史记录 ${app.histories.length}'),
           ],
         ),
       ),
