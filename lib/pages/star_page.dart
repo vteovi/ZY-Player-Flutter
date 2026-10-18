@@ -10,9 +10,9 @@ import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 import 'play_page.dart';
 
-/// 收藏与历史：顶部 TabBar 两个分栏
-/// - 收藏：卡片网格，点开详情，可删除
-/// - 历史记录：卡片网格（带进度条），点开续播，可删除
+  /// 收藏与历史：顶部 TabBar 两个分栏
+  /// - 收藏：卡片网格，点开详情，长按取消收藏
+  /// - 历史记录：卡片网格（带进度条），点开续播，长按清除记录
 class StarPage extends StatefulWidget {
   /// 初始分栏：0 = 收藏（默认），1 = 历史记录。
   /// 设置页「播放记录」入口可传 1 直接落到历史分栏。
@@ -150,7 +150,7 @@ class _StarPageState extends State<StarPage>
             emptyMessage: '还没有收藏任何影片',
             emptyIcon: Icons.star_border,
             onTap: _openDetail,
-            onRemove: _removeStar,
+            onLongPress: _removeStar,
           ),
           _buildPane(
             items: app.histories,
@@ -158,7 +158,7 @@ class _StarPageState extends State<StarPage>
             emptyMessage: '还没有播放记录',
             emptyIcon: Icons.history,
             onTap: _play,
-            onRemove: _removeHistory,
+            onLongPress: _removeHistory,
           ),
         ],
       ),
@@ -171,7 +171,7 @@ class _StarPageState extends State<StarPage>
     required String emptyMessage,
     required IconData emptyIcon,
     required void Function(RecordItem) onTap,
-    required void Function(RecordItem) onRemove,
+    required void Function(RecordItem) onLongPress,
   }) {
     if (items.isEmpty) {
       return EmptyHint(message: emptyMessage, icon: emptyIcon);
@@ -188,7 +188,7 @@ class _StarPageState extends State<StarPage>
           item: item,
           isHistory: isHistory,
           onTap: () => onTap(item),
-          onRemove: () => onRemove(item),
+          onLongPress: () => onLongPress(item),
         );
       },
     );

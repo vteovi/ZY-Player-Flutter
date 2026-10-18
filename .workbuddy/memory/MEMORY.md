@@ -53,6 +53,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 
 ## 其他坑（勿回退）
 - Flutter 命中测试：触点在父节点外整棵子树不命中 —— 要放外面先给父节点留空间（详情页按钮「点了没反应」即此因）。
+- **「内容不满一屏 → 触发不了翻页」死局**：分页列表不要把「加载更多」只挂在滚动监听上。横屏/大屏列多行少时首屏可能整屏放得下，`maxScrollExtent==0` 就不会有任何滚动事件，用户表现为「打开就已经到底、上滑没反应、只能左右切」。`CategoryTabState._maybeContinueLoad()`：每帧后检查 `maxScrollExtent<=0` 或贴底且还有旧页就主动续拉，配 `didChangeMetrics`（旋转）+ `_noGrowStreak`（连续两页无增长停止）兜底。改成骨架屏 / 布局后同样适用。
 - 详情请求 `HttpService.fetchDetail` 对源站**瞬时错误**（超时/连接被重置/5xx/域名解析失败/网络错误）重试 2 次（退避 300/600ms），永久错误（403/404/改版）不重试；失败把原因抛出。详情页 `detail_page` 捕获后用 `EmptyHint` 显示**具体原因 + 「重试」按钮**，别再吐个死掉的「获取详情失败」。重试只加在详情（最关键），列表/搜索沿用旧逻辑（失败降级空列表）。
 - 收藏/历史 key = `{siteKey}-{videoId}`，siteKey 是 UUID 含连字符，**绝不用 `split('-')[0]`**；用 `AppState.resolveRecordKey()` 从右往左匹配前缀。
 - 详情页布局：`_buildContent`→`_buildInfoSection`→`_buildInfoCard`；悬浮按钮 `right:116/40`，勿改负偏移。

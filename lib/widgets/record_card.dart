@@ -5,22 +5,22 @@ import '../utils/app_colors.dart';
 import 'video_card.dart';
 
 /// 收藏 / 历史记录卡片：与首页 [VideoCard] 同款的「图上文下」海报卡，
-/// 但额外提供两个收藏页专属能力：
-/// - 右上角圆形删除按钮（收藏/历史都可直接移除）
-/// - 历史模式下在封面下方显示观看进度条 + 进度百分比
+/// 历史模式下在封面下方显示观看进度条 + 进度百分比。
 ///
-/// 点击行为由外部决定：收藏 → 打开详情，历史 → 从上次位置续播。
+/// 交互：
+/// - 点击：收藏 → 打开详情，历史 → 从上次位置续播（由外部决定）。
+/// - 长按：取消收藏 / 清除该条记录（外部弹出确认框防误触）。
 class RecordCard extends StatelessWidget {
   final RecordItem item;
   final VoidCallback onTap;
-  final VoidCallback onRemove;
+  final VoidCallback? onLongPress;
   final bool isHistory;
 
   const RecordCard({
     super.key,
     required this.item,
     required this.onTap,
-    required this.onRemove,
+    this.onLongPress,
     this.isHistory = false,
   });
 
@@ -35,6 +35,7 @@ class RecordCard extends StatelessWidget {
       margin: const EdgeInsets.all(6),
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Stack(
           children: [
             Column(
@@ -69,12 +70,6 @@ class RecordCard extends StatelessWidget {
                   child: _buildMetaRow(theme, isDark),
                 ),
               ],
-            ),
-            // 右上角圆形删除按钮（覆盖在封面上）
-            Positioned(
-              top: 4,
-              right: 4,
-              child: _RemoveButton(onPressed: onRemove),
             ),
           ],
         ),
@@ -141,33 +136,6 @@ class RecordCard extends StatelessWidget {
           style: theme.textTheme.bodySmall?.copyWith(color: subColor),
         ),
       ],
-    );
-  }
-}
-
-/// 封面右上角的半透明圆形删除按钮
-class _RemoveButton extends StatelessWidget {
-  final VoidCallback onPressed;
-
-  const _RemoveButton({required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          width: 28,
-          height: 28,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.55),
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.close, color: Colors.white, size: 16),
-        ),
-      ),
     );
   }
 }
