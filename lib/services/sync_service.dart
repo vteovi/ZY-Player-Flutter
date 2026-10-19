@@ -34,23 +34,49 @@ class LanDiscovery {
   static const int discoveryPort = 19528;
   static const Duration _interval = Duration(seconds: 2);
 
-  /// 获取本机第一个私有 IPv4 地址（用于显示 / 忽略自身广播）。
+  /// 获取本机用于局域网互通的 IPv4 地址（用于显示 / 忽略自身广播）。
+  ///
+  /// 直接取「第一个私有地址」会拿到蜂窝数据、VPN、虚拟机/厂商虚拟网卡等地址
+  /// （如 10.16.x.x、192.168.51.x），与真实路由器网段不符。这里优先挑选看起来像
+  /// 物理网卡（Wi-Fi/以太网）的接口，避开 rmnet/tun/vEthernet/VMware 等虚拟网卡；
+  /// 若挑不到再退回「首个私有地址」，避免回归。
   static Future<String?> getLocalIp() async {
+    List<NetworkInterface> interfaces;
     try {
-      final interfaces = await NetworkInterface.list(
+      interfaces = await NetworkInterface.list(
         includeLoopback: false,
         type: InternetAddressType.IPv4,
       );
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address;
-          if (_isPrivateIp(ip)) return ip;
-        }
-      }
     } catch (_) {
-      // ignore：拿不到就返回 null，由调用方兜底
+      return null;
     }
-    return null;
+    String? fallback;
+    for (final iface in interfaces) {
+      for (final addr in iface.addresses) {
+        final ip = addr.address;
+        if (!_isPrivateIp(ip)) continue;
+        fallback ??= ip;
+        if (_looksLikePhysicalLan(iface)) return ip;
+      }
+    }
+    return fallback;
+  }
+
+  /// 该网卡名是否像物理 LAN 网卡（Wi-Fi/以太网），而非蜂窝 / VPN / 虚拟交换机。
+  static bool _looksLikePhysicalLan(NetworkInterface iface) {
+    final n = iface.name.toLowerCase();
+    const excluded = [
+      'lo', 'loopback',
+      'rmnet', 'ccmni', 'ppp', 'tun', 'tap', // 蜂窝数据 / VPN
+      'vmnet', 'vmware', 'vbox', 'virtualbox', // 虚拟机
+      'vethernet', 'hyper-v', 'hyperv', 'docker', 'br-', // 虚拟交换机 / 容器
+      'bluetooth', 'bt', 'pan', // 蓝牙网络共享
+      'zerotier', 'tailscale', 'wireguard', 'openvpn', // VPN 隧道
+    ];
+    for (final e in excluded) {
+      if (n.contains(e)) return false;
+    }
+    return true;
   }
 
   static bool _isPrivateIp(String ip) {
