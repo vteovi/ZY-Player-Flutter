@@ -35,8 +35,9 @@ class _SyncPageState extends State<SyncPage>
   String _deviceName = '';
 
   // 接收端的运行态
-  Future<void> Function()? _stopListen;
+  LanListener? _lanListener;
   final List<LanDevice> _devices = <LanDevice>[];
+  bool _refreshing = false;
   LanDevice? _selectedDevice;
   final TextEditingController _ipController = TextEditingController();
   final TextEditingController _portController =
@@ -130,8 +131,8 @@ class _SyncPageState extends State<SyncPage>
   // --------------------------------------------------------------------------
 
   Future<void> _startListening() async {
-    if (_stopListen != null) return;
-    final stop = await LanDiscovery.startListening((device) {
+    if (_lanListener != null) return;
+    final listener = await LanDiscovery.startListening((device) {
       if (!mounted) return;
       setState(() {
         final idx = _devices.indexWhere((d) => d == device);
@@ -142,12 +143,24 @@ class _SyncPageState extends State<SyncPage>
         }
       });
     });
-    if (mounted) setState(() => _stopListen = stop);
+    if (mounted) setState(() => _lanListener = listener);
   }
 
   void _stopListening() {
-    _stopListen?.call();
-    _stopListen = null;
+    _lanListener?.stop();
+    _lanListener = null;
+  }
+
+  /// 手动刷新：确保监听在跑，并向局域网发送一次主动探测，
+  /// 促使共享端立即单播回应（避免退出重进页面才能看到设备）。
+  Future<void> _refreshDevices() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    if (_lanListener == null) await _startListening();
+    _lanListener?.probe();
+    // 给共享端一点响应时间，期间按钮显示「扫描中」
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (mounted) setState(() => _refreshing = false);
   }
 
   Future<void> _doSync() async {
@@ -310,8 +323,25 @@ class _SyncPageState extends State<SyncPage>
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        const Text('局域网内发现的设备（点击自动填入 IP 和端口）：',
-            style: TextStyle(fontWeight: FontWeight.w600)),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('局域网内发现的设备（点击自动填入 IP 和端口）：',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+            ),
+            IconButton(
+              icon: _refreshing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+              tooltip: '刷新设备列表',
+              onPressed: _refreshing ? null : _refreshDevices,
+            ),
+          ],
+        ),
         const SizedBox(height: 10),
         if (_devices.isEmpty)
           const Padding(

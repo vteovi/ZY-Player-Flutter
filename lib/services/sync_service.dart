@@ -63,19 +63,34 @@ class LanDiscovery {
     return false;
   }
 
-  /// 作为共享端：周期性向组播组广播自身存在。返回停止函数。
+  /// 作为共享端：周期性向组播组广播自身存在，同时监听探测包并即时单播回应。
+  /// 返回停止函数。
   static Future<Future<void> Function()> startAnnouncing(
     int httpPort,
     String name,
   ) async {
-    final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+    final sendSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     final payload = utf8.encode('$_magic|$httpPort|$name');
     final group = InternetAddress(multicastGroup);
+    final recvSocket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      discoveryPort,
+      reuseAddress: true,
+    );
+    try {
+      recvSocket.joinMulticast(InternetAddress(multicastGroup));
+    } catch (_) {
+      // 部分 rom / 网络不支持组播，忽略：对方仍可手动输入 IP 连接
+    }
     var stopped = false;
-    void sendOnce() {
+    void sendOnce({InternetAddress? to, int? toPort}) {
       if (stopped) return;
       try {
-        socket.send(payload, group, discoveryPort);
+        if (to != null && toPort != null) {
+          sendSocket.send(payload, to, toPort); // 探测回应：单播给请求方
+        } else {
+          sendSocket.send(payload, group, discoveryPort); // 周期广播
+        }
       } catch (_) {
         // 网络切换 / 网卡不可用时忽略
       }
@@ -83,16 +98,33 @@ class LanDiscovery {
 
     sendOnce();
     final timer = Timer.periodic(_interval, (_) => sendOnce());
+    // 监听探测包，收到后单播立即回应（手动刷新可秒级发现）
+    recvSocket.listen((event) {
+      if (event != RawSocketEvent.read || stopped) return;
+      final dg = recvSocket.receive();
+      if (dg == null) return;
+      final text = utf8.decode(dg.data, allowMalformed: true);
+      if (text == '$_magic|PROBE') {
+        sendOnce(to: dg.address, toPort: dg.port);
+      }
+    });
     return () async {
       if (stopped) return;
       stopped = true;
       timer.cancel();
-      socket.close();
+      try {
+        recvSocket.leaveMulticast(InternetAddress(multicastGroup));
+      } catch (_) {}
+      recvSocket.close();
+      sendSocket.close();
     };
   }
 
-  /// 作为同步端：监听组播，发现局域网内正在共享的设备。返回停止函数。
-  static Future<Future<void> Function()> startListening(
+  /// 同步端探测包载荷（共享端收到后单播立即回应）。
+  static const String _probePayload = '$_magic|PROBE';
+
+  /// 作为同步端：监听组播，发现局域网内正在共享的设备。返回 [LanListener]。
+  static Future<LanListener> startListening(
     void Function(LanDevice) onDevice,
   ) async {
     final socket = await RawDatagramSocket.bind(
@@ -106,9 +138,7 @@ class LanDiscovery {
       // 部分 rom / 网络不支持组播，忽略：用户仍可手动输入 IP 连接
     }
     final localIp = await getLocalIp();
-    socket.listen((event) {
-      if (event != RawSocketEvent.read) return;
-      final dg = socket.receive();
+    void handle(Datagram? dg) {
       if (dg == null) return;
       final fromIp = dg.address.address;
       if (fromIp == localIp) return; // 忽略自身
@@ -119,14 +149,42 @@ class LanDiscovery {
       final port = int.tryParse(parts[1]);
       if (port == null) return;
       onDevice(LanDevice(ip: fromIp, httpPort: port, name: parts[2]));
+    }
+
+    socket.listen((event) {
+      if (event != RawSocketEvent.read) return;
+      handle(socket.receive());
     });
-    return () async {
+    return LanListener._(socket, () {
       try {
         socket.leaveMulticast(InternetAddress(multicastGroup));
       } catch (_) {}
       socket.close();
-    };
+    });
   }
+}
+
+/// 同步端监听句柄。持有组播监听 socket，支持被动发现与主动探测刷新。
+class LanListener {
+  final RawDatagramSocket _socket;
+  final void Function() _dispose;
+
+  LanListener._(this._socket, this._dispose);
+
+  /// 向局域网发送一次主动探测，促使共享端立即单播回应（手动刷新用）。
+  void probe() {
+    try {
+      _socket.send(
+        utf8.encode(LanDiscovery._probePayload),
+        InternetAddress(LanDiscovery.multicastGroup),
+        LanDiscovery.discoveryPort,
+      );
+    } catch (_) {
+      // 网络不可用时忽略
+    }
+  }
+
+  Future<void> stop() async => _dispose();
 }
 
 /// 共享端 HTTP 服务：在固定端口暴露选定库的原始数据。
