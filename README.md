@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：1.13.0+185（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
+- 版本：1.14.0+186（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 

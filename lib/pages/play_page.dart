@@ -168,6 +168,31 @@ class _PlayPageState extends State<PlayPage> {
   /// 长按加速倍率，进入页面时从设置读一次，默认 2.0
   double _longPressRate = 2.0;
 
+  // ---- 播放倍速 ----
+
+  /// 当前播放倍速（1.0 = 原速）。
+  ///
+  /// 只在本次播放页会话内有效（不落库）：换集、重试会重新应用，离开播放页复位。
+  /// 长按加速结束后也要回到这个速度，而不是固定回 1.0。
+  double _speed = 1.0;
+
+  /// 倍速面板是否展开
+  bool _speedPanelOpen = false;
+
+  /// 常见倍速档位。
+  /// ExoPlayer 的 PlaybackParameters 支持任意正数，> 2.0 用跳帧实现且保持音调，
+  /// 所以 2.5 / 3.0 也能正常放。
+  static const List<double> _kSpeedOptions = <double>[
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+  ];
+
   // ---- 全屏控制层自动隐藏 ----
 
   /// 控制层（进度条 + 按钮行）是否可见
@@ -258,6 +283,8 @@ class _PlayPageState extends State<PlayPage> {
     try {
       await _controller.initialize();
       if (!mounted) return;
+      // 新控制器的倍速恒为 1.0：换集 / 重试后要重新应用当前选中的倍速
+      if (_speed != 1.0) await _controller.setPlaybackSpeed(_speed);
       if (seekTo > 0) {
         await _controller.seekTo(Duration(seconds: seekTo.floor()));
       }
@@ -737,7 +764,7 @@ class _PlayPageState extends State<PlayPage> {
     _hideTimer?.cancel();
     _hideTimer = Timer(_controlsAutoHideDelay, () {
       if (!mounted || !_fullscreen) return;
-      if (_aspectPanelOpen || _scalePanelOpen) {
+      if (_aspectPanelOpen || _scalePanelOpen || _speedPanelOpen) {
         _scheduleHideControls();
         return;
       }
@@ -799,9 +826,9 @@ class _PlayPageState extends State<PlayPage> {
       await _toggleNativeFullscreen();
       return;
     }
-    // 退出 / 进入全屏前，若正在长按加速，先恢复正常速度，避免状态卡住
+    // 退出 / 进入全屏前，若正在长按加速，先恢复当前倍速，避免状态卡住
     if (_longPressActive) {
-      _controller.setPlaybackSpeed(1.0);
+      _controller.setPlaybackSpeed(_speed);
     }
     if (_fullscreen) {
       // 退出全屏：同样把方向偏好清空，交还系统决定（不要在平板上把 App 锁成竖屏条）。
@@ -820,6 +847,7 @@ class _PlayPageState extends State<PlayPage> {
         // 切换横竖屏后画面区域尺寸会变，收起面板避免遮挡
         _aspectPanelOpen = false;
         _scalePanelOpen = false;
+        _speedPanelOpen = false;
         // 进全屏先把控制层亮出来，几秒后再自动收
         _controlsVisible = true;
         // 手势状态复位（长按 / 滑动 seek 只在全屏内有效）
@@ -885,6 +913,23 @@ class _PlayPageState extends State<PlayPage> {
   void _selectScale(ScaleOption option) {
     setState(() => _scaleMode = option);
     context.read<AppState>().setPlayerScale(option.key);
+  }
+
+  /// 选择播放倍速：立即生效并收起面板。
+  ///
+  /// 正在长按加速时切换也没关系 —— 直接把加速态清掉，松手时
+  /// [_onLongPressEnd] 会回到新选的倍速（而不是写死的 1.0）。
+  void _selectSpeed(double speed) {
+    setState(() {
+      _speed = speed;
+      _speedPanelOpen = false;
+      _longPressActive = false;
+    });
+    if (_controller.value.isInitialized) {
+      _controller.setPlaybackSpeed(speed);
+    }
+    // 面板收起后重新开始自动隐藏计时，别让控制层立刻消失
+    if (_fullscreen) _scheduleHideControls();
   }
 
   /// 视频自身的显示比例。
@@ -1176,6 +1221,93 @@ class _PlayPageState extends State<PlayPage> {
     }
   }
 
+  /// 全屏标题栏：最左边是返回按钮（退出全屏，回到竖屏播放页），右边片名 / 集数。
+  ///
+  /// 只在全屏出现；竖屏播放页本身有 AppBar，不重复。
+  Widget _buildFullscreenTitleBar() {
+    final name = _detail?.name.isNotEmpty == true ? _detail!.name : _title;
+    // 多集影片把「当前集」放在副标题；片名本身就是集名时不再重复一遍
+    final episode =
+        (_playList.length > 1 && _title.isNotEmpty && _title != name)
+            ? _title
+            : '';
+    // 右上角实时网速徽标压在这一行的右端，给它留出空位，免得盖住标题文字
+    final reserveRight = (_showSpeed && _netStats != null) ? 92.0 : 12.0;
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        // 自上而下的黑色渐变：保证白字压在亮画面上也看得清
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xB3000000), Color(0x00000000)],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(4, 2, reserveRight, 6),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: _toggleFullscreen,
+                icon: const Icon(Icons.arrow_back_rounded),
+                color: Colors.white,
+                tooltip: '退出全屏',
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      name.isEmpty ? '播放' : name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (episode.isNotEmpty)
+                      Text(
+                        episode,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              // 非原速时常驻一个倍速标记：全屏看片容易忘了自己开过倍速
+              if (_speed != 1.0)
+                Container(
+                  margin: const EdgeInsets.only(left: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0x33FFFFFF),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    '${_fmtSpeed(_speed)}×',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFullscreenBody() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1188,6 +1320,25 @@ class _PlayPageState extends State<PlayPage> {
             // 手势层铺满整屏（两侧留黑也能滑），但压在控制层之下。
             // 全屏时单击开关控制层，所以这里要多接管 onTap。
             _buildGestureLayer(onTap: _toggleControls),
+            // 顶部标题栏：返回按钮 + 片名 / 集数。与底部控制层同步淡入淡出，
+            // 收起时不拦截指针，点击能穿透到手势层。
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: Listener(
+                    // 碰到标题栏也算「有操作」，重新计时自动隐藏
+                    onPointerDown: (_) => _scheduleHideControls(),
+                    child: _buildFullscreenTitleBar(),
+                  ),
+                ),
+              ),
+            ),
             // 控制层：淡入淡出；收起时用 IgnorePointer 让点击穿透到手势层
             Positioned(
               left: 0,
@@ -1223,10 +1374,11 @@ class _PlayPageState extends State<PlayPage> {
               Positioned.fill(
                 child: IgnorePointer(child: _buildSeekHud()),
               ),
-            // 长按加速提示（左上），与控制层无关，套 IgnorePointer 避免吃掉点击
+            // 长按加速提示（左上），与控制层无关，套 IgnorePointer 避免吃掉点击。
+            // 控制层可见时往下让开标题栏的返回按钮。
             if (_longPressActive)
               Positioned(
-                top: 10,
+                top: _controlsVisible ? 64 : 10,
                 left: 12,
                 child: IgnorePointer(
                   child: DecoratedBox(
@@ -1349,13 +1501,15 @@ class _PlayPageState extends State<PlayPage> {
   void _onLongPressStart() {
     if (!_fullscreen) return;
     if (!_controller.value.isInitialized) return;
+    // 当前倍速已经不低于长按倍率时，「加速」没有意义（甚至是降速），直接忽略
+    if (_speed >= _longPressRate) return;
     _controller.setPlaybackSpeed(_longPressRate);
     setState(() => _longPressActive = true);
   }
 
-  /// 长按结束：恢复正常速度（本 App 基础速度恒为 1.0，没有别的速度设置项）。
+  /// 长按结束：回到用户选定的倍速（默认 1.0 原速）。
   void _onLongPressEnd() {
-    _controller.setPlaybackSpeed(1.0);
+    _controller.setPlaybackSpeed(_speed);
     setState(() => _longPressActive = false);
   }
 
@@ -1664,6 +1818,7 @@ class _PlayPageState extends State<PlayPage> {
             _buildButtonRow(),
             if (_aspectPanelOpen) _buildAspectPanel(),
             if (_scalePanelOpen) _buildScalePanel(),
+            if (_speedPanelOpen) _buildSpeedPanel(),
             const Divider(height: 1),
           ],
         );
@@ -1693,6 +1848,7 @@ class _PlayPageState extends State<PlayPage> {
                 _buildButtonRow(),
                 if (_aspectPanelOpen) _buildAspectPanel(),
                 if (_scalePanelOpen) _buildScalePanel(),
+                if (_speedPanelOpen) _buildSpeedPanel(),
               ],
             ),
           ),
@@ -1770,6 +1926,7 @@ class _PlayPageState extends State<PlayPage> {
             onTap: () => setState(() {
               _aspectPanelOpen = !_aspectPanelOpen;
               _scalePanelOpen = false;
+              _speedPanelOpen = false;
             }),
           ),
           _controlButton(
@@ -1779,6 +1936,18 @@ class _PlayPageState extends State<PlayPage> {
             onTap: () => setState(() {
               _scalePanelOpen = !_scalePanelOpen;
               _aspectPanelOpen = false;
+              _speedPanelOpen = false;
+            }),
+          ),
+          _controlButton(
+            icon: Icons.speed_rounded,
+            label: _speed == 1.0 ? '倍速' : '${_fmtSpeed(_speed)}×',
+            // 非原速时常亮，用户一眼能看到「现在不是 1 倍速在放」
+            active: _speedPanelOpen || _speed != 1.0,
+            onTap: () => setState(() {
+              _speedPanelOpen = !_speedPanelOpen;
+              _aspectPanelOpen = false;
+              _scalePanelOpen = false;
             }),
           ),
           _controlButton(
@@ -1870,6 +2039,21 @@ class _PlayPageState extends State<PlayPage> {
             label: option.label,
             selected: option.key == _scaleMode.key,
             onTap: () => _selectScale(option),
+          ),
+      ],
+    );
+  }
+
+  /// 倍速档位面板（竖屏 / 全屏共用）
+  Widget _buildSpeedPanel() {
+    return _buildPanel(
+      title: '播放速度 · 当前 ${_fmtSpeed(_speed)}×',
+      children: [
+        for (final option in _kSpeedOptions)
+          _buildChip(
+            label: option == 1.0 ? '1.0× 原速' : '${_fmtSpeed(option)}×',
+            selected: option == _speed,
+            onTap: () => _selectSpeed(option),
           ),
       ],
     );
@@ -2071,6 +2255,14 @@ class _PlayPageState extends State<PlayPage> {
   Color get _borderColor => _fullscreen
       ? Colors.white38
       : Theme.of(context).colorScheme.outlineVariant;
+
+  /// 倍速显示：去掉多余的零（0.50 → 0.5、1.00 → 1、1.25 → 1.25）。
+  static String _fmtSpeed(double speed) {
+    final text = speed.toStringAsFixed(2);
+    return text
+        .replaceAll(RegExp(r'0+$'), '')
+        .replaceAll(RegExp(r'\.$'), '');
+  }
 
   static String _fmt(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
