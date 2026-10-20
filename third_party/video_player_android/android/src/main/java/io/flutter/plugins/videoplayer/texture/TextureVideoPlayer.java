@@ -14,6 +14,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
+import io.flutter.plugins.videoplayer.PlaybackConfig;
 import io.flutter.plugins.videoplayer.VideoAsset;
 import io.flutter.plugins.videoplayer.VideoPlayer;
 import io.flutter.plugins.videoplayer.VideoPlayerCallbacks;
@@ -58,7 +59,9 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
           // 开启后硬解失败时自动回退到软件解码器（如 c2.android.avc.decoder），
           // 正常机型仍走硬解，不影响性能。
           DefaultRenderersFactory renderersFactory =
-              new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
+              new DefaultRenderersFactory(context)
+                  .setEnableDecoderFallback(true)
+                  .setMediaCodecSelector(PlaybackConfig.mediaCodecSelector());
           ExoPlayer.Builder builder =
               new ExoPlayer.Builder(context)
                   .setMediaSourceFactory(asset.getMediaSourceFactory(context))

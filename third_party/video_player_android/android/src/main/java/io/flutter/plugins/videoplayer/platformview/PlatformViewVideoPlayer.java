@@ -12,6 +12,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
+import io.flutter.plugins.videoplayer.PlaybackConfig;
 import io.flutter.plugins.videoplayer.VideoAsset;
 import io.flutter.plugins.videoplayer.VideoPlayer;
 import io.flutter.plugins.videoplayer.VideoPlayerCallbacks;
@@ -55,7 +56,9 @@ public class PlatformViewVideoPlayer extends VideoPlayer {
           // FIX: 开启解码器回退（同 TextureVideoPlayer）。部分机型硬解 H.264 High
           // Profile/1080p 渲染失败，开启后自动回退软件解码器，硬解正常的机型不受影响。
           DefaultRenderersFactory renderersFactory =
-              new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
+              new DefaultRenderersFactory(context)
+                  .setEnableDecoderFallback(true)
+                  .setMediaCodecSelector(PlaybackConfig.mediaCodecSelector());
           ExoPlayer.Builder builder =
               new ExoPlayer.Builder(context)
                   .setMediaSourceFactory(asset.getMediaSourceFactory(context))

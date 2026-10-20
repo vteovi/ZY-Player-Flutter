@@ -326,6 +326,12 @@ class AppConfig {
   /// 全屏播放时在右上角显示实时下载速度
   final bool showSpeed;
 
+  /// 强制使用软件解码器播放（仅 Android 生效）。
+  /// 部分机型的硬件解码器在 H.264 High Profile/1080p 上会抛
+  /// `MediaCodecVideoRenderer error`，开启后始终走软件解码器（如
+  /// c2.android.avc.decoder），兼容性最好，代价是略耗电。默认关闭。
+  final bool forceSoftwareDecode;
+
   /// 全屏播放时长按画面加速的倍率（2.0 / 4.0 / 8.0），默认 2.0。
   /// 长按期间把播放速度提到该倍率，松手恢复到 1.0。
   final double playerLongPressRate;
@@ -349,6 +355,7 @@ class AppConfig {
     this.playerScale = 'fit',
     this.playerFlip = false,
     this.showSpeed = false,
+    this.forceSoftwareDecode = false,
     this.playerLongPressRate = 2.0,
     this.themeMode = 'system',
     this.landscapeCard = false,
@@ -364,6 +371,8 @@ class AppConfig {
       playerScale: (json['playerScale'] ?? 'fit').toString(),
       playerFlip: json['playerFlip'] == true || json['playerFlip'].toString() == 'true',
       showSpeed: json['showSpeed'] == true || json['showSpeed'].toString() == 'true',
+      forceSoftwareDecode: json['forceSoftwareDecode'] == true ||
+          json['forceSoftwareDecode'].toString() == 'true',
       playerLongPressRate: () {
         final rate = json['playerLongPressRate'];
         if (rate == null) return 2.0;
@@ -383,6 +392,7 @@ class AppConfig {
         'playerScale': playerScale,
         'playerFlip': playerFlip,
         'showSpeed': showSpeed,
+        'forceSoftwareDecode': forceSoftwareDecode,
         'playerLongPressRate': playerLongPressRate,
         'themeMode': themeMode,
         'landscapeCard': landscapeCard,
@@ -394,6 +404,7 @@ class AppConfig {
     String? playerScale,
     bool? playerFlip,
     bool? showSpeed,
+    bool? forceSoftwareDecode,
     double? playerLongPressRate,
     String? themeMode,
     bool? landscapeCard,
@@ -406,6 +417,7 @@ class AppConfig {
         playerScale: playerScale ?? this.playerScale,
         playerFlip: playerFlip ?? this.playerFlip,
         showSpeed: showSpeed ?? this.showSpeed,
+        forceSoftwareDecode: forceSoftwareDecode ?? this.forceSoftwareDecode,
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
         themeMode: themeMode ?? this.themeMode,
         landscapeCard: landscapeCard ?? this.landscapeCard,

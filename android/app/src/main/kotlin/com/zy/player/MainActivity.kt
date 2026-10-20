@@ -12,6 +12,7 @@ import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugins.videoplayer.PlaybackConfig
 import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity() {
@@ -48,6 +49,13 @@ class MainActivity : FlutterActivity() {
                     )
                     "setKeepScreenOn" -> {
                         setKeepScreenOn(call.argument<Boolean>("value") ?: false)
+                        result.success(null)
+                    }
+                    // 强制软件解码开关：写到 video_player 插件的静态配置，
+                    // 下次构建 ExoPlayer 时按它选择「软件优先」解码器。
+                    "setForceSoftwareDecode" -> {
+                        PlaybackConfig.forceSoftwareDecode =
+                            call.argument<Boolean>("value") ?: false
                         result.success(null)
                     }
                     else -> result.notImplemented()

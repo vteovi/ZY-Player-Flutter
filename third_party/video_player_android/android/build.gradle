@@ -32,7 +32,9 @@ android {
     lintOptions {
         checkAllWarnings = true
         warningsAsErrors = true
-        disable 'AndroidGradlePluginVersion', 'InvalidPackage', 'GradleDependency', 'NewerVersionAvailable'
+        // UnsafeOptInUsageError：本插件有意使用 Media3 的 @UnstableApi 接口
+        // （DefaultRenderersFactory / MediaCodecSelector 等），不想被 lint 拦截。
+        disable 'AndroidGradlePluginVersion', 'InvalidPackage', 'GradleDependency', 'NewerVersionAvailable', 'UnsafeOptInUsageError'
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

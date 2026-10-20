@@ -405,6 +405,15 @@ class MePage extends StatelessWidget {
             value: appState.config.showSpeed,
             onChanged: (value) => context.read<AppState>().setShowSpeed(value),
           ),
+          if (Platform.isAndroid)
+            SwitchListTile(
+              title: const Text('强制软件解码'),
+              subtitle: const Text(
+                  '部分机型硬解会报「播放失败」，开启后改用软件解码器（兼容性更好、略耗电），下次播放生效'),
+              value: appState.config.forceSoftwareDecode,
+              onChanged: (value) =>
+                  context.read<AppState>().setForceSoftwareDecode(value),
+            ),
           if (Platform.isWindows) _buildExternalPlayerTile(context),
           ListTile(
             title: const Text('长按加速倍率'),
@@ -449,7 +458,7 @@ class MePage extends StatelessWidget {
           ),
           _MenuItem(
             title: '版本更新',
-            subtitle: '1.12.2',
+            subtitle: '1.13.0',
             onTap: () => showToast(context, '当前已是最新版本'),
           ),
           const Padding(

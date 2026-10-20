@@ -213,6 +213,24 @@ class SystemControl {
     }
   }
 
+  /// 强制使用软件解码器播放（仅 Android 生效）。
+  ///
+  /// 设置后写到原生静态开关 `PlaybackConfig.forceSoftwareDecode`，ExoPlayer
+  /// 下次构建时按它选择「软件优先」的 MediaCodecSelector。用于兼容部分机型
+  /// 硬解 H.264 High Profile/1080p 抛 MediaCodecVideoRenderer error 的情况。
+  /// 失败静默降级——通道异常不应影响播放。
+  static Future<void> setForceSoftwareDecode(bool on) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>(
+        'setForceSoftwareDecode',
+        <String, dynamic>{'value': on},
+      );
+    } catch (_) {
+      // 忽略
+    }
+  }
+
   static double _clamp(double value) {
     if (value.isNaN) return 0;
     if (value < 0) return 0;

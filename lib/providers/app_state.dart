@@ -7,6 +7,7 @@ import '../models/site.dart';
 import '../models/video.dart';
 import '../services/http_service.dart';
 import '../services/source_import.dart';
+import '../services/system_control.dart';
 import '../services/zy_database.dart';
 import '../utils/constants.dart';
 
@@ -251,6 +252,9 @@ class AppState extends ChangeNotifier {
   Future<void> loadSetting() async {
     final data = await ZyDatabase.instance.get(DbNames.setting, 'config');
     _config = data == null ? const AppConfig() : AppConfig.fromJson(data);
+    // 把「强制软件解码」同步到原生静态开关（Android 专用，其他平台内部直接 return）。
+    // 应用启动 / 恢复备份后都会走到这里，保证原生侧与持久化配置一致。
+    await SystemControl.setForceSoftwareDecode(_config.forceSoftwareDecode);
     notifyListeners();
   }
 
@@ -283,6 +287,15 @@ class AppState extends ChangeNotifier {
     if (_config.showSpeed == value) return;
     _config = _config.copyWith(showSpeed: value);
     await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
+  /// 强制使用软件解码器（仅 Android 生效）。下次播放生效。
+  Future<void> setForceSoftwareDecode(bool value) async {
+    if (_config.forceSoftwareDecode == value) return;
+    _config = _config.copyWith(forceSoftwareDecode: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    await SystemControl.setForceSoftwareDecode(value);
     notifyListeners();
   }
 
