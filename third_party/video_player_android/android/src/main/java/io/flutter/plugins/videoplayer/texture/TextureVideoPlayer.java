@@ -11,6 +11,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RestrictTo;
 import androidx.annotation.VisibleForTesting;
 import androidx.media3.common.MediaItem;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import io.flutter.plugins.videoplayer.ExoPlayerEventListener;
 import io.flutter.plugins.videoplayer.VideoAsset;
@@ -52,9 +53,16 @@ public final class TextureVideoPlayer extends VideoPlayer implements SurfaceProd
         asset.getMediaItem(),
         options,
         () -> {
+          // FIX: 开启解码器回退。部分机型的硬件解码器在 H.264 High Profile/1080p
+          // （avc1.640033）渲染阶段抛 MediaCodecVideoRenderer error（format_supported=YES）。
+          // 开启后硬解失败时自动回退到软件解码器（如 c2.android.avc.decoder），
+          // 正常机型仍走硬解，不影响性能。
+          DefaultRenderersFactory renderersFactory =
+              new DefaultRenderersFactory(context).setEnableDecoderFallback(true);
           ExoPlayer.Builder builder =
               new ExoPlayer.Builder(context)
-                  .setMediaSourceFactory(asset.getMediaSourceFactory(context));
+                  .setMediaSourceFactory(asset.getMediaSourceFactory(context))
+                  .setRenderersFactory(renderersFactory);
           return builder.build();
         });
   }
