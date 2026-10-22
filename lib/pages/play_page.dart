@@ -1950,17 +1950,21 @@ class _PlayPageState extends State<PlayPage> {
               _scalePanelOpen = false;
             }),
           ),
-          _controlButton(
-            icon: context.watch<AppState>().isStarred(_recordKey)
-                ? Icons.star_rounded
-                : Icons.star_border_rounded,
-            label:
-                context.watch<AppState>().isStarred(_recordKey) ? '已收藏' : '收藏',
-            tint: context.watch<AppState>().isStarred(_recordKey)
-                ? const Color(0xFFFF4445)
-                : null,
-            onTap: _toggleStar,
-          ),
+          // 收藏只在竖屏播放页显示：全屏时底部按钮已经很挤，且收藏不是播放时的
+          // 高频操作（详情页 / 收藏页都能收藏），全屏去掉更清爽。
+          if (!_fullscreen)
+            _controlButton(
+              icon: context.watch<AppState>().isStarred(_recordKey)
+                  ? Icons.star_rounded
+                  : Icons.star_border_rounded,
+              label: context.watch<AppState>().isStarred(_recordKey)
+                  ? '已收藏'
+                  : '收藏',
+              tint: context.watch<AppState>().isStarred(_recordKey)
+                  ? const Color(0xFFFF4445)
+                  : null,
+              onTap: _toggleStar,
+            ),
           _controlButton(
             icon: Icons.picture_in_picture_rounded,
             label: '画中画',
