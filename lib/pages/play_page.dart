@@ -1950,9 +1950,11 @@ class _PlayPageState extends State<PlayPage> {
               _scalePanelOpen = false;
             }),
           ),
-          // 收藏只在竖屏播放页显示：全屏时底部按钮已经很挤，且收藏不是播放时的
-          // 高频操作（详情页 / 收藏页都能收藏），全屏去掉更清爽。
-          if (!_fullscreen)
+          // 收藏按钮的显隐按「屏幕够不够宽」来定：
+          // - 竖屏播放页：显示；
+          // - 横屏全屏：宽度充足，显示；
+          // - **竖屏全屏**（9:16 竖版视频全屏）：屏幕窄、按钮已经挤成一条缝，隐藏。
+          if (!_fullscreen || _landscapeNow)
             _controlButton(
               icon: context.watch<AppState>().isStarred(_recordKey)
                   ? Icons.star_rounded
