@@ -12,6 +12,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 3. **绝不主动重试网络操作**（GitHub 常连接重置，push / ls-remote 会长时间挂起）。
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
 5. **改完照常：静态校验 + bump 版本号**（四处同步，见下）。不编译发现不了错误，改引用/结构后务必人肉复查符号（历史上误删过仍在用的 import）。
+6. **每次发版同步维护根目录 `更新记录.MD`**（2026-10-25 建立）：面向用户的更新记录，按版本**倒序**（最新在最上），每条写日期 + 用户能看懂的一句话说明（「新增 / 优化 / 修复 / 调整」开头），不写内部实现细节与 docs/chore 类提交。头部「当前版本」也要跟着改。
 
 ## 构建（Android）
 - Flutter SDK 3.32.6 装在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）。**版本号同步四处**：pubspec.yaml / me_page.dart 副标题 / README.md / android/local.properties（后者被 gitignore，不入库）；versionCode 严格递增。
