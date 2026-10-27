@@ -6,7 +6,9 @@ import '../providers/app_state.dart';
 import '../utils/toast.dart';
 import 'film_page.dart';
 import 'me_page.dart';
+import 'site_page.dart';
 import 'star_page.dart';
+import 'sync_page.dart';
 
 /// 底部导航：首页 / 收藏 / 设置
 class MainPage extends StatefulWidget {
@@ -87,6 +89,39 @@ class _MainPageState extends State<MainPage> {
             icon: Icon(Icons.settings_outlined), label: '设置'),
       ];
 
+  /// 大屏（平板 / 桌面）左侧导航栏的快捷入口：视频源管理 + 设备同步。
+  ///
+  /// 这两项不属于底部 Tab，点了直接 push 对应页面（与设置页里的入口一致），
+  /// `selectedIndex` 不变，返回后仍停在原来的分栏。
+  Widget _buildRailShortcuts() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 6),
+          child: Divider(height: 1, indent: 18, endIndent: 18),
+        ),
+        _RailShortcut(
+          icon: Icons.dns_outlined,
+          label: '源管理',
+          tooltip: '视频源管理',
+          onTap: () => _push(const SitePage()),
+        ),
+        const SizedBox(height: 2),
+        _RailShortcut(
+          icon: Icons.sync_alt_rounded,
+          label: '设备同步',
+          tooltip: '设备同步',
+          onTap: () => _push(const SyncPage()),
+        ),
+      ],
+    );
+  }
+
+  void _push(Widget page) {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
@@ -114,6 +149,7 @@ class _MainPageState extends State<MainPage> {
                     onDestinationSelected: _onTap,
                     labelType: NavigationRailLabelType.all,
                     destinations: _railDestinations,
+                    trailing: _buildRailShortcuts(),
                   ),
                   const VerticalDivider(thickness: 1, width: 1),
                   Expanded(child: body),
@@ -127,6 +163,51 @@ class _MainPageState extends State<MainPage> {
                 onTap: _onTap,
                 items: _barItems,
               ),
+      ),
+    );
+  }
+}
+
+/// 大屏导航栏里的快捷入口按钮：图标 + 小字，风格对齐 `NavigationRailDestination`
+/// （图标在上、文字在下、整块可点），但点击只 push 页面、不改变选中项。
+class _RailShortcut extends StatelessWidget {
+  const _RailShortcut({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Tooltip(
+      message: tooltip ?? label,
+      waitDuration: const Duration(milliseconds: 600),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 22, color: color),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 10, color: color),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
