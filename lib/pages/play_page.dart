@@ -13,6 +13,7 @@ import '../services/video_network_stats.dart';
 import '../services/zy_database.dart';
 import '../utils/player_options.dart';
 import '../utils/toast.dart';
+import '../widgets/video_card.dart';
 
 /// 播放页：视频播放 + 画面比例/大小调节 + 选集 + 收藏 + 自动记录进度
 class PlayPage extends StatefulWidget {
@@ -49,6 +50,14 @@ class _PlayPageState extends State<PlayPage> {
 
   /// 竖屏时画面区域最多占屏幕高度的比例，防止 9:16 这类竖版比例把布局撑爆
   static const double _portraitMaxHeightRatio = 0.42;
+
+  /// 非全屏时切换成「左画面 + 右详情」两栏的宽度阈值。
+  ///
+  /// 840 的来历：横屏平板（1280×800、1080×810、1024×768）都远超它，而分栏后左栏
+  /// 至少要放得下 8 个等宽控制按钮 + 一条进度条，低于这个宽度就挤得没法看了。
+  /// 同时要求「宽 > 高」——竖屏平板（如 1024×1366）用原来的「上画面下详情」更合适，
+  /// 硬分栏只会把画面压小。
+  static const double _splitWideThreshold = 840;
 
   /// 桌面端小窗（模拟画中画）的缩放把手尺寸：边缘条宽 / 角块边长（逻辑像素）。
   static const double _kPipEdge = 8;
@@ -216,6 +225,12 @@ class _PlayPageState extends State<PlayPage> {
   int _sdkInt = 0;
 
   VideoDetail? _detail;
+
+  /// 详情请求是否还在进行中。
+  /// 宽屏右栏要区分「还在加载」（转圈）和「拿不到详情」（提示一句），
+  /// 否则源站不支持详情接口时会一直转圈。
+  bool _detailLoading = true;
+
   List<PlayItem> _playList = <PlayItem>[];
   String _title = '';
 
@@ -350,9 +365,17 @@ class _PlayPageState extends State<PlayPage> {
 
   Future<void> _loadDetail() async {
     final site = context.read<AppState>().siteOf(widget.siteKey);
-    if (site == null) return;
+    if (site == null) {
+      if (mounted) setState(() => _detailLoading = false);
+      return;
+    }
     final detail = await HttpService.instance.fetchDetail(site, widget.videoId);
-    if (!mounted || detail == null) return;
+    if (!mounted) return;
+    if (detail == null) {
+      // 源站不支持详情接口 / 请求失败：右栏显示一句提示，而不是一直转圈
+      setState(() => _detailLoading = false);
+      return;
+    }
     final list = <PlayItem>[];
     var num = 1;
     for (final raw in detail.m3u8List) {
@@ -386,6 +409,7 @@ class _PlayPageState extends State<PlayPage> {
     setState(() {
       _detail = detail;
       _playList = list;
+      _detailLoading = false;
     });
 
     // 不论是详情页进来还是从其他地方（如历史分栏）直接进来，开始播放都刷新历史 ts
@@ -992,6 +1016,16 @@ class _PlayPageState extends State<PlayPage> {
   /// pop 流程打架（重复出栈 / 直接把播放页也弹掉）。
   @override
   Widget build(BuildContext context) {
+    final screen = MediaQuery.sizeOf(context);
+    // 大屏分栏（判断条件与 `_buildPortraitBody` 内一致）：右栏头部已经有大号片名，
+    // 标题栏再重复一遍没意义，改成显示当前视频源，方便知道自己是在哪条线路上看片。
+    final wideSplit = !_fullscreen &&
+        !_inPip &&
+        screen.width >= _splitWideThreshold &&
+        screen.width > screen.height;
+    final siteName = wideSplit
+        ? (context.read<AppState>().siteOf(widget.siteKey)?.name ?? '播放')
+        : (_title.isEmpty ? '播放' : _title);
     return PopScope(
       // PiP 模式下不响应系统返回：避免退出 PiP 时直接把播放页（乃至 App）pop 掉；
       // 退 PiP 由用户点小窗展开 / 上滑关闭，原生侧会回传 onPipModeChanged(false)。
@@ -1008,7 +1042,7 @@ class _PlayPageState extends State<PlayPage> {
         backgroundColor: (_fullscreen || _inPip) ? Colors.black : null,
         appBar: (_fullscreen || _inPip)
             ? null
-            : AppBar(title: Text(_title.isEmpty ? '播放' : _title)),
+            : AppBar(title: Text(siteName)),
         body: _inPip
             ? _buildPipBody()
             : (_fullscreen ? _buildFullscreenBody() : _buildPortraitBody()),
@@ -1019,6 +1053,11 @@ class _PlayPageState extends State<PlayPage> {
   Widget _buildPortraitBody() {
     return LayoutBuilder(
       builder: (context, constraints) {
+        // 大屏（平板横屏 / 桌面窗口）走左右分栏，手机与竖屏平板保持原来的上下布局
+        if (constraints.maxWidth >= _splitWideThreshold &&
+            constraints.maxWidth > constraints.maxHeight) {
+          return _buildWideBody(constraints);
+        }
         final frame = _stageAreaSize(
           constraints.maxWidth,
           constraints.maxHeight * _portraitMaxHeightRatio,
@@ -1031,6 +1070,258 @@ class _PlayPageState extends State<PlayPage> {
           ],
         );
       },
+    );
+  }
+
+  /// 宽屏分栏：左栏「画面 + 控制面板」，右栏「影片详情 + 选集 + 播放信息」。
+  ///
+  /// 两栏各自撑满可用高度：左栏的画面在剩余空间里居中（16:9 片源在宽屏上通常
+  /// 先受高度约束，上下留黑边属正常），控制面板贴在画面下方；右栏头部固定
+  /// （封面 + 片名 + 元信息），下方内容独立滚动，翻简介不会把标题带走。
+  Widget _buildWideBody(BoxConstraints constraints) {
+    // 右栏宽度随屏宽增长，但夹在 300~420：太窄塞不下选集网格，太宽会把画面挤小。
+    final sideWidth =
+        (constraints.maxWidth * 0.30).clamp(300.0, 420.0).toDouble();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: Column(
+            children: [
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, inner) {
+                    final frame =
+                        _stageAreaSize(inner.maxWidth, inner.maxHeight);
+                    return ColoredBox(
+                      color: Colors.black,
+                      child: Center(child: _buildVideoArea(frame)),
+                    );
+                  },
+                ),
+              ),
+              _buildControlPanel(),
+            ],
+          ),
+        ),
+        VerticalDivider(width: 1, thickness: 1, color: _borderColor),
+        SizedBox(width: sideWidth, child: _buildWideSidePanel()),
+      ],
+    );
+  }
+
+  /// 宽屏右栏：头部（封面 / 片名 / 元信息）固定，其余内容滚动。
+  Widget _buildWideSidePanel() {
+    final detail = _detail;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+          child: _buildSideHeader(),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: detail == null
+              ? Center(
+                  child: _detailLoading
+                      ? const CircularProgressIndicator()
+                      : Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            '没有拿到影片详情\n可继续播放，或换个视频源试试',
+                            textAlign: TextAlign.center,
+                            style:
+                                TextStyle(fontSize: 12.5, color: _fgDim),
+                          ),
+                        ),
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (detail.director.isNotEmpty)
+                        _buildSideLine('导演', detail.director),
+                      if (detail.actor.isNotEmpty)
+                        _buildSideLine('演员', detail.actor),
+                      if (detail.des.isNotEmpty) ...[
+                        if (detail.director.isNotEmpty ||
+                            detail.actor.isNotEmpty)
+                          const SizedBox(height: 6),
+                        _buildSideSectionTitle('简介'),
+                        const SizedBox(height: 6),
+                        Text(
+                          detail.des,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            height: 1.65,
+                            color: _fgDim,
+                          ),
+                        ),
+                      ],
+                      if (_playList.length > 1) ...[
+                        const SizedBox(height: 18),
+                        _buildSideSectionTitle(
+                            '选集 · 共 ${_playList.length} 集'),
+                        const SizedBox(height: 10),
+                        _buildEpisodeWrap(),
+                      ],
+                      const SizedBox(height: 18),
+                      _buildPlaybackInfo(),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// 宽屏右栏头部：封面 + 片名 + 「正在播放第 N 集」+ 年份/地区/类型等。
+  Widget _buildSideHeader() {
+    final detail = _detail;
+    final name = (detail != null && detail.name.isNotEmpty)
+        ? detail.name
+        : (_title.isEmpty ? '播放' : _title);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final metas = <String>[
+      if (detail != null) ...[
+        detail.year,
+        detail.area,
+        detail.type,
+        detail.lang,
+        detail.note,
+      ],
+    ].where((e) => e.isNotEmpty).toList();
+    // 多集影片把「正在播放哪一集」单独标一行
+    final episode = (_playList.length > 1 && _title.isNotEmpty) ? _title : '';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: SizedBox(
+            width: 86,
+            height: 122,
+            child: PosterCover(
+              pic: detail?.pic ?? '',
+              isDark: isDark,
+              memCacheWidth: 300,
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                ),
+              ),
+              if (episode.isNotEmpty) ...[
+                const SizedBox(height: 5),
+                Text(
+                  '正在播放 · $episode',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _accent,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+              if (metas.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    for (final text in metas)
+                      Text(
+                        text,
+                        style: TextStyle(fontSize: 12, color: _fgDim),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 右栏「导演 / 演员」这类「标签 + 内容」的一行。
+  Widget _buildSideLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: RichText(
+        text: TextSpan(
+          style: TextStyle(fontSize: 12.5, height: 1.6, color: _fg),
+          children: [
+            TextSpan(text: '$label  ', style: TextStyle(color: _fgDim)),
+            TextSpan(text: value),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSideSectionTitle(String text) {
+    return Text(
+      text,
+      style: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w600,
+        color: _fgDim,
+      ),
+    );
+  }
+
+  /// 右栏选集：只显示序号（源站给的 label 都是「第 N 集」），比一行行文字紧凑得多。
+  Widget _buildEpisodeWrap() {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (var i = 0; i < _playList.length; i++)
+          _buildEpisodeChip(index: i, item: _playList[i]),
+      ],
+    );
+  }
+
+  Widget _buildEpisodeChip({required int index, required PlayItem item}) {
+    final selected = item.value == _currentUrl;
+    return InkWell(
+      // 当前集不用再点（点了也是重开同一个地址，还会打断播放）
+      onTap: selected ? null : () => _switchEpisode(item),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 44,
+        height: 34,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? _accent : Colors.transparent,
+          border: Border.all(color: selected ? _accent : _borderColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          '${index + 1}',
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? Colors.white : _fg,
+          ),
+        ),
+      ),
     );
   }
 
