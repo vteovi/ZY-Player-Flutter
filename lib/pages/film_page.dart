@@ -28,6 +28,10 @@ class FilmPageState extends State<FilmPage>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   static const _latestClass = VideoClass(tid: '0', name: '最新');
 
+  /// 宽屏阈值（与 MainPage 的 _wideThreshold 一致）：达到后把搜索框并进
+  /// AppBar 首行，与站点切换、资源统计同排，省下一整行竖向空间。
+  static const double _wideThreshold = 600;
+
   Site? _site;
   List<VideoClass> _classes = <VideoClass>[_latestClass];
 
@@ -203,50 +207,47 @@ class FilmPageState extends State<FilmPage>
   Widget build(BuildContext context) {
     super.build(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // 宽屏（平板 / 桌面）：首行够宽，把搜索框并进 AppBar，省出一整行
+    final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
     return Scaffold(
       appBar: AppBar(
-        // 「首页」文字已去掉，原位改放网站切换 + 资源统计
-        titleSpacing: 8,
-        title: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _pickSite,
-                icon: const Icon(Icons.language, size: 16),
-                label: Text(
-                  _site == null ? '未选择视频源' : '网站: ${_site!.name}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+        // 「首页」文字已去掉，原位改放网站切换 + 资源统计（宽屏再加搜索框）
+        titleSpacing: isWide ? 12 : 8,
+        toolbarHeight: isWide ? 60 : kToolbarHeight,
+        title: isWide
+            ? Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Row(
+                  children: [
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 260),
+                      child: _buildSiteButton(isDark),
+                    ),
+                    const SizedBox(width: 14),
+                    // 搜索框吃掉剩余宽度
+                    Expanded(
+                      child: _buildSearchBox(
+                        isDark,
+                        height: 40,
+                        inAppBar: true,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    _buildRecordCount(isDark),
+                  ],
                 ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor:
-                      isDark ? Colors.white70 : const Color(0xFF303133),
-                  side: BorderSide(
-                    color: isDark ? Colors.white24 : const Color(0xFFDCDFE6),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 36),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
+              )
+            : Row(
+                children: [
+                  Expanded(child: _buildSiteButton(isDark)),
+                  const SizedBox(width: 10),
+                  _buildRecordCount(isDark),
+                ],
               ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '共: $_activeRecordCount 资源',
-              style: TextStyle(
-                fontSize: 12,
-                color: isDark ? Colors.white70 : const Color(0xFF909399),
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
       ),
       body: Column(
         children: [
-          _buildSearchEntry(),
+          if (!isWide) _buildSearchEntry(),
           if (_site != null) _buildCategoryTabBar(),
           Expanded(
             child: _buildCategoryTabs(),
@@ -256,40 +257,89 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 搜索入口：点击进入独立搜索页（展示历史记录 + 搜索结果）
+  /// 站点切换按钮（AppBar 首行最左）
+  Widget _buildSiteButton(bool isDark) {
+    return OutlinedButton.icon(
+      onPressed: _pickSite,
+      icon: const Icon(Icons.language, size: 16),
+      label: Text(
+        _site == null ? '未选择视频源' : '网站: ${_site!.name}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: isDark ? Colors.white70 : const Color(0xFF303133),
+        side: BorderSide(
+          color: isDark ? Colors.white24 : const Color(0xFFDCDFE6),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        minimumSize: const Size(0, 36),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ),
+    );
+  }
+
+  /// 资源统计（AppBar 首行最右，宽屏时与搜索框同一行）
+  Widget _buildRecordCount(bool isDark) {
+    return Text(
+      '共: $_activeRecordCount 资源',
+      style: TextStyle(
+        fontSize: 12,
+        color: isDark ? Colors.white70 : const Color(0xFF909399),
+        fontWeight: FontWeight.w500,
+      ),
+    );
+  }
+
+  /// 搜索入口（手机）：独占一行，上下留白
   Widget _buildSearchEntry() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: InkWell(
-        onTap: _openSearch,
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            // 深色下用极暗面 + 描边，而不是把底色提亮（提亮整屏就发灰了）
-            color: isDark ? AppColors.darkSurface : Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: isDark ? Border.all(color: AppColors.darkOutline) : null,
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.search,
-                size: 20,
+      child: _buildSearchBox(Theme.of(context).brightness == Brightness.dark),
+    );
+  }
+
+  /// 搜索框本体：点击进入独立搜索页（展示历史记录 + 搜索结果）。
+  ///
+  /// [inAppBar] 为 true 时用于 AppBar 首行：浅色主题的 AppBar 本身就是纯白，
+  /// 白色填充会“看不见”，这里改用浅灰填充；深色主题沿用极暗面 + 描边。
+  Widget _buildSearchBox(
+    bool isDark, {
+    double height = 42,
+    bool inAppBar = false,
+  }) {
+    return InkWell(
+      onTap: _openSearch,
+      borderRadius: BorderRadius.circular(height / 2),
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          // 深色下用极暗面 + 描边，而不是把底色提亮（提亮整屏就发灰了）
+          color: isDark
+              ? AppColors.darkSurface
+              : (inAppBar ? AppColors.lightBg : Colors.white),
+          borderRadius: BorderRadius.circular(height / 2),
+          border: isDark ? Border.all(color: AppColors.darkOutline) : null,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.search,
+              size: 20,
+              color: isDark ? Colors.white54 : Colors.black54,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '搜索影片',
+              style: TextStyle(
                 color: isDark ? Colors.white54 : Colors.black54,
+                fontSize: 14,
               ),
-              const SizedBox(width: 8),
-              Text(
-                '搜索影片',
-                style: TextStyle(
-                  color: isDark ? Colors.white54 : Colors.black54,
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
