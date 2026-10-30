@@ -9,10 +9,12 @@ import android.net.Uri
 import android.provider.Settings
 import android.util.Rational
 import android.view.WindowManager
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugins.videoplayer.PlaybackConfig
+import java.io.File
 import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity() {
@@ -58,6 +60,20 @@ class MainActivity : FlutterActivity() {
                             call.argument<Boolean>("value") ?: false
                         result.success(null)
                     }
+                    // 版本更新：读已安装包的版本号做比较基准
+                    "getAppVersionName" -> result.success(getAppVersionName())
+                    "getAppVersionCode" -> result.success(getAppVersionCode())
+                    "canInstallPackages" -> result.success(canInstallPackages())
+                    "openInstallPermissionSettings" -> {
+                        openInstallPermissionSettings()
+                        result.success(null)
+                    }
+                    "installApk" -> result.success(
+                        installApk(call.argument<String>("path").orEmpty())
+                    )
+                    "openUrl" -> result.success(
+                        openUrl(call.argument<String>("url").orEmpty())
+                    )
                     else -> result.notImplemented()
                 }
             }
@@ -214,12 +230,102 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** 已安装包的版本名（如 1.17.0），读不到返回空串 */
+    private fun getAppVersionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (e: Exception) {
+        ""
+    }
+
+    /**
+     * 已安装包的 versionCode。
+     * API 28 起改用 longVersionCode（versionCode 是它的低 32 位），
+     * 避免高版本号被截断后比较出错。
+     */
+    private fun getAppVersionCode(): Int = try {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            info.longVersionCode.toInt()
+        } else {
+            @Suppress("DEPRECATION")
+            info.versionCode
+        }
+    } catch (e: Exception) {
+        0
+    }
+
+    /** 是否允许「安装未知来源应用」；Android 8.0 以下没有这个限制，恒为 true */
+    private fun canInstallPackages(): Boolean =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            packageManager.canRequestPackageInstalls()
+        } else {
+            true
+        }
+
+    /** 跳到本应用的「安装未知来源应用」授权页 */
+    private fun openInstallPermissionSettings() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return
+        try {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                    .setData(Uri.parse("package:$packageName"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            // 部分定制 ROM 没有这个页面，忽略
+        }
+    }
+
+    /**
+     * 用系统安装器打开已下载的 APK，返回状态字符串：
+     * `ok` / `no_file` / `no_permission` / `error`。
+     *
+     * 必须走 FileProvider 生成 content 协议的 URI：Android 7.0 起直接传
+     * file 协议的路径会抛 FileUriExposedException，安装界面根本不会出现。
+     * authority 与 AndroidManifest 里声明的保持一致：包名 + .fileprovider。
+     */
+    private fun installApk(path: String): String {
+        if (path.isBlank()) return "no_file"
+        val file = File(path)
+        if (!file.exists() || file.length() == 0L) return "no_file"
+        if (!canInstallPackages()) return "no_permission"
+        return try {
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(intent)
+            "ok"
+        } catch (e: Exception) {
+            "error"
+        }
+    }
+
+    /** 用系统浏览器打开链接；没有可用浏览器时返回 false */
+    private fun openUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        return try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     /**
      * 系统画中画状态变化：进入 / 退出时回传 Dart 侧，驱动 Flutter 隐藏 / 恢复全部 UI，
      * 让 PiP 窗口里只剩纯播放画面（详见 PlayPage._inPip）。
      */
-    override fun onPictureInPictureModeChanged(
-        isInPictureInPictureMode: Boolean,
+    override fun onPictureInPictureModeChanged(        isInPictureInPictureMode: Boolean,
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)

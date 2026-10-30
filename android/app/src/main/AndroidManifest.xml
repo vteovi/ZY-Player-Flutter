@@ -2,6 +2,9 @@
     <!-- 采集站接口与封面/视频地址多为 http，需放行明文流量 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 应用内更新：下载完安装包后调系统安装器。Android 8.0+ 还需用户在
+         「安装未知来源应用」里为本应用授权（运行时判断并引导）。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- 声明支持画中画（PiP）；required=false 表示不支持的设备也能正常安装运行 -->
     <uses-feature
         android:name="android.software.picture_in_picture"
@@ -42,6 +45,18 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- 应用内更新：把下载到缓存目录的 APK 以 content 协议交给系统安装器。
+             Android 7.0+ 不允许直接传 file 路径（FileUriExposedException）。
+             authority 与 MainActivity.installApk 里用的保持一致。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

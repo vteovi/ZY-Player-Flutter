@@ -334,6 +334,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 设置版本更新清单地址（留空则回到内置默认地址）。
+  Future<void> setUpdateUrl(String url) async {
+    final next = url.trim();
+    if (_config.updateUrl == next) return;
+    _config = _config.copyWith(updateUrl: next);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   // --------------------------------------------------------------------------
   // 收藏
   // --------------------------------------------------------------------------

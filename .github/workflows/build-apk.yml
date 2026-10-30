@@ -136,6 +136,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 额外放一份固定文件名的 arm64 包：应用内更新的 update.json 里
+          # apkUrl 指向 releases/latest/download/ZY-Player-arm64-latest.apk，
+          # 这样每次发版都不必再改清单里的下载地址。
+          ARM=$(ls dist/*-arm64.apk 2>/dev/null | head -n 1 || true)
+          if [ -n "$ARM" ]; then
+            cp "$ARM" dist/ZY-Player-arm64-latest.apk
+            echo "已生成固定名副本 dist/ZY-Player-arm64-latest.apk"
+          fi
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
           else

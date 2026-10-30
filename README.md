@@ -3,7 +3,7 @@
 由 [ZY-Player-APP](https://github.com/Hunlongyu/ZY-Player-APP)（uni-app / Vue）重写的 Flutter 版本，
 功能与数据结构与原版一一对应，同时把数据存储、网络层、播放器等全部换成 Flutter 生态的实现。
 
-- 版本：1.17.0+191（Android，`pubspec.yaml` / `lib/pages/me_page.dart` / `android/local.properties` 三处需同步）
+- 版本：1.18.0+192（Android：`pubspec.yaml` 与 `android/local.properties` 两处需同步；设置页显示的版本号由系统读取已安装包，无需手改）
 - 包名：`com.zy.player`
 - 支持平台：Android / iOS（Web 骨架同样生成，但视频播放以移动端为主）
 
@@ -111,6 +111,37 @@ debug keystore，于是「云端出的包」与「你本地出的包」签名不
 不配 Secret 也能正常出包，只是「云端包 ↔ 本地包」不能互相覆盖安装。
 
 > **注意**：Actions 页面只有代码已经 push 到 GitHub 之后才看得到这个工作流。
+
+## 应用内版本更新
+
+设置页 →「版本更新」会拉取远端清单 `update.json`，用**已安装包**的 `versionCode`
+（原生 `PackageManager` 读取）与清单比较；有新版本时列出更新内容，可直接在应用内
+下载并调起系统安装器。
+
+清单就是仓库根目录的 `update.json`：
+
+| 字段 | 说明 |
+|---|---|
+| `versionName` | 版本名，如 `1.18.0` |
+| `versionCode` | 版本号，必须与 `pubspec.yaml` 里 `+` 后面的数字一致 |
+| `apkUrl` | 安装包直链。默认指向 `releases/latest/download/ZY-Player-arm64-latest.apk`——CI 发版时会额外产出一份这个固定文件名的副本，所以这个地址**永远不用改** |
+| `notes` | 更新说明，用 `\n` 换行 |
+| `force` | `true` 时对话框不可取消（强制更新） |
+
+默认清单地址是 `https://raw.githubusercontent.com/vteovi/ZY-Player-Flutter/main/update.json`。
+仓库不公开、或直连 raw 不通时，在「检查更新失败」弹窗里点 **设置更新地址** 改成自己的地址即可
+（保存在本地配置里，可随时恢复默认）。
+
+**发版顺序（顺序很重要）**
+
+1. 改 `pubspec.yaml` 版本号（`versionCode` 必须比上一版大）；
+2. 打 tag 推送，让 Actions 出包并发 Release；
+3. **Release 生成之后**，再把 `update.json` 的 `versionName` / `versionCode` / `notes` 改成新版本并 push。
+
+第 3 步必须等 Release 存在——反过来先改清单，用户点更新会拿到 404。
+
+> Android 8.0+ 首次安装需要允许「安装未知来源应用」，应用会引导到授权页。
+> 云端包与本地包签名不一致时（一个 CI 构建、一个本机构建），系统会拒绝覆盖安装，需先卸载旧版——见上一节的签名配置。
 
 ## 实现说明
 

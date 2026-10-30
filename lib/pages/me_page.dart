@@ -9,6 +9,8 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/data_backup.dart';
 import '../services/list_cache.dart';
+import '../services/system_control.dart';
+import '../services/update_service.dart';
 import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import 'site_page.dart';
@@ -456,11 +458,7 @@ class MePage extends StatelessWidget {
             titleColor: const Color(0xFFFF4445),
             onTap: () => _resetApp(context),
           ),
-          _MenuItem(
-            title: '版本更新',
-            subtitle: '1.17.0',
-            onTap: () => showToast(context, '当前已是最新版本'),
-          ),
+          _VersionUpdateTile(onTap: () => _checkUpdate(context)),
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text(
@@ -471,6 +469,296 @@ class MePage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // 版本更新
+  // --------------------------------------------------------------------------
+
+  /// 防抖：检查 / 下载期间忽略重复点击。
+  static bool _updating = false;
+
+  /// 完整的更新流程：拉清单 → 比 versionCode → 提示 → 下载 → 调系统安装器。
+  ///
+  /// 关键点：比较基准取**已安装包**的 versionCode（原生 PackageManager），
+  /// 而不是写死在 Dart 里的字符串——那样一旦忘记同步就会误判「已是最新」。
+  Future<void> _checkUpdate(BuildContext context) async {
+    if (_updating) return;
+    if (!Platform.isAndroid) {
+      showToast(context, '桌面端请到发布页下载新版本');
+      return;
+    }
+
+    final appState = context.read<AppState>();
+    _updating = true;
+
+    final localCode = await SystemControl.appVersionCode();
+    final localName = await SystemControl.appVersionName();
+    if (!context.mounted) {
+      _updating = false;
+      return;
+    }
+
+    // 检查中对话框：网络差时最长要等 12 秒，没有反馈会被当成点了没反应。
+    // 用 PopScope 挡住返回键 —— 这个框只能由下面的代码 pop，
+    // 否则用户按返回关掉它之后，我们再 pop 就会把设置页也关掉。
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const PopScope(
+        canPop: false,
+        child: _CheckingDialog(),
+      ),
+    );
+
+    UpdateInfo? info;
+    String? error;
+    try {
+      info = await UpdateService.fetchManifest(appState.config.updateUrl);
+    } on UpdateException catch (e) {
+      error = e.message;
+    } catch (e) {
+      error = '检查更新失败：$e';
+    } finally {
+      _updating = false;
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // 关掉「检查中」
+
+    if (info == null) {
+      await _showUpdateError(context, error ?? '检查更新失败');
+      return;
+    }
+
+    if (!UpdateService.isNewer(info,
+        localCode: localCode, localName: localName)) {
+      showToast(
+        context,
+        localName.isEmpty ? '当前已是最新版本' : '当前已是最新版本 $localName',
+        success: true,
+      );
+      return;
+    }
+
+    await _showNewVersion(context, info, localName);
+  }
+
+  Future<void> _showNewVersion(
+    BuildContext context,
+    UpdateInfo info,
+    String localName,
+  ) async {
+    final localLabel = localName.isEmpty ? '未知' : localName;
+    final remoteLabel = info.versionCode > 0
+        ? '${info.versionName} (${info.versionCode})'
+        : info.versionName;
+
+    // 返回值：true = 立即更新，false / null = 稍后或浏览器打开
+    final action = await showDialog<String>(
+      context: context,
+      barrierDismissible: !info.force,
+      builder: (ctx) => AlertDialog(
+        title: Text('发现新版本 ${info.versionName}'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('当前版本：$localLabel',
+                  style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 4),
+              Text('最新版本：$remoteLabel',
+                  style: const TextStyle(fontSize: 13)),
+              if (info.notes.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                const Text('更新内容',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 6),
+                Text(info.notes, style: const TextStyle(fontSize: 13)),
+              ],
+              if (info.force) ...[
+                const SizedBox(height: 14),
+                const Text('此版本为必须更新，否则可能无法继续使用。',
+                    style: TextStyle(
+                        fontSize: 12, color: Color(0xFFFF4445))),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          if (!info.force)
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop('later'),
+              child: const Text('稍后'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop('browser'),
+            child: const Text('浏览器下载'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop('now'),
+            child: const Text('立即更新'),
+          ),
+        ],
+      ),
+    );
+
+    if (!context.mounted) return;
+    if (action == 'browser') {
+      // App 内下载不动时的兜底：交给系统浏览器，用户自己下载安装
+      final ok = await SystemControl.openUrl(info.apkUrl);
+      if (!context.mounted) return;
+      if (!ok) showToast(context, '打开浏览器失败，请长按复制下载地址');
+      return;
+    }
+    if (action != 'now') return;
+    await _downloadAndInstall(context, info);
+  }
+
+  Future<void> _downloadAndInstall(
+    BuildContext context,
+    UpdateInfo info,
+  ) async {
+    final progress = ValueNotifier<double>(0);
+    var cancelled = false;
+
+    // 进度框同样只能由下面的代码 pop（理由同上）
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: _DownloadDialog(
+          versionName: info.versionName,
+          progress: progress,
+          onCancel: () => cancelled = true,
+        ),
+      ),
+    );
+
+    File? file;
+    String? error;
+    try {
+      file = await UpdateService.download(
+        info,
+        onProgress: (p) {
+          if (!cancelled) progress.value = p;
+        },
+        isCancelled: () => cancelled,
+      );
+    } on UpdateException catch (e) {
+      error = e.message;
+    } catch (e) {
+      error = '下载失败：$e';
+    }
+
+    if (!context.mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // 关掉进度框
+
+    if (cancelled) return;
+    if (file == null) {
+      await _showUpdateError(context, error ?? '下载失败');
+      return;
+    }
+
+    final status = await SystemControl.installApk(file.path);
+    if (!context.mounted) return;
+
+    switch (status) {
+      case 'ok':
+        showToast(context, '已调起安装程序，请按提示完成安装', success: true);
+        break;
+      case 'no_permission':
+        final go = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('需要安装权限'),
+            content: const Text(
+              '系统还没允许本应用安装应用。请在接下来的设置页里'
+              '打开「允许安装应用 / 安装未知应用」，再回到设置页点一次「版本更新」。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('去设置'),
+              ),
+            ],
+          ),
+        );
+        if (go == true) await SystemControl.openInstallPermissionSettings();
+        break;
+      case 'no_file':
+        await _showUpdateError(context, '安装包文件不见了，请重新下载');
+        break;
+      default:
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('无法安装'),
+            content: const Text(
+              '已经下载完成，但系统没能打开安装界面。\n\n'
+              '最常见的原因是当前安装包的签名与手机上已装版本不一致——'
+              '比如一个是本地构建、一个是云端构建。这种情况请先卸载旧版再安装。',
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('知道了'),
+              ),
+            ],
+          ),
+        );
+        break;
+    }
+  }
+
+  Future<void> _showUpdateError(BuildContext context, String message) async {
+    final edit = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('检查更新失败'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('关闭'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('设置更新地址'),
+          ),
+        ],
+      ),
+    );
+    if (edit == true && context.mounted) {
+      await _editUpdateUrl(context);
+    }
+  }
+
+  Future<void> _editUpdateUrl(BuildContext context) async {
+    final appState = context.read<AppState>();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (_) => _UpdateUrlDialog(
+        initial: appState.config.updateUrl.isEmpty
+            ? UpdateService.defaultManifestUrl
+            : appState.config.updateUrl,
+      ),
+    );
+    if (url == null || !context.mounted) return;
+    await appState.setUpdateUrl(url == _UpdateUrlDialog.useDefault ? '' : url);
+    if (!context.mounted) return;
+    showToast(
+      context,
+      url == _UpdateUrlDialog.useDefault ? '已恢复默认更新地址' : '更新地址已保存',
+      success: true,
     );
   }
 }
@@ -494,6 +782,209 @@ class _MenuItem extends StatelessWidget {
       title: Text(title, style: TextStyle(color: titleColor)),
       subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
       onTap: onTap,
+    );
+  }
+}
+
+/// 「版本更新」入口：副标题显示**已安装包**的真实版本号。
+///
+/// 走原生 PackageManager 读取，不再在 Dart 里手写版本号——之前这里是硬编码
+/// 字符串，升版本时容易漏改，界面显示的版本会和实际 APK 对不上。
+class _VersionUpdateTile extends StatefulWidget {
+  final VoidCallback onTap;
+  const _VersionUpdateTile({required this.onTap});
+
+  @override
+  State<_VersionUpdateTile> createState() => _VersionUpdateTileState();
+}
+
+class _VersionUpdateTileState extends State<_VersionUpdateTile> {
+  String _label = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final name = await SystemControl.appVersionName();
+    final code = await SystemControl.appVersionCode();
+    if (!mounted) return;
+    setState(() {
+      if (name.isEmpty) {
+        _label = '点击检查更新';
+      } else if (code > 0) {
+        _label = '$name ($code) · 点击检查更新';
+      } else {
+        _label = '$name · 点击检查更新';
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      title: const Text('版本更新'),
+      subtitle: Text(
+        _label.isEmpty ? '读取版本号…' : _label,
+        style: const TextStyle(fontSize: 12),
+      ),
+      onTap: widget.onTap,
+    );
+  }
+}
+
+/// 检查中的提示框（网络差时最长要等 12 秒，必须给反馈）
+class _CheckingDialog extends StatelessWidget {
+  const _CheckingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return const AlertDialog(
+      content: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 14),
+          Text('正在检查更新…'),
+        ],
+      ),
+    );
+  }
+}
+
+/// 下载进度框。
+///
+/// 点「取消」只在内部置标记、**不自己 pop**：关闭对话框统一由调用方在
+/// 下载真正结束后做，否则会和调用方的 pop 叠加，多关一层把设置页也关掉。
+class _DownloadDialog extends StatefulWidget {
+  final String versionName;
+  final ValueNotifier<double> progress;
+  final VoidCallback onCancel;
+
+  const _DownloadDialog({
+    required this.versionName,
+    required this.progress,
+    required this.onCancel,
+  });
+
+  @override
+  State<_DownloadDialog> createState() => _DownloadDialogState();
+}
+
+class _DownloadDialogState extends State<_DownloadDialog> {
+  bool _cancelling = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('正在下载 ${widget.versionName}'),
+      content: ValueListenableBuilder<double>(
+        valueListenable: widget.progress,
+        builder: (context, value, _) {
+          final percent = (value * 100).clamp(0, 100).toStringAsFixed(0);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              LinearProgressIndicator(
+                // 服务器没给 Content-Length 时 value 恒为 0，此时用不确定进度条
+                value: value > 0 ? value : null,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                _cancelling
+                    ? '正在取消…'
+                    : (value > 0 ? '$percent%' : '正在连接…'),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+          );
+        },
+      ),
+      actions: [
+        TextButton(
+          onPressed: _cancelling
+              ? null
+              : () {
+                  setState(() => _cancelling = true);
+                  widget.onCancel();
+                },
+          child: const Text('取消'),
+        ),
+      ],
+    );
+  }
+}
+
+/// 编辑更新清单地址。留空 / 点「恢复默认」回到内置地址。
+class _UpdateUrlDialog extends StatefulWidget {
+  /// 返回这个哨兵值表示「恢复默认」，避免和用户输入的空串混淆
+  static const String useDefault = '__use_default__';
+
+  final String initial;
+
+  const _UpdateUrlDialog({required this.initial});
+
+  @override
+  State<_UpdateUrlDialog> createState() => _UpdateUrlDialogState();
+}
+
+class _UpdateUrlDialogState extends State<_UpdateUrlDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('更新清单地址'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '填写 update.json 的完整地址；点「恢复默认」使用内置地址。',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _controller,
+            minLines: 2,
+            maxLines: 4,
+            style: const TextStyle(fontSize: 12),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(_UpdateUrlDialog.useDefault),
+          child: const Text('恢复默认'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(_controller.text.trim()),
+          child: const Text('保存'),
+        ),
+      ],
     );
   }
 }

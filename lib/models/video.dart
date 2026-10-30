@@ -348,6 +348,11 @@ class AppConfig {
   /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
   final String externalPlayerPath;
 
+  /// 版本更新清单地址（`update.json`）。
+  /// 为空时用内置默认地址（`UpdateService.defaultManifestUrl`）。
+  /// 直连 GitHub raw 不通时，可改成自己的服务器或 Gitee raw 地址。
+  final String updateUrl;
+
   const AppConfig({
     this.id = 0,
     this.key = 'config',
@@ -360,6 +365,7 @@ class AppConfig {
     this.themeMode = 'system',
     this.landscapeCard = false,
     this.externalPlayerPath = '',
+    this.updateUrl = '',
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) {
@@ -382,6 +388,7 @@ class AppConfig {
       landscapeCard:
           json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
+      updateUrl: (json['updateUrl'] ?? '').toString(),
     );
   }
 
@@ -397,6 +404,7 @@ class AppConfig {
         'themeMode': themeMode,
         'landscapeCard': landscapeCard,
         'externalPlayerPath': externalPlayerPath,
+        'updateUrl': updateUrl,
       };
 
   AppConfig copyWith({
@@ -409,6 +417,7 @@ class AppConfig {
     String? themeMode,
     bool? landscapeCard,
     String? externalPlayerPath,
+    String? updateUrl,
   }) =>
       AppConfig(
         id: id,
@@ -422,5 +431,6 @@ class AppConfig {
         themeMode: themeMode ?? this.themeMode,
         landscapeCard: landscapeCard ?? this.landscapeCard,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
+        updateUrl: updateUrl ?? this.updateUrl,
       );
 }

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的共享路径白名单。
+  Dart 侧用 path_provider 的 getTemporaryDirectory() 保存更新包，
+  在 Android 上就是应用的 cache 目录，所以这里放行 cache 根目录。
+-->
+<paths>
+    <cache-path name="update_cache" path="." />
+    <external-cache-path name="update_external_cache" path="." />
+</paths>

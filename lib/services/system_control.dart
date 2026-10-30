@@ -231,6 +231,96 @@ class SystemControl {
     }
   }
 
+  /// 当前安装包的版本名（如 `1.17.0`）。读不到返回空串。
+  ///
+  /// 走原生 `PackageManager` 而不是 `package_info_plus`：
+  /// 版本更新的比较基准是**已安装包**的 versionCode，只能从系统取，
+  /// 写死在 Dart 里会随版本号同步遗漏而出错。
+  static Future<String> appVersionName() async {
+    if (!Platform.isAndroid) return '';
+    try {
+      return await _channel.invokeMethod<String>('getAppVersionName') ?? '';
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 当前安装包的 versionCode。读不到返回 0。
+  static Future<int> appVersionCode() async {
+    if (!Platform.isAndroid) return 0;
+    try {
+      return await _channel.invokeMethod<int>('getAppVersionCode') ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 是否已允许「安装未知来源应用」（Android 8.0+ 需要，低版本恒为 true）。
+  static Future<bool> canInstallPackages() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      return await _channel.invokeMethod<bool>('canInstallPackages') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 跳到系统的「安装未知来源应用」授权页。
+  static Future<void> openInstallPermissionSettings() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('openInstallPermissionSettings');
+    } catch (_) {
+      // 忽略：部分定制 ROM 没有这个页面
+    }
+  }
+
+  /// 调系统安装器安装本地 APK，返回原生侧状态码：
+  ///
+  /// - `ok`：已拉起系统安装界面
+  /// - `no_file`：文件不存在（下载没落盘）
+  /// - `no_permission`：没有「安装未知来源应用」权限，需要先去授权
+  /// - `error`：调起失败（常见原因是签名与已安装版本不一致）
+  ///
+  /// 用 `FileProvider` 生成 `content://` 而不是 `file://`：
+  /// Android 7.0+ 直接用 `file://` 会抛 `FileUriExposedException`。
+  static Future<String> installApk(String path) async {
+    if (!Platform.isAndroid) return 'error';
+    if (path.isEmpty) return 'no_file';
+    try {
+      final status = await _channel.invokeMethod<String>(
+        'installApk',
+        <String, dynamic>{'path': path},
+      );
+      return status ?? 'error';
+    } catch (_) {
+      return 'error';
+    }
+  }
+
+  /// 用系统浏览器打开链接（更新下载失败时的兜底：让用户自己去下载）。
+  static Future<bool> openUrl(String url) async {
+    if (url.isEmpty) return false;
+    if (Platform.isWindows) {
+      try {
+        await Process.start('explorer.exe', [url],
+            mode: ProcessStartMode.detached);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'openUrl',
+        <String, dynamic>{'url': url},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static double _clamp(double value) {
     if (value.isNaN) return 0;
     if (value < 0) return 0;

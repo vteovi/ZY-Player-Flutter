@@ -1,0 +1,7 @@
+{
+  "versionName": "1.17.0",
+  "versionCode": 191,
+  "apkUrl": "https://github.com/vteovi/ZY-Player-Flutter/releases/latest/download/ZY-Player-arm64-latest.apk",
+  "notes": "1. 平板 / 电脑大屏非全屏播放页改为左右分栏\n2. 首页搜索框并进首行，列表多出一排空间\n3. 全屏新增标题栏与播放倍速",
+  "force": false
+}

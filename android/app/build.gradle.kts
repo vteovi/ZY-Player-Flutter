@@ -50,6 +50,13 @@ android {
     }
 }
 
+dependencies {
+    // 应用内更新：用 FileProvider（androidx.core）把下载好的 APK 以 content 协议
+    // 交给系统安装器。虽然多半由其他依赖传递引入，但这里显式声明，
+    // 避免上游依赖变更后编译期找不到类。
+    implementation("androidx.core:core:1.13.1")
+}
+
 flutter {
     source = "../.."
 }
