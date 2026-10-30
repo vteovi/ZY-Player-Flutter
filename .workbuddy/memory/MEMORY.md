@@ -15,7 +15,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - 环境：`ANDROID_HOME=C:\Android\Sdk`、`JAVA_HOME=C:\Java\jdk-17` 须持久化；NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量 + in-process；release 关 lint/jetifier。
 - **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 包 ~68MB（`app-release.apk`）；纯 arm64 ~18MB 必须 `--split-per-abi`（`app-arm64-release.apk`）。首次出包 ~26 分钟，日志阶段性不刷属正常。
 - **GitHub Actions**（`.github/workflows/build-apk.yml`）：手动 `variant`=split/fat/both，或 push `v*` tag 自动构建并发 Release；产物收集在 `tools/ci-collect-apk.sh`（两批构建各调一次，放最后会被覆盖）。`runs-on` 已固定 `ubuntu-24.04`（ubuntu-latest 2026-10 起迁 Ubuntu 26）。actions 版本 2026-10 已升：checkout@v7 / setup-java@v6 / cache@v6 / upload-artifact@v7（Node20 弃用提示即因此）。
-- ⚠️ **release 用的是 debug 签名**（`build.gradle.kts` 无自有 keystore），runner 每次随机生成 → 云端包与本地包**签名不同、覆盖安装失败**；配 Secret `DEBUG_KEYSTORE_BASE64` 对齐。
+- **正式签名（2026-10-30 起，勿回退）**：release 不再用 debug 签名。密钥库在仓库外 `C:\Users\Administrator\keystores\zy-player-release.jks`（alias `zyplayer`、**口令见本地 `android/key.properties`**、RSA2048、10000 天），证书 `SHA-1 BF:DE:D8:E2:9F:5D:86:62:4F:D0:06:45:79:D1:9A:8F:C6:53:F7:7A`。`build.gradle.kts` 读 `android/key.properties`（gitignore）→ 有则用 release 配置、无则退化 debug；CI 由 Secret `KEYSTORE_BASE64` + `KEYSTORE_PASSWORD` 现场生成该文件。**keystore 绝不能入库**（仓库 public）。`./gradlew :app:signingReport --offline` 可验证各 variant 用哪把钥匙。⚠️ 换签名后老用户必须卸载重装一次。
 - Windows 构建插件需 `SeCreateSymbolicLinkPrivilege`（bat 已自动提权，需确认 UAC）。历史阻塞（一般不复发）：gradle 发行包被掐（腾讯镜像解压进 wrapper dists）、fvp 需 compileSdk 36、失败构建残留孤儿进程须 taskkill、必须非沙盒跑。
 
 ## 应用内版本更新（1.18.0 起，勿回退）

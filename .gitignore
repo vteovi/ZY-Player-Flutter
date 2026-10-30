@@ -58,6 +58,7 @@ unlinked_spec.ds
 **/android/**/GeneratedPluginRegistrant.java
 **/android/key.properties
 *.jks
+*.keystore
 
 # Build artifacts - 构建产物不入库（体积大，随时可从 build/ 目录重新获取）
 *.apk

@@ -89,26 +89,38 @@ git push origin v1.17.0
 
 会构建拆分包，并把 APK 直接挂到该 tag 的 Release 上（Release 已存在则覆盖附件）。
 
-**关于签名（可选，但建议配）**
+**关于签名**
 
-`android/app/build.gradle.kts` 的 release 目前用的是 **debug 签名**。云端 runner 每次都会重新随机生成一个
-debug keystore，于是「云端出的包」与「你本地出的包」签名不同 —— 手机上装过本地版本就覆盖不了，必须先卸载。
+release 包用**正式的签名密钥库**，不再用 debug 签名。这样「本机出的包」「云端出的包」「以后换电脑出的包」签名完全一致，可以互相覆盖安装。
 
-把本地密钥放进仓库 Secret 就能解决，这样云端包与本地包签名完全一致、可直接覆盖安装：
+- 密钥库本体放在**仓库之外**：`C:\Users\Administrator\keystores\zy-player-release.jks`（alias `zyplayer`，RSA 2048，有效期 10000 天）。**绝不提交进仓库**（本仓库是公开的）。
+- 证书指纹（换钥匙前请勿变更）：
 
-1. 本地转成 base64 文本（Windows PowerShell）：
+  ```
+  SHA-1:   BF:DE:D8:E2:9F:5D:86:62:4F:D0:06:45:79:D1:9A:8F:C6:53:F7:7A
+  SHA-256: 31:25:52:85:3C:6D:D9:A0:A7:CE:CE:2F:43:F9:C1:B8:15:A9:35:EA:45:99:12:FB:5F:96:93:82:72:E8:B9:67
+  ```
 
-   ```powershell
-   [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) | Set-Content dbg.txt -NoNewline
-   ```
+**本机构建**：Gradle 读 `android/key.properties`（已 gitignore）签名。换电脑时把密钥库和这个文件搬过去即可；文件不存在时自动退回 debug 签名。
 
-2. 仓库 → Settings → Secrets and variables → Actions → **New repository secret**
-   - 名称 `DEBUG_KEYSTORE_BASE64`，值粘贴 `dbg.txt` 全文
-   - （可选）名称 `DEBUG_KEYSTORE_PASSWORD`，值 `android`；不配则按默认 `android`
-3. 删掉本地的 `dbg.txt`，别提交进仓库。
-4. 重跑工作流：日志会打印签名 SHA1，可与本地 `keytool -list -v -keystore %USERPROFILE%\.android\debug.keystore` 比对。
+```properties
+storeFile=C:/Users/Administrator/keystores/zy-player-release.jks
+storePassword=******
+keyAlias=zyplayer
+keyPassword=******
+```
 
-不配 Secret 也能正常出包，只是「云端包 ↔ 本地包」不能互相覆盖安装。
+**云端构建**：配两个 Secret（仓库 → Settings → Secrets and variables → Actions）：
+
+| Secret | 值 |
+|---|---|
+| `KEYSTORE_BASE64` | `base64 -w0 zy-player-release.jks` 的输出（PowerShell：`[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\Users\Administrator\keystores\zy-player-release.jks"))`） |
+| `KEYSTORE_PASSWORD` | 密钥库口令 |
+
+工作流会现场生成 `android/key.properties` 再构建，日志里会打印 SHA1 便于比对。两个 Secret 都不配时退回 debug 签名，并输出一条 warning。
+
+> ⚠️ **签名一旦变更，所有已安装旧版（debug 签名）的用户必须卸载重装一次**，系统不允许签名不同的包互相覆盖。以后更换密钥库同理。
+> 密钥库文件与口令务必备份两份以上（丢了就永远无法给老用户推送更新）。
 
 > **注意**：Actions 页面只有代码已经 push 到 GitHub 之后才看得到这个工作流。
 

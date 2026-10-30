@@ -1,9 +1,35 @@
+import java.io.File
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+// release 签名配置来自 android/key.properties（已被 .gitignore 忽略）。
+// 本机构建与 GitHub Actions 走同一套逻辑：
+//   - 文件存在 -> 用正式 release 密钥库签名（云端由 Secret 现场生成这个文件）
+//   - 文件不存在 -> 退回 debug 签名，仅用于临时跑 `flutter run --release`
+// 这样本地出的包和云端出的包签名完全一致，可以互相覆盖安装。
+val keystorePropertiesFile = rootProject.file("key.properties")
+val hasReleaseKeystore = keystorePropertiesFile.exists()
+val keystoreProperties = Properties().apply {
+    if (hasReleaseKeystore) {
+        FileInputStream(keystorePropertiesFile).use { load(it) }
+    }
+}
+
+// 在 android {} 外面先把字符串取出来并构造成 File：properties 里存的是绝对路径
+// （正斜杠），这里显式 new File 避免相对路径解析歧义。
+val releaseStoreFile = if (hasReleaseKeystore) {
+    File(keystoreProperties.getProperty("storeFile"))
+} else null
+val releaseStorePassword = if (hasReleaseKeystore) keystoreProperties.getProperty("storePassword") else null
+val releaseKeyAlias = if (hasReleaseKeystore) keystoreProperties.getProperty("keyAlias") else null
+val releaseKeyPassword = if (hasReleaseKeystore) keystoreProperties.getProperty("keyPassword") else null
 
 android {
     namespace = "com.zy.player"
@@ -34,11 +60,25 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 有正式密钥库就用它；没有才退回 debug（debug 签名的包无法覆盖安装正式版）
+            signingConfig = if (hasReleaseKeystore) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

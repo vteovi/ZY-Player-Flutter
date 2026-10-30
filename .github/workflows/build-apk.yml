@@ -78,27 +78,28 @@ jobs:
       - name: 拉取依赖
         run: flutter pub get
 
-      # 可选步骤：配了密钥就用你的签名，没配则用 runner 自动生成的 debug 签名。
-      # 为什么要配：android/app/build.gradle.kts 的 release 用的是 debug 签名，
-      # 而 runner 每次构建都会随机生成一个新的 debug keystore —— 签名和你本地出的包
-      # 不一致，手机上装过本地包就覆盖不了（必须先卸载）。把本地
-      # ~/.android/debug.keystore 存进 Secret 后，云端出的包和本地包签名完全一致。
-      - name: 恢复签名密钥（可选，未配置则跳过）
+      # 正式 release 签名。需要两个 Secret（仓库 Settings -> Secrets -> Actions）：
+      #   KEYSTORE_BASE64    : 密钥库文件的 base64（本地 base64 -w0 zy-player-release.jks）
+      #   KEYSTORE_PASSWORD  : 密钥库口令（alias 固定 zyplayer，keypass 与 storepass 相同）
+      # 步骤会现场生成 android/key.properties，Gradle 据此签名；
+      # 两个 Secret 都不配时才退回 debug 签名（那种包无法覆盖安装正式版）。
+      - name: 配置 release 签名
         env:
-          KS_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           if [ -z "$KS_B64" ]; then
-            echo "::notice::未配置 DEBUG_KEYSTORE_BASE64，本次使用 runner 自动生成的 debug 签名（云端包与本地包签名不同，覆盖安装前需先卸载旧版）"
+            echo "::warning::未配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD，本次退回 runner 随机生成的 debug 签名（与正式版签名不同，无法覆盖安装）"
             exit 0
           fi
-          mkdir -p "$HOME/.android"
-          printf '%s' "$KS_B64" | base64 -d > "$HOME/.android/debug.keystore"
-          echo "已恢复自定义 debug.keystore，签名指纹："
-          keytool -list -v \
-            -keystore "$HOME/.android/debug.keystore" \
-            -storepass "${KS_PASS:-android}" 2>/dev/null \
-            | grep -E 'Alias name|SHA1:|SHA-1:' || true
+          mkdir -p "$RUNNER_TEMP/sign"
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/sign/release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=zyplayer\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/sign/release.jks" "$KS_PASS" "$KS_PASS" > android/key.properties
+          echo "已生成 android/key.properties，证书信息："
+          keytool -list -v -keystore "$RUNNER_TEMP/sign/release.jks" \
+            -storepass "$KS_PASS" -alias zyplayer 2>/dev/null \
+            | grep -E 'Alias name|SHA1:|SHA-1:|Valid from' || true
 
       - name: 确保 NDK 已安装
         run: |
