@@ -17,13 +17,23 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 6. **每次发版同步维护根目录 `更新记录.MD`**（2026-10-25 建立）：面向用户的更新记录，按版本**倒序**（最新在最上），每条写日期 + 用户能看懂的一句话说明（「新增 / 优化 / 修复 / 调整」开头），不写内部实现细节与 docs/chore 类提交。头部「当前版本」也要跟着改。
 
 ## 构建（Android）
-- Flutter SDK 3.32.6 装在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）。**版本号同步四处**：pubspec.yaml / me_page.dart 副标题 / README.md / android/local.properties（后者被 gitignore，不入库）；versionCode 严格递增。
+- Flutter SDK 3.32.6 装在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）。**版本号同步两处**：pubspec.yaml / android/local.properties（后者被 gitignore，不入库）+ README 顶部标注；versionCode 严格递增。**1.18.0 起 me_page 的设置页副标题改为经原生 `PackageManager` 读已安装包版本，不再手写**（少一处漏改点）。
 - 环境：`ANDROID_HOME=C:\Android\Sdk`、`JAVA_HOME=C:\Java\jdk-17` 须持久化；NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量 + in-process；release 关 lint/jetifier；`android/local.properties` 有 `sdk.dir` 兜底。
 - **ABI**：不带 `--split-per-abi` 时 `--target-platform android-arm64` 被忽略 → 实际 fat 包（~68MB，`app-release.apk`）；要纯 arm64（~18MB）必须加 `--split-per-abi`（输出 `app-arm64-release.apk`，bat 里拷贝源路径同步改）。首次出包 ~26 分钟，日志阶段性不刷属正常，别当卡死。
 - **GitHub Actions 云端构建**：`.github/workflows/build-apk.yml`（手动 `variant`=split/fat/both，或 push `v*` tag 自动构建并发 Release）；产物收集抽在 `tools/ci-collect-apk.sh`（按 ABI 重命名、幂等，两批构建各调一次）。⚠️ **release 用的是 debug 签名**（`android/app/build.gradle.kts` 里 `signingConfigs.getByName("debug")`，项目无自有 keystore），而 runner 每次随机生成 debug keystore → 云端包与本地包**签名不同、覆盖安装会失败**；配 Secret `DEBUG_KEYSTORE_BASE64`（本地 `~/.android/debug.keystore` 的 base64）即可对齐。CI 配置不进 APK，**不升版本号**。`.gitattributes` 已固定 `*.sh eol=lf`（CRLF 会让 Linux runner 的 bash 报错）。
 - **符号链接**：Windows 构建插件需 `SeCreateSymbolicLinkPrivilege`，否则报 `Building with plugins requires symlink support`；`build_apk.bat` 已带自动提权（需确认一次 UAC）。
 - 历史阻塞（已解决、一般不复现）：`services.gradle.org` 被掐 → 从 `mirrors.cloud.tencent.com/gradle/gradle-8.12-all.zip` 解压进 `~/.gradle/wrapper/dists/gradle-8.12-all/<hash>/`；`fvp` 需 compileSdk 36（gradle 自动装）；失败构建会残留孤儿进程须 `taskkill` 清掉；构建必须非沙盒跑（`dangerouslyDisableSandbox`）。
 - Windows 版：`tools/build_windows.bat`（管理员权限，同样交用户跑）。
+
+## 应用内版本更新（1.18.0 起，勿回退）
+- **原来是假的**：设置页「版本更新」的 `subtitle` 写死版本号、`onTap` 只 `showToast('当前已是最新版本')`。已换成真流程：拉远端 `update.json` → 用**已安装包**的 `versionCode`（原生 `PackageManager`）比较 → 有新版本弹窗（含更新说明）→ 应用内下载（带进度、可取消）→ `FileProvider` 交系统安装器。
+- 分层：`lib/utils/version.dart` 放纯逻辑（`UpdateInfo` / `UpdateException` / `VersionRules.isNewer`+`compareNames`，**不依赖 Flutter**，可用纯 `dart run` 验证）；`lib/services/update_service.dart` 只做网络（`fetchManifest` / `download`，`export` 前者）。
+- 版本比较只用 versionCode；拿不到才退化为版本名逐段数字比较（**不能比字符串**：`"1.10" < "1.9"`）。清单字段名做了兼容（`versionName`/`version`、`apkUrl`/`apk_url`/`url`、`notes`/`changelog`、`force`/`mandatory`），`version` 支持 `1.18.0+192` 写法。
+- 清单地址：默认 `https://raw.githubusercontent.com/vteovi/ZY-Player-Flutter/main/update.json`，可在 `AppConfig.updateUrl` 覆盖（检查失败弹窗里有「设置更新地址」入口，哨兵值 `__use_default__` 表示恢复默认）。**仓库若为 private，raw 与 release 资产都要登录，这条链路整条不通**，只能换公开托管。
+- 安装：`REQUEST_INSTALL_PACKAGES` 权限 + `androidx.core:core:1.13.1`（显式声明，FileProvider 在 core 里）+ manifest `<provider android:authorities="${applicationId}.fileprovider">` + `res/xml/file_paths.xml`（放行 cache 根目录，Dart 的 `getTemporaryDirectory()` 就是 cacheDir）。**必须 `content://`，`file://` 在 Android 7+ 直接 FileUriExposedException**。返回码 `ok`/`no_file`/`no_permission`/`error`；`no_permission` 引导到 `ACTION_MANAGE_UNKNOWN_APP_SOURCES`，`error` 提示多为签名不一致需先卸载。
+- 对话框必须 `PopScope(canPop:false)`：返回键能 pop 掉 DialogRoute，之后代码里再 `pop` 就会多关一层把设置页也关掉。取消下载只在内部置标记，**统一由调用方 pop**。
+- **发版顺序**：①改 pubspec 版本号 → ②打 `v*` tag 让 CI 出包发 Release（CI 会额外产一份固定名 `ZY-Player-arm64-latest.apk`）→ ③**Release 存在之后**再改 `update.json` 的 versionName/versionCode/notes 并 push。反了会让用户拿到 404。
+- 验证：`test/update_service_test.dart`（flutter_test，纯逻辑）。注意本机沙箱环境 `flutter test` 会报 `Unable to connect to flutter_tester process: WebSocketException`，这组纯逻辑可临时用 `dart run` 脚本验证。
 
 ## 视频源
 - 引擎只认 maccms json/xml（`Site.api` 须真实 URL）。`SourceImport._mapType` 收 0=xml / 1=json；type 3/4/7/15（SpiderJS/drpy）**现在会先从 ext.url（对象或 JSON 字符串）提取真实 maccms 端点再导入**，没有真实端点才跳过。`ext` 里常见 `{"url":"..."}`，也有直接是地址或数组。
