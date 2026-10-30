@@ -1050,6 +1050,15 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
+  /// 底部系统手势条（平板/全面屏底部那条「小白条」）占的高度。
+  ///
+  /// Android 15 起（targetSdk 35）窗口被强制画到手势条下面，`Scaffold` 的 body
+  /// 不会自动避让，贴底的按钮文字就被那条白杠压住。这里用 `viewPadding` 而非
+  /// `padding`：它不会被上层 `SafeArea` / `removePadding` 消耗掉，拿到的始终是
+  /// 系统原始内边距；本来就不含手势条的机型（非 edge-to-edge）这里返回 0，
+  /// 不会多留白。
+  double get _bottomInset => MediaQuery.viewPaddingOf(context).bottom;
+
   Widget _buildPortraitBody() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1100,7 +1109,12 @@ class _PlayPageState extends State<PlayPage> {
                   },
                 ),
               ),
-              _buildControlPanel(),
+              // 底部留出系统手势条的高度：否则「暂停/倍速/全屏」这排按钮的文字
+              // 会被小白条压住（横屏平板尤其明显）。
+              Padding(
+                padding: EdgeInsets.only(bottom: _bottomInset),
+                child: _buildControlPanel(),
+              ),
             ],
           ),
         ),
@@ -1137,7 +1151,8 @@ class _PlayPageState extends State<PlayPage> {
                         ),
                 )
               : SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                  // 底部同样避开手势条：最后那行「播放信息」原本会被小白条盖掉
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 24 + _bottomInset),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -2440,7 +2455,8 @@ class _PlayPageState extends State<PlayPage> {
       return const SizedBox.shrink();
     }
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+      // 底部避开系统手势条，否则最后一行会被小白条压住
+      padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + _bottomInset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
