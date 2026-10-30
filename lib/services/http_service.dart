@@ -100,7 +100,13 @@ class HttpService {
 
   static final HttpService instance = HttpService._();
 
-  static const Duration _timeout = Duration(seconds: 15);
+  /// 列表 / 分类 / 搜索接口的超时。
+  ///
+  /// 原来 15 秒：源站卡住时用户就要在列表底部干等 15 秒才看到「没有更多」。
+  /// 实测这批采集站正常响应在 1~9 秒（最慢的暴风首屏 8.9 秒），10 秒足够放行
+  /// 正常请求，又能把「死等」的上限压掉 5 秒。首页另有后台预取兜底，
+  /// 偶尔一次超时不会让用户停在底部。
+  static const Duration _timeout = Duration(seconds: 10);
 
   /// 详情请求专用超时：比列表短一些，配合下面的重试把最坏等待压住。
   static const Duration _detailTimeout = Duration(seconds: 12);
@@ -615,12 +621,23 @@ class HttpService {
   }
 
   /// 获取视频列表
-  Future<List<Video>> fetchList(Site site, {int pg = 1, String? tid}) async {
+  ///
+  /// [strict] = true 时**失败直接抛出**。首页翻页要靠它区分两种「空」：
+  /// 「这页确实没有更多了」（应消费页号、收尾）与「这页没取到」（应回退页号、
+  /// 挂出重试）。默认 false 保持原来的「失败返回空列表」，不影响其他调用方。
+  Future<List<Video>> fetchList(
+    Site site, {
+    int pg = 1,
+    String? tid,
+    bool strict = false,
+  }) async {
+    final params = <String, String>{'ac': 'videolist'};
+    if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
+    params['pg'] = '$pg';
+    final url = _apiUrl(site, params);
+    if (strict) return _videosFrom(await _load(url));
     try {
-      final params = <String, String>{'ac': 'videolist'};
-      if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
-      params['pg'] = '$pg';
-      return _videosFrom(await _load(_apiUrl(site, params)));
+      return _videosFrom(await _load(url));
     } catch (_) {
       return <Video>[];
     }

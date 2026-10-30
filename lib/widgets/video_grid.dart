@@ -12,7 +12,10 @@ import 'video_card.dart';
 /// 真实网格（[VideoGridView]）与骨架屏（[VideoGridSkeleton]）**共用这一份策略**，
 /// 保证占位卡和真实卡形状完全一致，数据到达时不会跳版。
 SliverGridDelegateWithMaxCrossAxisExtent videoGridDelegate(BuildContext context) {
-  final landscape = context.watch<AppState>().config.landscapeCard;
+  // ⚠️ 用 select 而不是 watch：watch 会让整个网格订阅 AppState 的**所有**变化
+  // （收藏、历史、同步状态……），任何一次 notifyListeners 都重建几十个卡片。
+  // 这里只关心「横版 / 竖版」这一个开关，用 select 之后其余状态变化与网格无关。
+  final landscape = context.select<AppState, bool>((s) => s.config.landscapeCard);
   if (landscape) {
     // 横版海报卡片：手机竖屏（<420）1 列，平板 2 列，更宽屏幕 3+ 列
     return const SliverGridDelegateWithMaxCrossAxisExtent(

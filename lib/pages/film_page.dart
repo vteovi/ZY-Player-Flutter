@@ -433,6 +433,10 @@ class CategoryTabState extends State<CategoryTab>
   bool _loadingMore = false;
   bool _showBackTop = false;
 
+  /// 上一次「加载更多」失败（多半是源站超时）。底部不再静默停住，
+  /// 而是给一个明确的重试入口 —— 否则用户只看到转圈消失、列表不动。
+  bool _loadMoreFailed = false;
+
   /// 连续「加载了但列表没增长」的次数：给「内容没撑满可视区就续拉」兜底，
   /// 防止对返回重复页的源站空转狂刷。
   int _noGrowStreak = 0;
@@ -473,7 +477,9 @@ class CategoryTabState extends State<CategoryTab>
     if (show != _showBackTop && mounted) {
       setState(() => _showBackTop = show);
     }
-    if (position.pixels >= position.maxScrollExtent - 400) {
+    // 提前 900px（约 3 行）就开始取下一页：源站单页往往要 1~9 秒，
+    // 等真正贴底再请求，用户必然在底部干等；提前发能让等待落在滚动过程中。
+    if (position.pixels >= position.maxScrollExtent - 900) {
       _loadMore();
     }
   }
@@ -519,7 +525,12 @@ class CategoryTabState extends State<CategoryTab>
     }
 
     // ② 后台刷新（不阻塞首屏）
-    await _refresh();
+    // 任何意外都不能让 _loading 永久停在 true —— 那会一直挂在骨架屏上。
+    try {
+      await _refresh();
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   /// 向源站重新拉取片单并写回缓存，最后用最新数据**合并**进显示。
@@ -543,7 +554,12 @@ class CategoryTabState extends State<CategoryTab>
     final fresh = <Video>[];
     var page = info.pagecount;
     while (page >= 1 && (fresh.isEmpty || fresh.length < 6)) {
-      await _appendPage(page, sink: fresh);
+      try {
+        await _appendPage(page, sink: fresh);
+      } catch (_) {
+        // 这一页没取到就收手，已经拿到的内容照常显示（不让整次刷新炸掉）
+        break;
+      }
       _loadedPages.add(page);
       page--;
     }
@@ -575,6 +591,41 @@ class CategoryTabState extends State<CategoryTab>
     // 触发，这里主动检查并续拉，修掉「打开就已经到底、上滑没反应」。
     _noGrowStreak = 0;
     _maybeContinueLoad();
+    // 首屏画出来之后，后台把后面两页也先取回来（不阻塞首屏）
+    unawaited(_warmUp(2));
+  }
+
+  /// 首屏内容出现后，后台**再补几页**，把「滑几个就撞上等网络」的空档填掉。
+  ///
+  /// 采集站一页只有 20 条（手机 2 列约 3 屏半），而单页响应实测 1~9 秒。
+  /// 用户滑到第 20 条时必然要等下一页 —— 这就是「滑出来几个视频就卡住十几秒」
+  /// 的来源。这里趁用户还在看第一页，把后面两页静默取回来，滑到那儿已经有内容。
+  ///
+  /// 静默：不显示底部转圈、不动 [_loading]；失败直接收手，页号不消耗，
+  /// 等用户真正滑到底时 [_loadMore] 还会再试一次。
+  Future<void> _warmUp(int pages) async {
+    for (var i = 0; i < pages; i++) {
+      if (!mounted || _loading || _loadingMore || _pageCount <= 1) return;
+      if (_loadMoreFailed) return;
+      _loadingMore = true;
+      final page = _pageCount;
+      _pageCount--;
+      var ok = true;
+      try {
+        await _appendPage(page);
+        _loadedPages.add(page);
+      } catch (_) {
+        _pageCount++; // 失败不消耗页号
+        ok = false;
+      }
+      _loadingMore = false;
+      if (!mounted) return;
+      if (!ok) return;
+      setState(() {});
+    }
+    // 补齐之后再看一眼：大屏列多时 3 页仍可能不够撑满一屏，
+    // 那种情况没有滚动事件，得靠这里主动续拉。
+    if (mounted) _maybeContinueLoad();
   }
 
   /// 取某一页的片单并写入缓存。
@@ -590,6 +641,7 @@ class CategoryTabState extends State<CategoryTab>
       widget.site,
       pg: page,
       tid: widget.videoClass.tid,
+      strict: true, // 失败要抛出，好让调用方区分「没更多」和「没取到」
     );
     await ListCache.putPage(
       widget.site.key,
@@ -619,27 +671,35 @@ class CategoryTabState extends State<CategoryTab>
   Future<void> _loadMore() async {
     if (_loadingMore || _loading || _pageCount <= 1) return;
     _loadingMore = true;
+    if (_loadMoreFailed && mounted) {
+      setState(() => _loadMoreFailed = false);
+    }
     final before = _videos.length;
     _pageCount--;
+    var ok = true;
     try {
       await _appendPage(_pageCount);
       _loadedPages.add(_pageCount);
     } catch (e) {
       _pageCount++; // 回退，待下次滚动重试本页
-      if (mounted) setState(() {});
-      return; // finally 仍会复位 _loadingMore
-    } finally {
-      if (mounted) {
-        setState(() => _loadingMore = false);
-      } else {
-        _loadingMore = false;
-      }
+      ok = false;
     }
-    if (!mounted) return;
+    if (!mounted) {
+      _loadingMore = false;
+      return;
+    }
+    setState(() {
+      _loadingMore = false;
+      // 失败不静默：底部给「点击重试」，否则用户只看到转圈消失、列表不动
+      _loadMoreFailed = !ok;
+    });
+    if (!ok) return;
     // 成功且列表增长、仍贴底（或内容还没撑满可视区）：自动续拉，
     // 免去「往下滑一下再往上滑一下」，也修掉横屏下根本滑不动导致的卡死
     _noGrowStreak = _videos.length > before ? 0 : _noGrowStreak + 1;
     _maybeContinueLoad();
+    // 再往后垫一页：始终保持「比用户领先一页」，下一屏就不会又停在底部干等
+    unawaited(_warmUp(1));
   }
 
   /// 内容没撑满可视区时主动续拉。
@@ -659,7 +719,7 @@ class CategoryTabState extends State<CategoryTab>
       if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
       final notScrollable = pos.maxScrollExtent <= 0;
-      final atBottom = pos.pixels >= pos.maxScrollExtent - 400;
+      final atBottom = pos.pixels >= pos.maxScrollExtent - 900;
       if (!notScrollable && !atBottom) return;
       _loadMore();
     });
@@ -703,7 +763,44 @@ class CategoryTabState extends State<CategoryTab>
               child: const Icon(Icons.arrow_upward),
             ),
           ),
+        // 翻页失败：底部浮一条可点重试的提示。源站偶发超时时，
+        // 原来的「转圈消失、列表不动」看不出发生了什么，用户只能干等。
+        // 已翻到第 1 页（没有更早的页可取了）就不再提示重试，避免点了没反应。
+        if (_loadMoreFailed && !_loadingMore && _pageCount > 1)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 16,
+            child: Center(child: _buildRetryTip()),
+          ),
       ],
+    );
+  }
+
+  Widget _buildRetryTip() {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.inverseSurface,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 3,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: _loadMore,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.refresh, size: 18, color: scheme.onInverseSurface),
+              const SizedBox(width: 6),
+              Text(
+                '加载失败，点击重试',
+                style: TextStyle(fontSize: 13, color: scheme.onInverseSurface),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
