@@ -487,41 +487,55 @@ class _DetailPageState extends State<DetailPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            detail.name,
-            style:
-                const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          // 文字区支持**自由选中**：长按选中一个词，再拖两端手柄扩到任意长度，
+          // 松手弹出「复制」；桌面端可直接鼠标拖选。片名 / 年份地区 / 导演 /
+          // 演员 / 简介都在可选中范围内。
+          //
+          // 有两个按钮留在 SelectionArea 外面：选择手势（长按拖动）和按钮点击
+          // 需要在手势竞技场里抢，混在一起容易出现「长按按钮变成选文字」。
+          SelectionArea(
+            contextMenuBuilder: _buildSelectionToolbar,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  detail.name,
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    for (final text in [
+                      detail.area,
+                      detail.lang,
+                      detail.type,
+                      detail.year,
+                      detail.note,
+                    ])
+                      if (text.isNotEmpty) Text(text),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (detail.director.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('导演: ${detail.director}'),
+                  ),
+                if (detail.actor.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('演员: ${detail.actor}'),
+                  ),
+                if (detail.des.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text('简介: ${detail.des}'),
+                  ),
+              ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            children: [
-              for (final text in [
-                detail.area,
-                detail.lang,
-                detail.type,
-                detail.year,
-                detail.note,
-              ])
-                if (text.isNotEmpty) Text(text),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (detail.director.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text('导演: ${detail.director}'),
-            ),
-          if (detail.actor.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text('演员: ${detail.actor}'),
-            ),
-          if (detail.des.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text('简介: ${detail.des}'),
-            ),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -544,6 +558,31 @@ class _DetailPageState extends State<DetailPage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// 选中文字后弹出的菜单，把系统默认的英文 Copy / Select all 换成中文。
+  ///
+  /// 没有引入 `flutter_localizations`：那会把几十种语言的资源全打进 APK
+  /// （包体明显变大），而这里只需要两个按钮的文案。其余 `ContextMenuButtonType`
+  /// （比如系统自带的其他项）原样保留，不丢功能。
+  Widget _buildSelectionToolbar(
+    BuildContext context,
+    SelectableRegionState state,
+  ) {
+    final items = <ContextMenuButtonItem>[
+      for (final item in state.contextMenuButtonItems)
+        switch (item.type) {
+          ContextMenuButtonType.copy =>
+            ContextMenuButtonItem(label: '复制', onPressed: item.onPressed),
+          ContextMenuButtonType.selectAll =>
+            ContextMenuButtonItem(label: '全选', onPressed: item.onPressed),
+          _ => item,
+        },
+    ];
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: state.contextMenuAnchors,
+      buttonItems: items,
     );
   }
 
