@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# CI 用的 shell 脚本必须固定 LF：CRLF 会让 Linux runner 上的 bash 报
+# $'\r': command not found
+*.sh text eol=lf

@@ -65,6 +65,53 @@ flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
 
 环境：Flutter 3.32.6 / Dart 3.8.1。
 
+## 在 GitHub 上构建 APK（GitHub Actions）
+
+云端构建由 `.github/workflows/build-apk.yml` 负责，不需要本地装 Flutter / JDK / Android SDK。
+
+**方式一：手动触发**
+
+仓库页面 → **Actions** → 左侧 **Build APK** → **Run workflow** → 选「打包方式」→ 运行。
+首次约 15~25 分钟（之后命中 Gradle 缓存会快很多），跑完在该次运行页底部的 **Artifacts** 下载。
+
+| 打包方式 | 产物 |
+|---|---|
+| `split`（默认，推荐） | arm64 / armv7 / x86_64 三个按 ABI 拆分的包 |
+| `fat` | 三合一万能包（约 69 MB，一份装所有机型） |
+| `both` | 两种都出，耗时约翻倍 |
+
+**方式二：推 tag 自动构建并发布 Release**
+
+```bash
+git tag v1.17.0
+git push origin v1.17.0
+```
+
+会构建拆分包，并把 APK 直接挂到该 tag 的 Release 上（Release 已存在则覆盖附件）。
+
+**关于签名（可选，但建议配）**
+
+`android/app/build.gradle.kts` 的 release 目前用的是 **debug 签名**。云端 runner 每次都会重新随机生成一个
+debug keystore，于是「云端出的包」与「你本地出的包」签名不同 —— 手机上装过本地版本就覆盖不了，必须先卸载。
+
+把本地密钥放进仓库 Secret 就能解决，这样云端包与本地包签名完全一致、可直接覆盖安装：
+
+1. 本地转成 base64 文本（Windows PowerShell）：
+
+   ```powershell
+   [Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.android\debug.keystore")) | Set-Content dbg.txt -NoNewline
+   ```
+
+2. 仓库 → Settings → Secrets and variables → Actions → **New repository secret**
+   - 名称 `DEBUG_KEYSTORE_BASE64`，值粘贴 `dbg.txt` 全文
+   - （可选）名称 `DEBUG_KEYSTORE_PASSWORD`，值 `android`；不配则按默认 `android`
+3. 删掉本地的 `dbg.txt`，别提交进仓库。
+4. 重跑工作流：日志会打印签名 SHA1，可与本地 `keytool -list -v -keystore %USERPROFILE%\.android\debug.keystore` 比对。
+
+不配 Secret 也能正常出包，只是「云端包 ↔ 本地包」不能互相覆盖安装。
+
+> **注意**：Actions 页面只有代码已经 push 到 GitHub 之后才看得到这个工作流。
+
 ## 实现说明
 
 - **Android 明文流量**：采集站与视频地址大量使用 `http`，已在
