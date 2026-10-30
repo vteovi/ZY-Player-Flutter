@@ -34,12 +34,14 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # 固定到 24.04：ubuntu-latest 自 2026-10 起陆续迁到 Ubuntu 26，
+    # 镜像里 SDK/NDK 的路径与预装包可能变化，容易突然构建失败。固定版本 = 可复现。
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 读取版本号（pubspec.yaml）
         id: ver
@@ -51,7 +53,7 @@ jobs:
           echo "code=${V##*+}" >> "$GITHUB_OUTPUT"
 
       - name: 安装 JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
@@ -64,7 +66,7 @@ jobs:
           cache: true
 
       - name: 缓存 Gradle 依赖
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -125,7 +127,7 @@ jobs:
         run: bash tools/ci-collect-apk.sh "${{ steps.ver.outputs.name }}"
 
       - name: 上传产物（可在 Actions 页面下载）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ZY-Player-v${{ steps.ver.outputs.name }}-${{ steps.ver.outputs.code }}
           path: dist/*.apk

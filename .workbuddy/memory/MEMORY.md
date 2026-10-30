@@ -1,99 +1,63 @@
 # 项目长期记忆：ZY Player Flutter
 
-## 定位 / 技术选型
-uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/源管理/设置），支持 maccms json/xml 采集站。
-- 状态 provider + ChangeNotifier（全局 `AppState`）；存储 shared_preferences，键 `ZY-{db}-DB`（key 列表）/ `{db}-{key}`（单条）
-- 网络 http；XML 用 xml 包；播放 video_player（Android=fork ExoPlayer 原生 HLS）；封面 cached_network_image（Windows 需 sqflite_common_ffi）
-- 包名 `com.zy.player` / minSdk 24 / targetSdk 35 / v2 签名
+uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/源管理/设置），引擎只认 maccms json/xml 采集站。provider + ChangeNotifier（全局 `AppState`）；shared_preferences 存储（键 `ZY-{db}-DB` / `{db}-{key}`）；包名 `com.zy.player`、minSdk 24、targetSdk 35。日期细节见同目录日誌。
 
 ## ⚠️ 协作纪律（用户明确要求，勿破）
-1. **构建（APK / Windows 包）一律由用户跑**，助手只改代码 + 静态检查。用户原话（2026-10-06）：「你不进行构建，构建 APK 交给我，你只负责写代码」。交付格式 = 改动清单 + 静态自检结论 + 供用户执行的构建命令。
-2. **助手只 `git commit` 本地，绝不 `git push`**（2026-10-01：「每次改完，快照还是要你自己来创建一个快照」）。改完必须 `git add` + `git commit` 落本地快照，确认 `git status --porcelain` 为空再汇报；推送命令只附给用户自己执行。
-3. **绝不主动重试网络操作**（GitHub 常连接重置，push / ls-remote 会长时间挂起）。
-   - 2026-10-30 实测：本机**直连 github.com:443 不通**（DNS 正常解析到 20.205.243.166，TCP 21s 超时，沙箱内外一样）；沙箱代理 `127.0.0.1:64776` 只放行 `api.github.com`(200) / `codeload.github.com`(301)，对 `github.com` 返回 502。本机无 SSH key、无 7890/10809 之类本地代理端口。
-   - 结论：**push 只能由用户在自己开好代理的环境里执行**；助手若被要求推送，先跑一次 `git push`，失败就把命令交给用户，别反复试。
+1. **构建（APK / Windows 包）一律由用户跑**（2026-10-06 原话：「你不进行构建…你只负责写代码」）。交付 = 改动清单 + 静态自检结论 + 给用户执行的命令。
+2. **只 `git commit` 本地，绝不 `git push`**（2026-10-01）。改完 `git add` + `commit`，确认 `git status --porcelain` 为空再汇报；推送命令只附给用户。
+3. **绝不主动重试网络操作**。2026-10-30 实测本机直连 `github.com:443` 不通（DNS 正常、TCP 21s 超时），沙箱代理只放行 `api.github.com`/`codeload.github.com`，无 SSH key、无本地代理端口。push 跑一次失败就把命令交用户。
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
-5. **改完照常：静态校验 + bump 版本号**（四处同步，见下）。不编译发现不了错误，改引用/结构后务必人肉复查符号（历史上误删过仍在用的 import）。
-6. **每次发版同步维护根目录 `更新记录.MD`**（2026-10-25 建立）：面向用户的更新记录，按版本**倒序**（最新在最上），每条写日期 + 用户能看懂的一句话说明（「新增 / 优化 / 修复 / 调整」开头），不写内部实现细节与 docs/chore 类提交。头部「当前版本」也要跟着改。
+5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
+6. 每次发版同步维护根目录 `更新记录.MD`：按版本**倒序**，每条「日期 + 新增/优化/修复/调整 + 一句人话」，不写实现细节与 chore/docs 提交；头部「当前版本」一起改。
 
-## 构建（Android）
-- Flutter SDK 3.32.6 装在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）。**版本号同步两处**：pubspec.yaml / android/local.properties（后者被 gitignore，不入库）+ README 顶部标注；versionCode 严格递增。**1.18.0 起 me_page 的设置页副标题改为经原生 `PackageManager` 读已安装包版本，不再手写**（少一处漏改点）。
-- 环境：`ANDROID_HOME=C:\Android\Sdk`、`JAVA_HOME=C:\Java\jdk-17` 须持久化；NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量 + in-process；release 关 lint/jetifier；`android/local.properties` 有 `sdk.dir` 兜底。
-- **ABI**：不带 `--split-per-abi` 时 `--target-platform android-arm64` 被忽略 → 实际 fat 包（~68MB，`app-release.apk`）；要纯 arm64（~18MB）必须加 `--split-per-abi`（输出 `app-arm64-release.apk`，bat 里拷贝源路径同步改）。首次出包 ~26 分钟，日志阶段性不刷属正常，别当卡死。
-- **GitHub Actions 云端构建**：`.github/workflows/build-apk.yml`（手动 `variant`=split/fat/both，或 push `v*` tag 自动构建并发 Release）；产物收集抽在 `tools/ci-collect-apk.sh`（按 ABI 重命名、幂等，两批构建各调一次）。⚠️ **release 用的是 debug 签名**（`android/app/build.gradle.kts` 里 `signingConfigs.getByName("debug")`，项目无自有 keystore），而 runner 每次随机生成 debug keystore → 云端包与本地包**签名不同、覆盖安装会失败**；配 Secret `DEBUG_KEYSTORE_BASE64`（本地 `~/.android/debug.keystore` 的 base64）即可对齐。CI 配置不进 APK，**不升版本号**。`.gitattributes` 已固定 `*.sh eol=lf`（CRLF 会让 Linux runner 的 bash 报错）。
-- **符号链接**：Windows 构建插件需 `SeCreateSymbolicLinkPrivilege`，否则报 `Building with plugins requires symlink support`；`build_apk.bat` 已带自动提权（需确认一次 UAC）。
-- 历史阻塞（已解决、一般不复现）：`services.gradle.org` 被掐 → 从 `mirrors.cloud.tencent.com/gradle/gradle-8.12-all.zip` 解压进 `~/.gradle/wrapper/dists/gradle-8.12-all/<hash>/`；`fvp` 需 compileSdk 36（gradle 自动装）；失败构建会残留孤儿进程须 `taskkill` 清掉；构建必须非沙盒跑（`dangerouslyDisableSandbox`）。
-- Windows 版：`tools/build_windows.bat`（管理员权限，同样交用户跑）。
+## 构建
+- Flutter 3.32.6 在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）；`tools/build_apk_all_abi.bat` 一次出三 ABI。**版本号只需同步两处**：`pubspec.yaml` + `android/local.properties`（被 gitignore，不入库）；设置页副标题 1.18.0 起走原生 `PackageManager`，不再手写。
+- 环境：`ANDROID_HOME=C:\Android\Sdk`、`JAVA_HOME=C:\Java\jdk-17` 须持久化；NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量 + in-process；release 关 lint/jetifier。
+- **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 包 ~68MB（`app-release.apk`）；纯 arm64 ~18MB 必须 `--split-per-abi`（`app-arm64-release.apk`）。首次出包 ~26 分钟，日志阶段性不刷属正常。
+- **GitHub Actions**（`.github/workflows/build-apk.yml`）：手动 `variant`=split/fat/both，或 push `v*` tag 自动构建并发 Release；产物收集在 `tools/ci-collect-apk.sh`（两批构建各调一次，放最后会被覆盖）。`runs-on` 已固定 `ubuntu-24.04`（ubuntu-latest 2026-10 起迁 Ubuntu 26）。actions 版本 2026-10 已升：checkout@v7 / setup-java@v6 / cache@v6 / upload-artifact@v7（Node20 弃用提示即因此）。
+- ⚠️ **release 用的是 debug 签名**（`build.gradle.kts` 无自有 keystore），runner 每次随机生成 → 云端包与本地包**签名不同、覆盖安装失败**；配 Secret `DEBUG_KEYSTORE_BASE64` 对齐。
+- Windows 构建插件需 `SeCreateSymbolicLinkPrivilege`（bat 已自动提权，需确认 UAC）。历史阻塞（一般不复发）：gradle 发行包被掐（腾讯镜像解压进 wrapper dists）、fvp 需 compileSdk 36、失败构建残留孤儿进程须 taskkill、必须非沙盒跑。
 
 ## 应用内版本更新（1.18.0 起，勿回退）
-- **原来是假的**：设置页「版本更新」的 `subtitle` 写死版本号、`onTap` 只 `showToast('当前已是最新版本')`。已换成真流程：拉远端 `update.json` → 用**已安装包**的 `versionCode`（原生 `PackageManager`）比较 → 有新版本弹窗（含更新说明）→ 应用内下载（带进度、可取消）→ `FileProvider` 交系统安装器。
-- 分层：`lib/utils/version.dart` 放纯逻辑（`UpdateInfo` / `UpdateException` / `VersionRules.isNewer`+`compareNames`，**不依赖 Flutter**，可用纯 `dart run` 验证）；`lib/services/update_service.dart` 只做网络（`fetchManifest` / `download`，`export` 前者）。
-- 版本比较只用 versionCode；拿不到才退化为版本名逐段数字比较（**不能比字符串**：`"1.10" < "1.9"`）。清单字段名做了兼容（`versionName`/`version`、`apkUrl`/`apk_url`/`url`、`notes`/`changelog`、`force`/`mandatory`），`version` 支持 `1.18.0+192` 写法。
-- 清单地址：默认 `https://raw.githubusercontent.com/vteovi/ZY-Player-Flutter/main/update.json`，可在 `AppConfig.updateUrl` 覆盖（检查失败弹窗里有「设置更新地址」入口，哨兵值 `__use_default__` 表示恢复默认）。**仓库若为 private，raw 与 release 资产都要登录，这条链路整条不通**，只能换公开托管。
-- 安装：`REQUEST_INSTALL_PACKAGES` 权限 + `androidx.core:core:1.13.1`（显式声明，FileProvider 在 core 里）+ manifest `<provider android:authorities="${applicationId}.fileprovider">` + `res/xml/file_paths.xml`（放行 cache 根目录，Dart 的 `getTemporaryDirectory()` 就是 cacheDir）。**必须 `content://`，`file://` 在 Android 7+ 直接 FileUriExposedException**。返回码 `ok`/`no_file`/`no_permission`/`error`；`no_permission` 引导到 `ACTION_MANAGE_UNKNOWN_APP_SOURCES`，`error` 提示多为签名不一致需先卸载。
-- 对话框必须 `PopScope(canPop:false)`：返回键能 pop 掉 DialogRoute，之后代码里再 `pop` 就会多关一层把设置页也关掉。取消下载只在内部置标记，**统一由调用方 pop**。
-- **发版顺序**：①改 pubspec 版本号 → ②打 `v*` tag 让 CI 出包发 Release（CI 会额外产一份固定名 `ZY-Player-arm64-latest.apk`）→ ③**Release 存在之后**再改 `update.json` 的 versionName/versionCode/notes 并 push。反了会让用户拿到 404。
-- 验证：`test/update_service_test.dart`（flutter_test，纯逻辑）。注意本机沙箱环境 `flutter test` 会报 `Unable to connect to flutter_tester process: WebSocketException`，这组纯逻辑可临时用 `dart run` 脚本验证。
+- 真流程：拉远端 `update.json` → 用**已安装包**的 versionCode（原生 `PackageManager`）比较 → 弹窗含更新说明 → 应用内下载（进度可取消）→ `FileProvider` 交系统安装器。
+- 分层：`lib/utils/version.dart` 纯逻辑（**不依赖 Flutter**，可用 `dart run` 验证，因本机 `flutter test` 起不了 flutter_tester）；`lib/services/update_service.dart` 只做网络。
+- 只用 versionCode 比较，退化时按版本名逐段数字比（**不能比字符串**：`"1.10" < "1.9"`）。清单字段做了兼容（versionName/version、apkUrl/apk_url/url、notes/changelog、force/mandatory）。默认地址 raw.githubusercontent.com 占位，`AppConfig.updateUrl` 可覆盖（哨兵 `__use_default__` 恢复默认）；仓库若 private 整条链路不通。
+- 安装要件：`REQUEST_INSTALL_PACKAGES` + 显式 `androidx.core:core` + manifest `<provider ${applicationId}.fileprovider>` + `res/xml/file_paths.xml`（放行 cache 根）。**必须 `content://`**（Android 7+ `file://` 抛 FileUriExposedException）。返回 ok/no_file/no_permission/error；error 多为签名不一致需先卸载。
+- 对话框必须 `PopScope(canPop:false)`（返回键会 pop 掉 DialogRoute，之后代码再 pop 会多关一层）；取消下载只置标记，**统一由调用方 pop**。
+- **发版顺序**：改 pubspec 版本 → 打 `v*` tag 出包发 Release（CI 另产固定名 `ZY-Player-arm64-latest.apk` 供 update.json 引用）→ **Release 存在后**再改 update.json 并 push，反了用户拿 404。
+- CI 配置不进 APK，**不升版本号**。
 
 ## 视频源
-- 引擎只认 maccms json/xml（`Site.api` 须真实 URL）。`SourceImport._mapType` 收 0=xml / 1=json；type 3/4/7/15（SpiderJS/drpy）**现在会先从 ext.url（对象或 JSON 字符串）提取真实 maccms 端点再导入**，没有真实端点才跳过。`ext` 里常见 `{"url":"..."}`，也有直接是地址或数组。
-- 内置默认源 `assets/data/init_site.json`（22 个），源库为空时种子化；老用户源库非空不覆盖，需「重置软件」。
-- 导入合并（1.7.5）：`importSites`(URL) / `importSitesFromContent`(本地) 都按 `Site.key` upsert，不清空已有源。
-- **配置导入增强（1.11.0 / 1.11.1，分支 feature/tvbox-import）**：`HttpService.importSites` 返回 `ImportSummary`（不再 bool）。支持：地址规范化（`lib/utils/config_url.dart`：缺协议补 http、缺 // 纠正、中文域名 RFC3492 punycode）、JSONP、多仓 `{"urls":[...]}`（最多 5 个子配置）、导航网页自动从 HTML 找 `.json`/tvbox 链接（最多 6 个，总时限 25s）、直接粘贴 maccms 接口（`api.php/provide/vod`）识别为单源、同 api/同 key 去重。HTML 候选链接靠 `_configHintRe`/`_skipAssetRe` 过滤。
-- **TVBox 加密配置 + 按 UA 分发（1.11.1，勿回退）**：`https://box.iqinu.com` 这类站点只在 `okhttp/*` UA 下返回真配置（浏览器 UA 只给「站点创建成功」占位 HTML），且正文是 hex 形式的 `$#key#$<AES-128-CBC 密文><13 字节 IV>`（key/iv 用 `'0'` 右补 16；参 `ApiConfig.FindResult` 的 `startsWith("2423")` 分支）。`HttpService._fetchConfig` 按 `okhttp/3.15` → `okhttp/3.12.0` → 浏览器依次试；`lib/utils/tvbox_crypto.dart` 纯 Dart 解密（**不引 pointycastle**，AES-128 自实现，S 盒算法生成；GF 求逆必须幂运算 `x^254`，不是 `_gmul(x,254)`）。spider 源兜底要严：`api`/`url` 与 `ext` 里 `.js/.json/.txt` 结尾、逗号多域名一律不导入（`drpy.min.js` 曾被导成坏源）。
-- 实测 box.iqinu.com：82 条 sites → 41 个可用 maccms 源，41 个 type=3 spider 跳过。
-- 接口地址一律 `HttpService._apiUrl(site, params)`，别拼字符串（zyfun api 自带查询串，拼错返精简列表且不报错）。type 不可信，按响应首字符判定 JSON/XML；先 GET，仅 4xx 回退 POST；无 charset 按 UTF-8。`Site.id` 只是装饰，身份用 `key`。
-- 很多源站 / CDN 会按 UA 拦 ExoPlayer 的 UA → 「播放失败」（play_page 的 `_kPlayerHeaders` 用浏览器 UA 解决）。
+- `Site.api` 须真实 URL；`SourceImport._mapType` 0=xml / 1=json；type 3/4/7/15（SpiderJS/drpy）先从 ext.url（对象或 JSON 串）提取真实 maccms 端点再导入，无端点才跳过。内置默认源 `assets/data/init_site.json`（22 个），仅源库为空时种子化。导入按 `Site.key` upsert，不清空已有源。
+- 配置导入增强：`HttpService.importSites` 返 `ImportSummary`；支持地址规范化（`lib/utils/config_url.dart`）、JSONP、多仓 `{"urls":[...]}`（≤5）、导航网页自动找 tvbox 链接（≤6、总 25s）、直接粘贴 maccms 接口、按 api/key 去重。
+- **TVBox 加密配置（勿回退）**：`box.iqinu.com` 这类站只在 `okhttp/*` UA 下给真配置（浏览器 UA 得占位 HTML），正文是 `$#key#$` + AES-128-CBC 密文 + 13 字节 IV。`_fetchConfig` 按 okhttp/3.15 → okhttp/3.12.0 → 浏览器试；`lib/utils/tvbox_crypto.dart` 纯 Dart 解密（**不引 pointycastle**；GF 求逆必须幂运算 `x^254`）。spider 兜底要严：`.js/.json/.txt` 结尾、逗号多域名一律不导入。
+- 接口地址一律 `HttpService._apiUrl()`，别拼字符串；type 不可信，按响应首字符判 JSON/XML；先 GET，仅 4xx 回退 POST；`Site.id` 只是装饰，身份用 `key`。很多源站/CDN 按 UA 拦 ExoPlayer → play_page `_kPlayerHeaders` 用浏览器 UA。
 
-## 源可用性检测（1.7.4）
-`HttpService.checkSite` → `SiteCheckResult(health,message,ms)`，`SiteHealth{ok,warn,fail}`，请求 `?ac=list` 超时 8s。`site_page`：单条重测 + 「检测全部」(并发 4) + chip + 「清除死站」(fail→真删) + 「清空所有源」。⚠️ 检测中途只更新 chip，结尾统一启停 + 重排（`reorderSites`：可用前 / 不可用后 / 未检测最后）。结果只放内存不落库。
-
-## 首页片单缓存 + 封面预取（1.7.7 / 1.7.9）
-- `lib/services/list_cache.dart` 按 `(siteKey,tid,pg)` 缓存分页片单 + 元信息到 `DbNames.listcache`。`CategoryTab._load` 先读缓存秒出 → 后台 `_refresh` 静默替换；刷新失败保留缓存不空白。`ListCache.clearAll()` 单独清，「重置软件」走 `clearDB()` 已含。
-- 封面必须下载过一次才进磁盘缓存（硬限制）。`lib/utils/image_prefetch.dart` 在 `_load` / `_refresh` 后后台抢先拉封面（并发 6、URL 去重）。网格 `memCacheWidth:480`、详情大图 `600` 限制解码尺寸。
-
-## 加载态 UI：一律骨架屏，禁灰黑遮罩
-`LoadingMask` 已删。列表用 `VideoGridSkeleton`（共用 `videoGridDelegate`）。有内容刷新不抹内容 + 顶部 2px `LinearProgressIndicator`。换源不立刻重置 `_classes`。
-
-## 深色 = 纯黑（OLED）
-配色 `app_colors.dart`。层级用 1px 描边（`darkOutline=0x24FFFFFF`）不提亮底色：`darkBg#000000` / `darkSurface#0D0D0D` / 骨架 `#141416`、`#232327`。`main.dart` 必须把 `colorScheme.surface` 系列压纯黑（M3 Dialog/BottomSheet 默认取 surface）。卡片交 `cardTheme`。
-
-## 播放页（勿回退）
-- 进度条独占一行 + 等宽按钮行。比例 / 大小是两个独立维度（`_stageAreaSize` + 双层 FittedBox）；交换宽高 = `RotatedBox` + 倒数 aspect。手势层左亮右音量、双击暂停。进度条自绘 `_ProgressSlider`（已播段用 `_accent`）。返回键 `PopScope` 先退全屏再退页。控制层 `AnimatedOpacity` + `IgnorePointer` + 4s 隐藏。实时网速 `AppConfig.showSpeed` 默认关。
-
-## 图标 / 启动（1.7.4、1.7.10 定稿）
-- 图标 `make_icons.py`，源图 `.workbuddy/tools/icon_source.png`（透明圆角外 + 黑底 + 青三角 + 声波，无文字），adaptive foreground 满幅 1.0。`assets/images/logo.png` 保留但已无代码引用。
-- **无 Flutter 开屏**：`main.dart` 直接 `home: MainPage()`（`AppBootstrap` 已删）；原生 `LaunchTheme` 纯色跟随系统深浅。`FilmPage.initState` 监听 `AppState`，源列表空→非空时 `reloadIfNeeded()` 自动重载（按源签名比对，收藏/历史加载不触发）。
-
-## 收藏 / 历史页（1.7.12 起双分栏）
-`star_page` 用 TabBar 分「收藏 / 历史记录」，都是卡片网格（同首页 `VideoGrid`）。卡片 `lib/widgets/record_card.dart` 的 `RecordCard`（图上文下，复用 `PosterCover`；右上角圆形删除按钮；历史模式封面下有进度条）。收藏点开 `DetailPage`，历史点开 `PlayPage` 续播。`AppState.removeHistory(key)` 删单条历史；设置页「播放记录」跳 `StarPage(initialTab:1)`，独立 `history_page.dart` 已删。
+## UI 约定（勿回退）
+- **加载态一律骨架屏**，禁灰黑遮罩（`LoadingMask` 已删）；有内容刷新不抹内容，顶部 2px `LinearProgressIndicator`；换源不立刻重置 `_classes`。
+- **深色 = 纯黑 OLED**：`darkBg#000000` / `darkSurface#0D0D0D`，层级用 1px 描边 `0x24FFFFFF` 不提亮底色；`main.dart` 必须把 `colorScheme.surface` 系列压纯黑（M3 Dialog/BottomSheet 默认取 surface）。
+- 首页片单缓存 `list_cache.dart`（按 siteKey/tid/pg）先读缓存秒出再静默刷新，失败保留缓存；封面预取 `image_prefetch.dart`（并发 6、URL 去重），网格 `memCacheWidth:480`、详情大图 600。
+- 收藏/历史双分栏（`star_page` TabBar + `RecordCard`）。key = `{siteKey}-{videoId}`，siteKey 是 UUID 含连字符，**绝不用 `split('-')[0]`**，用 `AppState.resolveRecordKey()`。
+- 源检测：`HttpService.checkSite`（`?ac=list` 超时 8s）→ ok/warn/fail；检测中途只更新 chip，结尾统一启停+重排；结果只放内存。
+- **大屏（≥600 宽，`MainPage._wideThreshold`）**：首页搜索框并入 AppBar 第一排 [站点切换 ≤260 | 搜索 | 共 N 资源]，toolbarHeight 60；NavigationRail `trailing` 放大屏快捷入口（视频源管理 / 设备同步，不参与 selectedIndex）。播放页分栏条件 宽≥840 且 宽>高，右栏 min(屏宽 30%, 420) 且 ≥300。
+- **播放页**：进度条独占一行 + 等宽按钮行；比例/大小是两个独立维度（`_stageAreaSize` + 双层 FittedBox）；手势左亮右音量、双击暂停；进度条自绘 `_ProgressSlider`；返回键 `PopScope` 先退全屏再退页；控制层 4s 隐藏。全屏标题栏（返回+片名集数+倍速标记）；倍速 0.5~3.0 八档；**收藏按钮只在 `!_fullscreen || _landscapeNow` 显示**（竖屏全屏隐藏）。
 
 ## 其他坑（勿回退）
-- Flutter 命中测试：触点在父节点外整棵子树不命中 —— 要放外面先给父节点留空间（详情页按钮「点了没反应」即此因）。
-- **「内容不满一屏 → 触发不了翻页」死局**：分页列表不要把「加载更多」只挂在滚动监听上。横屏/大屏列多行少时首屏可能整屏放得下，`maxScrollExtent==0` 就不会有任何滚动事件，用户表现为「打开就已经到底、上滑没反应、只能左右切」。`CategoryTabState._maybeContinueLoad()`：每帧后检查 `maxScrollExtent<=0` 或贴底且还有旧页就主动续拉，配 `didChangeMetrics`（旋转）+ `_noGrowStreak`（连续两页无增长停止）兜底。改成骨架屏 / 布局后同样适用。
-- 详情请求 `HttpService.fetchDetail` 对源站**瞬时错误**（超时/连接被重置/5xx/域名解析失败/网络错误）重试 2 次（退避 300/600ms），永久错误（403/404/改版）不重试；失败把原因抛出。详情页 `detail_page` 捕获后用 `EmptyHint` 显示**具体原因 + 「重试」按钮**，别再吐个死掉的「获取详情失败」。重试只加在详情（最关键），列表/搜索沿用旧逻辑（失败降级空列表）。
-- 收藏/历史 key = `{siteKey}-{videoId}`，siteKey 是 UUID 含连字符，**绝不用 `split('-')[0]`**；用 `AppState.resolveRecordKey()` 从右往左匹配前缀。
-- 详情页布局：`_buildContent`→`_buildInfoSection`→`_buildInfoCard`；悬浮按钮 `right:116/40`，勿改负偏移。
-- 原生通道 `MethodChannel('com.zy.player/system')`：Dart `system_control.dart` + Kotlin `MainActivity.kt` 两端同步改。
-- 设置页是底部导航第三项；开关用 `SwitchListTile`，build 顶部 `context.watch<AppState>()`。
-- 自定义外部播放器（PC）：`AppConfig.externalPlayerPath` → `openWithExternalPlayer(url,customPath:)`，未设置走自动查找。
-- 数据备份/恢复 `data_backup.dart`：备份用 `saveFile`（bytes，Android/iOS 必填），恢复用 `pickFiles`。
-- 青少年模式已整体移除，别写回。
+- Flutter 命中测试：触点在父节点外整棵子树不命中 —— 要露在外面先给父节点留空间。
+- 「内容不满一屏 → 触发不了翻页」死局：不能只把加载更多挂在滚动监听；`CategoryTabState._maybeContinueLoad()` 每帧检查 `maxScrollExtent<=0` 或贴底就主动续拉，配 `didChangeMetrics` + `_noGrowStreak` 兜底。
+- 详情请求 `fetchDetail` 只对**瞬时错误**重试 2 次（300/600ms 退避），永久错误不重试；详情页 `EmptyHint` 显示具体原因 + 重试按钮。
+- 原生通道 `com.zy.player/system`（+ `/pip`、`/window`）：Dart `system_control.dart` 与 Kotlin `MainActivity.kt` 两端同步改。
+- 数据备份 `data_backup.dart`：备份 `saveFile`（bytes 必填），恢复 `pickFiles`。青少年模式已整体移除，别写回。
 
-## Windows 桌面端原生窗口（1.9.13 / 1.9.14，勿回退）
-- **C++ 只能写英文注释**：`windows/runner/` 的 C++ 是 UTF-8 无 BOM，MSVC 按 GBK(936) 读中文 → C4819 →（工程警告即错误）C2220 构建失败。改完数一遍非 ASCII，必须为 0。
-- **一切窗口形状变更必须由 Dart 发起**。原生 `WM_CLOSE`（标题栏 X / Alt+F4）在 PiP / 全屏下不再自己改窗口，只回传 `onPipExitRequested` / `onFullscreenExitRequested`（返回 0、不销毁窗口）请 Dart 退出；否则 Dart 停在「只剩视频、没有控件」，看起来像卡死。
-- **改窗口前后必须「摘视频纹理」**：fvp 用 D3D11 共享纹理（`fvp_plugin.cpp` 的 `TexturePlayer`，光栅线程与 mdk 回调持同一 `mtx`），出帧时改窗口尺寸 → 引擎重建渲染面与纹理回调互等 → **UI 线程死锁**（同步、延迟 PostMessage 写法都一样）。Dart `_withVideoDetached()`：`_windowSwitching=true` → `_buildStage` 换同尺寸黑盒 → 等两帧 + 60ms → 调原生 → 再等 250ms（原生 PostMessage 异步落地）→ 挂回纹理。
-- 改窗口用**单次** `SetWindowPos(位置+尺寸, SWP_FRAMECHANGED|SWP_NOOWNERZORDER|SWP_NOACTIVATE)`，样式在当前样式上增删位（保留 `WS_VISIBLE`/`WS_CLIPCHILDREN`）。诊断日志 `Win32Window::Trace/TraceReset` → `<exe目录>\zy_player_debug.log`。
-- 三模式语义：**填满** = 纯 Flutter（视频铺满应用窗口，`_fullscreen`）；**全屏** = 原生无边框铺满显示器盖住任务栏（`_nativeFullscreen`）；**画中画** = 原生置顶小窗。
-- 小窗形态 = 无边框纯视频：`WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN | WS_VISIBLE`，并在 `FlutterWindow::MessageHandler` **引擎之前**拦 `WM_NCCALCSIZE(wParam TRUE)` 直接 `return 0`（仅 `IsInPip()` 时）。**别再用 `WS_CAPTION`**：系统按浅色主题画标题栏 → 小窗顶上一条白条。
-- 无边框窗口的拖动 / 缩放只能交给系统模态循环：`ReleaseCapture(); SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION|HT*, MAKELPARAM(cursor.x, cursor.y))`（**lParam 必须传真实光标屏幕坐标**，传 0 窗口会跳）。鼠标消息都发给 Flutter 子视图，顶层 `WM_NCHITTEST` 覆盖收不到。Dart 侧：拖动走画面 `onPanStart`；缩放铺 8 个 `opaque` 热区（`_pipResizeHandle`，须吃掉指针否则与拖动手势抢竞技场）；最小尺寸 200x120（`WM_GETMINMAXINFO`）。缩放必须走 `_withVideoDetached`，只改位置（拖动）不用。
-- 通道：`com.zy.player/pip`（enterPip / exitPip / startDrag / resizeStart，回传 onPipModeChanged / onPipExitRequested）、`com.zy.player/window`（enterFullscreen / exitFullscreen，回传 onFullscreenExitRequested）。
-- **小窗 UI 分支（2026-10-16）**：`_buildPipBody` 里所有交互元素（8 个缩放热区 + 右上角 × 退出按钮）**只在桌面端渲染**（`isDesktop` = `Theme.of(context).platform` 为 windows/macOS/linux）。Android / iOS 的系统 PiP 窗口自带关闭键，Flutter 侧重叠一个既多余、在 PiP 里又点不动，故不显示。
+## Windows 原生窗口（勿回退）
+- **C++ 只能写英文注释**（MSVC 按 GBK 读 UTF-8 中文 → C4819 → C2220 构建失败），改完非 ASCII 必须为 0。
+- **一切窗口形状变更必须由 Dart 发起**：原生 `WM_CLOSE` 只回传 `onPipExitRequested`/`onFullscreenExitRequested`，不自己销毁窗口。
+- **改窗口前后必须「摘视频纹理」**：fvp 用 D3D11 共享纹理，出帧时改尺寸会与纹理回调互等 → UI 线程死锁。`_withVideoDetached()`：置标记换黑盒 → 等两帧 + 60ms → 调原生 → 250ms → 挂回。
+- 改窗口用单次 `SetWindowPos(... SWP_FRAMECHANGED|SWP_NOOWNERZORDER)`；诊断日志 `zy_player_debug.log`。三模式：填满 / 原生全屏 / 画中画（`WS_POPUP`，引擎前拦 `WM_NCCALCSIZE`，别用 `WS_CAPTION`）。
+- 无边框拖动/缩放走 `WM_NCLBUTTONDOWN`（**lParam 传真实屏幕坐标**，传 0 会跳）；缩放热区须 `opaque` 吃指针；最小 200x120。小窗交互元素只在桌面端渲染。
 
-## WorkBuddy 工具环境坑（实锤）
-- **Bash 命令里的反斜杠 `\` 会被传输层转成 `/`**（heredoc 引号包裹也不幸免）。含反斜杠字面量的脚本必须用 Write 工具写成文件再 `python file.py`；路径参数尽量用正斜杠。
-- **Git Bash 会把 `/MIR`、`/S` 这类 Windows 开关当路径转换** → 命令前加 `MSYS_NO_PATHCONV=1`（robocopy 返回码 0–7 都算成功，`&&` 链会被 1 码打断）。
-- **Write 工具新建 `.bat`/`.ps1` 会存成 UTF-16**（`FE FF` BOM + 每字符跟 `\0`），`cmd.exe` 读不了。改用 `sed -b` 基于已存在的 GBK bat 复制后 `s#...#...#` 改关键行，或 Python `open(..., encoding='gbk', newline='')` 写；验证用 `head -c 16 file | od -c`。
-- 静态检查：优先 `C:/flutter/bin/cache/dart-sdk/bin/dart.exe analyze lib`（裸 analyze；`--no-lints` 不是合法参数，info 级 lint 不影响编译）。单次工具调用约 3.5 分钟墙钟上限，长构建（gradle 等）必须交用户跑。
-- `android/local.properties` 被 gitignore，`git add` 会被拒；提交时只加仓库内文件。
+## 工具环境坑（实锤）
+- Bash 里反斜杠 `\` 会被转成 `/`（heredoc 也不免）：含反斜杠的脚本用 Write 写成文件再 `python file.py`，路径尽量正斜杠。
+- Git Bash 会把 `/S`、`/MIR` 当路径：加 `MSYS_NO_PATHCONV=1`（robocopy 0–7 都算成功）。
+- **Write 工具新建 `.bat`/`.ps1` 会存成 UTF-16**，cmd 读不了：用 Python `encoding='gbk', newline=''` 写，或复制已有 bat 再 `sed -b` 改。
+- 静态检查：`C:/flutter/bin/cache/dart-sdk/bin/dart.exe analyze lib`（`--no-lints` 不是合法参数）。单次工具调用约 3.5 分钟上限，长构建交用户。
