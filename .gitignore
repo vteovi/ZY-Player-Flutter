@@ -8,7 +8,7 @@
 *.swp
 .buildlog/
 .history
-
+tools/
 
 
 # Flutter repo-specific
