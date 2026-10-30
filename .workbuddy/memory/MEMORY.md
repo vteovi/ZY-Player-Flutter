@@ -21,7 +21,8 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 ## 应用内版本更新（1.18.0 起，勿回退）
 - 真流程：拉远端 `update.json` → 用**已安装包**的 versionCode（原生 `PackageManager`）比较 → 弹窗含更新说明 → 应用内下载（进度可取消）→ `FileProvider` 交系统安装器。
 - 分层：`lib/utils/version.dart` 纯逻辑（**不依赖 Flutter**，可用 `dart run` 验证，因本机 `flutter test` 起不了 flutter_tester）；`lib/services/update_service.dart` 只做网络。
-- 只用 versionCode 比较，退化时按版本名逐段数字比（**不能比字符串**：`"1.10" < "1.9"`）。清单字段做了兼容（versionName/version、apkUrl/apk_url/url、notes/changelog、force/mandatory）。默认地址 raw.githubusercontent.com 占位，`AppConfig.updateUrl` 可覆盖（哨兵 `__use_default__` 恢复默认）；仓库若 private 整条链路不通。
+- 只用 versionCode 比较，退化时按版本名逐段数字比（**不能比字符串**：`"1.10" < "1.9"`）。清单字段做了兼容（versionName/version、apkUrl/apk_url/url、notes/changelog、force/mandatory）。默认地址 raw.githubusercontent.com，`AppConfig.updateUrl` 可覆盖（哨兵 `__use_default__` 恢复默认）。
+- **大陆网络必挂（1.18.1 修）**：raw 直连必被重置（实测 curl 000），默认改为一组镜像**并发竞速**（raw / ghproxy.net / gh-proxy.com / cdn.jsdelivr.net），取第一个 200，胜出后 `client.close()` 掐掉其余在途请求；用户自定义地址时**只试那一个**（可能是 Gitee/自建）。安装包下载同理：直连失败自动加 `https://gh-proxy.com/`、`https://ghproxy.net/` 前缀重试（实测 gh-proxy.com 对 release 资产支持 Range）。jsDelivr 对 `@main` 有小时级缓存，只能兜底。`fetchManifest` 必须 catch `http.ClientException`——以前漏了，界面直接吐 "Connection reset by peer"。
 - 安装要件：`REQUEST_INSTALL_PACKAGES` + 显式 `androidx.core:core` + manifest `<provider ${applicationId}.fileprovider>` + `res/xml/file_paths.xml`（放行 cache 根）。**必须 `content://`**（Android 7+ `file://` 抛 FileUriExposedException）。返回 ok/no_file/no_permission/error；error 多为签名不一致需先卸载。
 - 对话框必须 `PopScope(canPop:false)`（返回键会 pop 掉 DialogRoute，之后代码再 pop 会多关一层）；取消下载只置标记，**统一由调用方 pop**。
 - **发版顺序**：改 pubspec 版本 → 打 `v*` tag 出包发 Release（CI 另产固定名 `ZY-Player-arm64-latest.apk` 供 update.json 引用）→ **Release 存在后**再改 update.json 并 push，反了用户拿 404。
