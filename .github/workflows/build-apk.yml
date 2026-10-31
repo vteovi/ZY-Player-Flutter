@@ -1,8 +1,8 @@
-name: Build APK
+name: Build APK + Windows
 
 # 用法：
-#   1) 手动：仓库页面 Actions -> Build APK -> Run workflow，选打包方式
-#   2) 自动：推一个 v 开头的 tag（如 v1.17.0）会构建并直接创建 Release
+#   1) 手动：仓库页面 Actions -> Build APK + Windows -> Run workflow，选打包方式
+#   2) 自动：推一个 v 开头的 tag（如 v1.17.0）会构建 APK + Windows 版，并创建 Release
 on:
   workflow_dispatch:
     inputs:
@@ -147,10 +147,78 @@ jobs:
             cp "$ARM" dist/ZY-Player-arm64-latest.apk
             echo "已生成固定名副本 dist/ZY-Player-arm64-latest.apk"
           fi
-          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" dist/*.apk \
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # 另一个 job（Windows 版）也在往同一个 tag 发东西，可能同时发现
+            # Release 还不存在 —— 谁先谁后都行，创建失败就交给 upload 处理。
+            gh release create "$GITHUB_REF_NAME" \
               --title "ZY Player $GITHUB_REF_NAME" \
-              --generate-notes
+              --generate-notes || true
           fi
+          gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
+
+  # ---------------------------------------------------------------- #
+  # Windows 桌面版：与 APK 并行跑在独立 runner 上，互不影响。
+  # 产物是 zip（exe + dll + data 必须整目录分发，单拷 exe 跑不起来）。
+  # 只在推 v* tag 时挂到 Release；手动触发时只留 Artifacts。
+  # ---------------------------------------------------------------- #
+  build-windows:
+    # 固定 2022：windows-latest 后续会迁到 2025，镜像里的 VS/SDK 版本可能变。
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 读取版本号（pubspec.yaml）
+        id: ver
+        shell: bash
+        run: |
+          V=$(grep -m1 '^version:' pubspec.yaml | sed 's/^version:[[:space:]]*//' | tr -d '[:space:]')
+          echo "读取到 version: $V"
+          echo "name=${V%%+*}" >> "$GITHUB_OUTPUT"
+          echo "code=${V##*+}" >> "$GITHUB_OUTPUT"
+
+      - name: 安装 Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      # 首次会下载 fvp 依赖的 ffmpeg 预编译包并编译 C++，约 3~8 分钟。
+      # 若这一步因下载超时变红，重跑一次即可，不影响 APK 那个 job。
+      - name: 构建 Windows 桌面版
+        run: flutter build windows --release
+
+      - name: 打包 zip
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.name }}"
+          $zip = "dist\ZY-Player-v$ver-windows-x64.zip"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath $zip -Force
+          Get-Item $zip | ForEach-Object { "{0}  {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+
+      - name: 上传产物（可在 Actions 页面下载）
+        uses: actions/upload-artifact@v7
+        with:
+          name: ZY-Player-v${{ steps.ver.outputs.name }}-${{ steps.ver.outputs.code }}-windows
+          path: dist/*.zip
+          retention-days: 30
+
+      - name: 发布到 GitHub Release（仅 tag 推送时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "ZY Player $GITHUB_REF_NAME" \
+              --generate-notes || true
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber

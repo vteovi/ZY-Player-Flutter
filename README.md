@@ -58,20 +58,35 @@ tools/gen_scaffold.py       从 Flutter SDK 模板生成 android/ios/web 骨架�
 
 ```bash
 flutter pub get
-flutter run                  # 调试运行
-flutter build apk --release  # 打 Android 包
-flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
+flutter run                      # 调试运行
+flutter build apk --release      # 打 Android 包
+flutter build windows --release  # 打 Windows 桌面版
+flutter build ios --release      # 打 iOS 包（需 macOS + Xcode）
 ```
 
 环境：Flutter 3.32.6 / Dart 3.8.1。
 
+### Windows 桌面版怎么出
+
+```bat
+tools\build_windows.bat
+```
+
+脚本会跑 `flutter build windows --release`，并把产物压成根目录下的 `ZY-Player-v<版本>-windows-x64.zip`。
+前置条件：装好 **Visual Studio 2022**（勾选「使用 C++ 的桌面开发」工作负载）+ Windows 10/11 SDK。
+首次构建会下载 fvp 依赖的 mdk-sdk（约几分钟），之后走缓存。
+
+> ⚠️ **必须整目录分发**：`zy_player.exe` 不能单独拷走，要连同同目录的 `*.dll` 和 `data\` 一起。
+> 所以对外一律发 zip，不要只发 exe。
+
 ## 在 GitHub 上构建 APK（GitHub Actions）
 
-云端构建由 `.github/workflows/build-apk.yml` 负责，不需要本地装 Flutter / JDK / Android SDK。
+云端构建由 `.github/workflows/build-apk.yml` 负责，不需要本地装 Flutter / JDK / Android SDK / Visual Studio。
+一次运行会**并行**跑两个 job：`build`（Ubuntu，出 Android APK）与 `build-windows`（Windows，出桌面版 zip），互不影响 —— 其中一个失败不会拖累另一个。
 
 **方式一：手动触发**
 
-仓库页面 → **Actions** → 左侧 **Build APK** → **Run workflow** → 选「打包方式」→ 运行。
+仓库页面 → **Actions** → 左侧 **Build APK + Windows** → **Run workflow** → 选「打包方式」→ 运行。
 首次约 15~25 分钟（之后命中 Gradle 缓存会快很多），跑完在该次运行页底部的 **Artifacts** 下载。
 
 | 打包方式 | 产物 |
@@ -80,6 +95,9 @@ flutter build ios --release  # 打 iOS 包（需 macOS + Xcode）
 | `fat` | 三合一万能包（约 69 MB，一份装所有机型） |
 | `both` | 两种都出，耗时约翻倍 |
 
+> `x86_64` 那个 APK 是给**安卓模拟器 / x86 平板**用的，**不是 PC 版**，装不到 Windows 上。
+> PC 版看下面的 Windows job。
+
 **方式二：推 tag 自动构建并发布 Release**
 
 ```bash
@@ -87,7 +105,7 @@ git tag v1.17.0
 git push origin v1.17.0
 ```
 
-会构建拆分包，并把 APK 直接挂到该 tag 的 Release 上（Release 已存在则覆盖附件）。
+会构建拆分包 + Windows 版，并把它们挂到该 tag 的 Release 上（Release 已存在则覆盖附件）。
 
 **关于签名**
 
