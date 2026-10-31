@@ -252,27 +252,67 @@ class SyncServer {
   }
 }
 
+/// 同步过程中可预期的失败（已翻译成人话），与底层网络异常区分开。
+class SyncException implements Exception {
+  final String message;
+  SyncException(this.message);
+
+  @override
+  String toString() => message;
+}
+
 /// 同步端 HTTP 客户端：拉取对方共享的数据。
 class SyncClient {
+  static const Duration defaultTimeout = Duration(seconds: 12);
+
+  /// 拉取数据。
+  ///
+  /// 连接阶段失败会自动补试一次（[retries]）：手机息屏后 Wi-Fi 进入省电，
+  /// 第一个 SYN 常被直接丢掉，隔几百毫秒再发往往就能连上。
   static Future<Map<String, List<Map<String, dynamic>>>> fetch(
     String host,
     int port, {
-    Duration timeout = const Duration(seconds: 8),
+    Duration timeout = defaultTimeout,
+    int retries = 1,
   }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await _fetchOnce(host, port, timeout);
+      } catch (e) {
+        lastError = e;
+        if (attempt >= retries || !_retryable(e)) break;
+        await Future<void>.delayed(const Duration(milliseconds: 700));
+      }
+    }
+    throw lastError!;
+  }
+
+  static Future<Map<String, List<Map<String, dynamic>>>> _fetchOnce(
+    String host,
+    int port,
+    Duration timeout,
+  ) async {
     final client = HttpClient();
     try {
       client.connectionTimeout = timeout;
       final uri = Uri.http('$host:$port', '/sync');
       final request = await client.getUrl(uri);
-      final response = await responseToBody(request, timeout);
+      final response = await request.close().timeout(timeout);
       if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}');
+        // 对方已经回了响应，说明服务在跑，重试没有意义
+        await response.drain<void>();
+        throw SyncException(
+          '对方 $host:$port 返回 HTTP ${response.statusCode}，'
+          '这个端口上跑的可能不是本应用',
+        );
       }
-      final body = await _readBody(response, timeout);
+      final body =
+          await response.transform(utf8.decoder).join().timeout(timeout);
       final decoded = jsonDecode(body);
-      if (decoded is! Map) throw Exception('响应格式错误');
+      if (decoded is! Map) throw SyncException('对方返回的数据格式不正确');
       final data = decoded['data'];
-      if (data is! Map) throw Exception('响应缺少 data 字段');
+      if (data is! Map) throw SyncException('对方返回的数据缺少 data 字段');
       final result = <String, List<Map<String, dynamic>>>{};
       data.forEach((key, value) {
         if (value is List) {
@@ -288,15 +328,57 @@ class SyncClient {
     }
   }
 
-  static Future<HttpClientResponse> responseToBody(
-    HttpClientRequest request,
-    Duration timeout,
-  ) =>
-      request.close().timeout(timeout);
+  static bool _retryable(Object e) =>
+      e is SocketException || e is TimeoutException || e is HttpException;
 
-  static Future<String> _readBody(
-    HttpClientResponse response,
-    Duration timeout,
-  ) =>
-      response.transform(utf8.decoder).join().timeout(timeout);
+  /// 只探测端口是否可达（连上即断开，不拉数据），返回耗时毫秒。用于「测试连接」。
+  static Future<int> ping(
+    String host,
+    int port, {
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final sw = Stopwatch()..start();
+    final socket = await Socket.connect(host, port, timeout: timeout);
+    final elapsed = sw.elapsedMilliseconds;
+    socket.destroy();
+    return elapsed;
+  }
+
+  /// 把底层异常翻译成能照着排查的一句话。
+  ///
+  /// 直接抛 `SocketException: HTTP connection timed out after 0:00:08`
+  /// 对人没有意义 —— 它既没说哪一端有问题，也没说下一步该干什么。
+  static String describeError(Object error, String host, int port) {
+    final target = '$host:$port';
+    if (error is SyncException) return error.message;
+    if (error is TimeoutException) {
+      return '连接 $target 超时：对方没有回应。\n'
+          '· 对方 App 是否还开着「开启共享」\n'
+          '· 手机是否已息屏（息屏后系统会断开 Wi-Fi）\n'
+          '· 两台设备是否连的同一个 Wi-Fi';
+    }
+    if (error is SocketException) {
+      final m = error.message.toLowerCase();
+      if (m.contains('timed out')) {
+        return '连接 $target 超时：对方没有回应。\n'
+            '· 对方 App 是否还开着「开启共享」\n'
+            '· 手机是否已息屏（息屏后系统会断开 Wi-Fi）\n'
+            '· 两台设备是否连的同一个 Wi-Fi';
+      }
+      if (m.contains('refused')) {
+        return '对方 $host 拒绝连接（$port 端口没有在监听）。\n'
+            '多半是对方已经关掉了「开启共享」，或 App 被系统回收了。';
+      }
+      if (m.contains('unreachable') ||
+          m.contains('host is down') ||
+          m.contains('no route')) {
+        return '网络到不了 $host。\n请确认对方 IP 没有变更、两台设备在同一 Wi-Fi。';
+      }
+      if (m.contains('failed host lookup')) {
+        return '找不到地址 $host，请检查 IP 是否输错。';
+      }
+      return '网络错误：${error.message}（$target）';
+    }
+    return '$target 同步失败：$error';
+  }
 }

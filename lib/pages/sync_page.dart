@@ -44,6 +44,9 @@ class _SyncPageState extends State<SyncPage>
       TextEditingController(text: '9527');
   bool _syncing = false;
   String _syncResult = '';
+  bool _testing = false;
+  String _testResult = '';
+  bool _testOk = false;
 
   /// 可同步的数据类别（顺序固定，影响 UI 与导出键）
   static const List<_SyncScope> _scopes = [
@@ -197,10 +200,43 @@ class _SyncPageState extends State<SyncPage>
       showToast(context, '同步完成', success: true);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _syncResult = '同步失败：$e');
-      showToast(context, '同步失败：$e', success: false);
+      final msg = SyncClient.describeError(e, host, port);
+      setState(() => _syncResult = '同步失败：$msg');
+      showToast(context, '同步失败：$msg', success: false);
     } finally {
       if (mounted) setState(() => _syncing = false);
+    }
+  }
+
+  /// 只测「这台电脑能不能连到对方 9527」，不导入任何数据。
+  /// 同步失败时先点它，能立刻分清是网络/端口的问题还是数据的问题。
+  Future<void> _testConnection() async {
+    final host = _ipController.text.trim();
+    final port = int.tryParse(_portController.text.trim());
+    if (host.isEmpty || port == null) {
+      showToast(context, '请输入对方 IP 和端口', success: false);
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = '';
+      _testOk = false;
+    });
+    try {
+      final ms = await SyncClient.ping(host, port);
+      if (!mounted) return;
+      setState(() {
+        _testOk = true;
+        _testResult = '连接正常：$host:$port 可达（$ms ms），可以同步。';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _testOk = false;
+        _testResult = SyncClient.describeError(e, host, port);
+      });
+    } finally {
+      if (mounted) setState(() => _testing = false);
     }
   }
 
@@ -427,19 +463,61 @@ class _SyncPageState extends State<SyncPage>
               : const Icon(Icons.sync),
           label: Text(_syncing ? '同步中…' : '开始同步'),
         ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: (_syncing || _testing) ? null : _testConnection,
+          icon: _testing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.wifi_find),
+          label: Text(_testing ? '测试中…' : '测试连接'),
+        ),
+        if (_testResult.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _resultBox(isDark, _testResult, ok: _testOk),
+        ],
         if (_syncResult.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: isDark ? Colors.white10 : Colors.black12,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(_syncResult, style: const TextStyle(fontSize: 13)),
+          const SizedBox(height: 12),
+          _resultBox(
+            isDark,
+            _syncResult,
+            ok: _syncResult.startsWith('同步完成') || _syncResult == '没有可同步的数据',
           ),
         ],
       ],
+    );
+  }
+
+  /// 结果提示框：左边一个状态图标，正文允许换行（排查说明会比较长）。
+  Widget _resultBox(bool isDark, String text, {required bool ok}) {
+    final color = ok ? Colors.green : Colors.redAccent;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? Colors.white10 : Colors.black12,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ok ? Icons.check_circle_outline : Icons.error_outline,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 13, height: 1.5),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
