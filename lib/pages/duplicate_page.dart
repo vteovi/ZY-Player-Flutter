@@ -20,6 +20,12 @@ class DuplicatePage extends StatefulWidget {
 }
 
 class _DuplicatePageState extends State<DuplicatePage> {
+  /// 组卡从单列变两列的屏宽阈值（平板横屏 / 桌面）
+  static const double _twoColumnWidth = 900;
+
+  /// 大屏内容最大宽度：两列时每列约 600，再宽就成一条长带了
+  static const double _maxContentWidth = 1240;
+
   /// signature -> 该组要保留的源 key
   final Map<String, String> _keep = <String, String>{};
 
@@ -112,6 +118,12 @@ class _DuplicatePageState extends State<DuplicatePage> {
     final groups = _groups;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final deleteCount = _targetsOf(groups).length;
+    final size = MediaQuery.sizeOf(context);
+    // 大屏排两列：一组一张卡，横屏下一屏能看全更多组，少滚一半
+    final columns = size.width >= _twoColumnWidth ? 2 : 1;
+    // 横屏（纵向更紧张）时收紧排版：顶部说明压成一行、卡片里的元信息并到
+    // 名称右边、底部统计也压成一行 —— 一屏能多看到两三条源
+    final compact = size.width > size.height;
 
     return Scaffold(
       appBar: AppBar(
@@ -127,19 +139,14 @@ class _DuplicatePageState extends State<DuplicatePage> {
           ? const _EmptyDuplicates()
           : Column(
               children: [
-                _buildHint(isDark),
+                _buildHint(isDark, compact),
                 const Divider(height: 1),
                 Expanded(
                   child: Center(
                     child: ConstrainedBox(
                       // 大屏上限宽，卡片不至于被拉成一条长带
-                      constraints: const BoxConstraints(maxWidth: 900),
-                      child: ListView.builder(
-                        padding: const EdgeInsets.only(top: 4, bottom: 24),
-                        itemCount: groups.length,
-                        itemBuilder: (context, index) =>
-                            _buildGroup(groups[index], isDark),
-                      ),
+                      constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+                      child: _buildList(groups, isDark, columns, compact),
                     ),
                   ),
                 ),
@@ -147,25 +154,71 @@ class _DuplicatePageState extends State<DuplicatePage> {
             ),
       bottomNavigationBar: groups.isEmpty
           ? null
-          : _buildBottomBar(groups, deleteCount, isDark),
+          : _buildBottomBar(groups, deleteCount, isDark, compact),
     );
   }
 
-  Widget _buildHint(bool isDark) {
+  /// 组列表：单列 / 双列（按行渲染，[ListView.builder] 仍是懒加载）
+  Widget _buildList(
+    List<DuplicateGroup> groups,
+    bool isDark,
+    int columns,
+    bool compact,
+  ) {
+    if (columns == 1) {
+      return ListView.builder(
+        padding: const EdgeInsets.only(top: 4, bottom: 24),
+        itemCount: groups.length,
+        itemBuilder: (context, index) =>
+            _buildGroup(groups[index], isDark, compact),
+      );
+    }
+    final rowCount = (groups.length + columns - 1) ~/ columns;
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 4, bottom: 24),
+      itemCount: rowCount,
+      itemBuilder: (context, row) {
+        final start = row * columns;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var c = 0; c < columns; c++)
+              Expanded(
+                child: start + c < groups.length
+                    ? _buildGroup(groups[start + c], isDark, compact)
+                    : const SizedBox.shrink(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHint(bool isDark, bool compact) {
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      padding: EdgeInsets.fromLTRB(16, compact ? 6 : 10, 16, compact ? 6 : 10),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment:
+            compact ? CrossAxisAlignment.center : CrossAxisAlignment.start,
         children: [
           Icon(Icons.info_outline, size: 15, color: subText),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '同一个采集接口被重复导入时，播放器只会用其中一条。'
-              '逐组点选要保留的那条，其余会被删除；拿不准就点这一组的「跳过」，'
-              '那一组一条都不会删。',
-              style: TextStyle(fontSize: 12, height: 1.45, color: subText),
+              compact
+                  // 横屏纵向紧张：只留最关键的一句，不再占三行
+                  ? '逐组点选保留哪一条，其余会被删除；点「跳过」则该组一条都不删。'
+                  : '同一个采集接口被重复导入时，播放器只会用其中一条。'
+                      '逐组点选要保留的那条，其余会被删除；拿不准就点这一组的「跳过」，'
+                      '那一组一条都不会删。',
+              maxLines: compact ? 1 : null,
+              overflow: compact ? TextOverflow.ellipsis : null,
+              style: TextStyle(
+                fontSize: compact ? 11.5 : 12,
+                height: 1.45,
+                color: subText,
+              ),
             ),
           ),
         ],
@@ -173,7 +226,7 @@ class _DuplicatePageState extends State<DuplicatePage> {
     );
   }
 
-  Widget _buildGroup(DuplicateGroup group, bool isDark) {
+  Widget _buildGroup(DuplicateGroup group, bool isDark, bool inlineMeta) {
     final skipped = _skipped.contains(group.signature);
     final keepKey = _keep[group.signature] ?? group.suggestedKey;
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
@@ -249,7 +302,14 @@ class _DuplicatePageState extends State<DuplicatePage> {
             Divider(height: 1, color: divider),
             for (var i = 0; i < group.members.length; i++) ...[
               if (i > 0) Divider(height: 1, indent: 46, color: divider),
-              _buildMember(group, group.members[i], keepKey, skipped, isDark),
+              _buildMember(
+                group,
+                group.members[i],
+                keepKey,
+                skipped,
+                isDark,
+                inlineMeta,
+              ),
             ],
           ],
         ),
@@ -263,47 +323,75 @@ class _DuplicatePageState extends State<DuplicatePage> {
     String keepKey,
     bool skipped,
     bool isDark,
+    bool inlineMeta,
   ) {
     final selected = !skipped && site.key == keepKey;
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
     final keepColor = isDark ? AppColors.okDark : AppColors.okLight;
     final dropColor = isDark ? AppColors.failDark : AppColors.failLight;
+    final name = site.name.isEmpty ? '未命名' : site.name;
+    final meta = '${site.type} · ${site.group}${site.isActive ? '' : ' · 已停用'}';
+    final nameStyle = TextStyle(
+      fontSize: 14,
+      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+      color: site.isActive ? null : (isDark ? Colors.white38 : Colors.black38),
+    );
+    final metaStyle = TextStyle(fontSize: 11, color: subText);
 
     return InkWell(
       onTap: _busy || skipped
           ? null
           : () => setState(() => _keep[group.signature] = site.key),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 9, 14, 9),
+        padding: EdgeInsets.fromLTRB(14, inlineMeta ? 8 : 9, 14, inlineMeta ? 8 : 9),
         child: Row(
           children: [
             _radio(selected, isDark),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    site.name.isEmpty ? '未命名' : site.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                      color: site.isActive
-                          ? null
-                          : (isDark ? Colors.white38 : Colors.black38),
+              // 横屏宽绰：名称与「类型 · 分组」并排，一行就是一条源
+              child: inlineMeta
+                  ? Row(
+                      children: [
+                        Flexible(
+                          flex: 3,
+                          child: Text(
+                            name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: nameStyle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          flex: 2,
+                          child: Text(
+                            meta,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: metaStyle,
+                          ),
+                        ),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: nameStyle,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          meta,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: metaStyle,
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${site.type} · ${site.group}${site.isActive ? '' : ' · 已停用'}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 11, color: subText),
-                  ),
-                ],
-              ),
             ),
             const SizedBox(width: 8),
             if (!skipped)
@@ -355,8 +443,17 @@ class _DuplicatePageState extends State<DuplicatePage> {
     List<DuplicateGroup> groups,
     int deleteCount,
     bool isDark,
+    bool compact,
   ) {
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+    final headline = switch (_skipped.length) {
+      0 => '共 ${groups.length} 组重复',
+      final n => '共 ${groups.length} 组重复 · 跳过 $n 组',
+    };
+    final detail = deleteCount > 0
+        ? '每组保留 1 条，将删除 $deleteCount 个'
+        : '每组的源都保留，没有会删除的条目';
+
     return Container(
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkBg : AppColors.lightSurface,
@@ -368,49 +465,67 @@ class _DuplicatePageState extends State<DuplicatePage> {
       ),
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      switch (_skipped.length) {
-                        0 => '共 ${groups.length} 组重复',
-                        final n => '共 ${groups.length} 组重复 · 跳过 $n 组',
-                      },
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      deleteCount > 0
-                          ? '每组保留 1 条，将删除 $deleteCount 个'
-                          : '每组的源都保留，没有会删除的条目',
-                      style: TextStyle(fontSize: 11.5, color: subText),
-                    ),
-                  ],
-                ),
+        child: Center(
+          heightFactor: 1,
+          child: ConstrainedBox(
+            // 和列表同宽，宽屏下按钮不会孤零零飘到屏幕最右边
+            constraints: const BoxConstraints(maxWidth: _maxContentWidth),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                compact ? 6 : 10,
+                16,
+                compact ? 6 : 10,
               ),
-              const SizedBox(width: 12),
-              FilledButton(
-                onPressed: deleteCount == 0 || _busy
-                    ? null
-                    : () => _apply(groups),
-                child: _busy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(deleteCount > 0 ? '清理 $deleteCount 个' : '清理'),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: compact
+                        // 横屏纵向紧张：统计压成一行
+                        ? Text(
+                            '$headline · $detail',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12.5, color: subText),
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                headline,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                detail,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: subText,
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton(
+                    onPressed: deleteCount == 0 || _busy
+                        ? null
+                        : () => _apply(groups),
+                    child: _busy
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(deleteCount > 0 ? '清理 $deleteCount 个' : '清理'),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
