@@ -5,7 +5,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 ## ⚠️ 协作纪律（用户明确要求，勿破）
 1. **构建（APK / Windows 包）一律由用户跑**（2026-10-06 原话：「你不进行构建…你只负责写代码」）。交付 = 改动清单 + 静态自检结论 + 给用户执行的命令。
 2. **默认只 `git commit`，push 需用户明确要求**（2026-10-01 定，2026-11-01 放宽）：用户说「你来帮我推」时可以直接 push；否则改完 `git add` + `commit`，确认 `git status --porcelain` 为空再汇报，推送命令附给用户。
-3. **push 可以成功，网络时通时不通**。2026-10-30 直连 `github.com:443` 全部超时；2026-11-01 一次成功（main + tag 都推上去了，credential 已由 Git Credential Manager 缓存且有效）。所以 push 先试一次即可：报 `failed to receive handshake` / 超时就别再重试，把命令交用户；成功就直接往下走。`git push` 成功不代表 Release 资产下载快（见下），两者是不同的线路。
+3. **push 可以成功，网络时通时不通**。2026-10-30 直连 `github.com:443` 全部超时；2026-11-01 一次成功（main + tag 都推上去了，credential 已由 Git Credential Manager 缓存且有效）。所以 push 先试一次即可：报 `failed to receive handshake` / 超时就别再重试，把命令交用户；成功就直接往下走。**例外（2026-11-01 实测有效）**：连续报 `schannel: failed to receive handshake` 时改用 `git -c http.version=HTTP/1.1 push origin main` 往往就通了（HTTP/2 握手在这里不稳）；`CONNECT tunnel failed 502` 直接重试一次即可。`git push` 成功不代表 Release 资产下载快（见下），两者是不同的线路。
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
 5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
 6. 每次发版同步维护根目录 `更新记录.MD`：按版本**倒序**，每条「日期 + 新增/优化/修复/调整 + 一句人话」，不写实现细节与 chore/docs 提交；头部「当前版本」一起改。
@@ -22,7 +22,8 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - 真流程：拉远端 `update.json` → 用**已安装包**的 versionCode（原生 `PackageManager`）比较 → 弹窗含更新说明 → 应用内下载（进度可取消）→ `FileProvider` 交系统安装器。
 - 分层：`lib/utils/version.dart` 纯逻辑（**不依赖 Flutter**，可用 `dart run` 验证，因本机 `flutter test` 起不了 flutter_tester）；`lib/services/update_service.dart` 只做网络。
 - 只用 versionCode 比较，退化时按版本名逐段数字比（**不能比字符串**：`"1.10" < "1.9"`）。清单字段做了兼容（versionName/version、apkUrl/apk_url/url、notes/changelog、force/mandatory）。默认地址 raw.githubusercontent.com，`AppConfig.updateUrl` 可覆盖（哨兵 `__use_default__` 恢复默认）。
-- **大陆网络必挂（1.18.1 修）**：raw 直连必被重置（实测 curl 000），默认改为一组镜像**并发竞速**（raw / ghproxy.net / gh-proxy.com / cdn.jsdelivr.net），取第一个 200，胜出后 `client.close()` 掐掉其余在途请求；用户自定义地址时**只试那一个**（可能是 Gitee/自建）。安装包下载同理：直连失败自动加 `https://gh-proxy.com/`、`https://ghproxy.net/` 前缀重试（实测 gh-proxy.com 对 release 资产支持 Range）。jsDelivr 对 `@main` 有小时级缓存，只能兜底。`fetchManifest` 必须 catch `http.ClientException`——以前漏了，界面直接吐 "Connection reset by peer"。
+- **大陆网络必挂（1.18.1 修）**：raw 直连必被重置（实测 curl 000），默认改为一组镜像**并发竞速**（raw / ghproxy.net / gh-proxy.com / ghfast.top / cdn.jsdelivr.net）；用户自定义地址时**只试那一个**（可能是 Gitee/自建）。安装包下载同理：直连失败自动加 `https://gh-proxy.com/`、`https://ghproxy.net/` 前缀重试（实测 gh-proxy.com 对 release 资产支持 Range，206）。`fetchManifest` 必须 catch `http.ClientException`——以前漏了，界面直接吐 "Connection reset by peer"。
+- **1.20.1 修：不能「第一个 200 胜出」**。jsDelivr 对 `@main` 有小时级缓存，会**返回 200 但内容是上一版**，而且 CDN 往往回包最快——2026-11-01 发 1.20.0 时 raw 被重置、ghproxy.net 挂掉，只剩它先回，老用户就收不到更新提示。现在 `_fetchAll` 收齐所有 200，首个成功后等 1.5s 收集其余，解析后**取 versionCode 最大的那份**。发版后记得 `curl https://purge.jsdelivr.net/gh/vteovi/ZY-Player-Flutter@main/update.json` 清 CDN 缓存（会打印 providers CF/FY true），否则 jsDelivr 仍回旧清单。实测可用镜像：gh-proxy.com、ghfast.top；ghproxy.net 2026-11-01 连不上（curl 000）。
 - 安装要件：`REQUEST_INSTALL_PACKAGES` + 显式 `androidx.core:core` + manifest `<provider ${applicationId}.fileprovider>` + `res/xml/file_paths.xml`（放行 cache 根）。**必须 `content://`**（Android 7+ `file://` 抛 FileUriExposedException）。返回 ok/no_file/no_permission/error；error 多为签名不一致需先卸载。
 - 对话框必须 `PopScope(canPop:false)`（返回键会 pop 掉 DialogRoute，之后代码再 pop 会多关一层）；取消下载只置标记，**统一由调用方 pop**。
 - **发版顺序**：改 pubspec 版本 → 打 `v*` tag 出包发 Release（CI 另产固定名 `ZY-Player-arm64-latest.apk` 供 update.json 引用）→ **Release 存在后**再改 update.json 并 push，反了用户拿 404。
