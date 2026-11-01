@@ -104,10 +104,36 @@ class _SitePageState extends State<SitePage> {
     });
   }
 
+  /// 单次批量检测的并发请求数。
+  ///
+  /// 实测 11 个内置源（`?ac=list`、浏览器 UA）：单请求中位 1.4 秒、最慢 3.4 秒，
+  /// 串行要 18.6 秒；并发 4 约 12 秒，**并发 8 稳定在 4 秒上下**。再往上
+  /// （几十路）反而变慢 —— 目标站的限流和本机带宽都会拖后腿，8 是甜点。
+  static const int _checkConcurrency = 8;
+
+  /// 去重键：同一个接口（协议 + 域名 + 路径）只检测一次。
+  ///
+  /// 第三方配置里很常见「一个 api.php 派生出十几个源」（只差分类参数），
+  /// 逐个请求纯属重复；查询串不参与键，因为检测只关心可达性。
+  static String _probeKey(Site site) {
+    final api = site.api.trim();
+    if (api.isEmpty) return 'empty:${site.key}';
+    try {
+      final uri = Uri.parse(api);
+      if (uri.host.isNotEmpty) {
+        return '${uri.scheme}://${uri.host}${uri.path}';
+      }
+    } catch (_) {
+      // 解析不了就退回原串，至少完全相同的地址还能合并
+    }
+    return 'raw:$api';
+  }
+
   /// 检测全部源。
   ///
-  /// 并发 4 而不是全量并发：采集站大多在同一个垃圾网络里，
-  /// 一次性发几十个请求既容易互相拖慢，也会让进度条长时间不动。
+  /// 两条提速主线：**并发**（8 路）与**按接口归组**（同一域名只测一次）。
+  /// 不做全量并发：几十个请求同时打，既会被目标站限流，也会让进度条
+  /// 半天不动一下。
   Future<void> _checkAll() async {
     final list = context.read<AppState>().sites;
     if (list.isEmpty || _batchRunning) return;
@@ -117,26 +143,45 @@ class _SitePageState extends State<SitePage> {
       _total = list.length;
       _results.clear();
     });
+    // 归组：同接口的源共用一个检测结论（一批配置里常常几十个源只有几个接口）
+    final groups = <String, List<Site>>{};
+    for (final s in list) {
+      groups.putIfAbsent(_probeKey(s), () => <Site>[]).add(s);
+    }
+    final tasks = groups.values.toList();
+
     var next = 0;
     Future<void> worker() async {
-      while (next < list.length) {
-        // next++ 在 await 之前同步完成，多 worker 之间不会拿到同一个下标
-        final site = list[next++];
-        final result = await HttpService.instance.checkSite(site);
+      while (true) {
         if (!mounted) return;
-        // 源已被删（清除死站 / 清空所有源）就不写结果，只推进进度
-        if (context.read<AppState>().siteOf(site.key) == null) {
-          setState(() => _done++);
-          continue;
-        }
+        // next++ 在 await 之前同步完成，多 worker 之间不会拿到同一个下标
+        if (next >= tasks.length) return;
+        final group = tasks[next++];
+        final appState = context.read<AppState>();
         setState(() {
-          _results[site.key] = result;
-          _done++;
+          for (final s in group) {
+            _busy.add(s.key);
+          }
+        });
+        final result = await HttpService.instance.checkSite(group.first);
+        if (!mounted) return;
+        setState(() {
+          for (final s in group) {
+            _busy.remove(s.key);
+            // 源已被删（清除死站 / 清空所有源）就不写结果，只推进进度
+            if (appState.siteOf(s.key) != null) {
+              _results[s.key] = result;
+            }
+          }
+          _done += group.length;
         });
       }
     }
 
-    await Future.wait(List<Future<void>>.generate(4, (_) => worker()));
+    final workers = tasks.length < _checkConcurrency
+        ? tasks.length
+        : _checkConcurrency;
+    await Future.wait(List<Future<void>>.generate(workers, (_) => worker()));
     if (!mounted) return;
 
     // 检测结束后统一整理启用状态（不在中途写库，避免并发整库读改写互相覆盖）：

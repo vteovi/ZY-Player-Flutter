@@ -121,6 +121,14 @@ class HttpService {
     'Accept': '*/*',
   };
 
+  /// 全 App 复用同一个客户端。
+  ///
+  /// 顶层 `http.get()` 每次都会新建 client 再关掉，等于每个请求都从零握手：
+  /// 同一站点连续翻页本可以命中 keep-alive 省掉 TCP/TLS 握手，DNS 解析结果
+  /// 也能在 client 内缓存（源管理「检测全部」时同一域名只会解析一次）。
+  /// **不要 close** —— 空闲连接由底层 idleTimeout 自动回收。
+  static final http.Client _client = http.Client();
+
   /// 拼接口地址：把站点 api 自带的参数与本次调用的参数**合并**，同名以后者为准。
   ///
   /// ⚠️ 别退回字符串拼接。zyfun 导出的 api 常自带查询串，例如
@@ -169,7 +177,7 @@ class HttpService {
     var reason = '请求失败';
     var worthRetry = false;
     try {
-      final res = await http.get(uri, headers: _headers).timeout(limit);
+      final res = await _client.get(uri, headers: _headers).timeout(limit);
       if (res.statusCode >= 200 && res.statusCode < 300 && res.body.isNotEmpty) {
         return _decode(res);
       }
@@ -181,7 +189,7 @@ class HttpService {
     }
     if (worthRetry) {
       try {
-        final res = await http.post(uri, headers: _headers).timeout(limit);
+        final res = await _client.post(uri, headers: _headers).timeout(limit);
         if (res.statusCode >= 200 &&
             res.statusCode < 300 &&
             res.body.isNotEmpty) {
@@ -222,7 +230,7 @@ class HttpService {
     String userAgent,
     Duration limit,
   ) async {
-    final res = await http.get(
+    final res = await _client.get(
       Uri.parse(url),
       headers: <String, String>{
         'User-Agent': userAgent,
@@ -554,8 +562,12 @@ class HttpService {
   // 源可用性检测
   // ---------------------------------------------------------------------------
 
-  /// 检测专用超时：比正常取数短，免得一堆死站把「检测全部」拖到几分钟
-  static const Duration _checkTimeout = Duration(seconds: 8);
+  /// 检测专用超时：比正常取数短，免得一堆死站把「检测全部」拖到几分钟。
+  ///
+  /// 实测内置源 `?ac=list` 中位 1.4 秒、最慢 3.4 秒，6 秒留了近一倍余量；
+  /// 而死站卡在「SYN 无响应」时，8 秒和 6 秒的体感差 2 秒，8 个源并发时
+  /// 正好省掉一轮的时间。
+  static const Duration _checkTimeout = Duration(seconds: 6);
 
   /// 检测单个源是否还能用。
   ///
@@ -591,8 +603,11 @@ class HttpService {
     if (classes.isEmpty) classes = _classesFromXml(payload.xmlDoc);
     var videos = _videosFrom(payload);
 
-    // 部分 xml 站只在裸地址输出 <class>，与 fetchClasses 的回退保持一致
-    if (classes.isEmpty && videos.isEmpty) {
+    // 部分 xml 站只在裸地址输出 <class>，与 fetchClasses 的回退保持一致。
+    // 但如果带 `ac=list` 就已经返回网页，说明接口路径整体换了 —— 换裸地址
+    // 只会再白等一个超时，直接判 fail（采集站最常见的死法就是主页还在、
+    // 接口改成了网站页）。
+    if (classes.isEmpty && videos.isEmpty && !payload.looksLikeHtml) {
       try {
         final bare = await _load(api, timeout: _checkTimeout);
         classes = _classesFromJson(bare.json);
