@@ -94,7 +94,18 @@ class AppState extends ChangeNotifier {
 
   Future<void> loadSites() async {
     final list = await ZyDatabase.instance.getAll(DbNames.site);
-    _sites = list.map(Site.fromJson).toList();
+    // 同一个 key 在库里出现多次是脏数据（并发写 keys 列表没有互斥），
+    // 它们的启停/删除都按 key 操作、根本区分不开，这里只留第一条 ——
+    // 否则列表里会出现两条一模一样的源，重排/删除时还会互相打架。
+    final seen = <String>{};
+    final sites = <Site>[];
+    for (final json in list) {
+      final site = Site.fromJson(json);
+      if (site.key.isEmpty) continue;
+      if (!seen.add(site.key)) continue;
+      sites.add(site);
+    }
+    _sites = sites;
     notifyListeners();
   }
 
@@ -122,23 +133,27 @@ class AppState extends ChangeNotifier {
   }
 
   /// 启用 / 停用某个源
+  ///
+  /// 用 `put`（upsert）而不是以前的 remove + add：后者在两次 `await` 之间
+  /// 是「库里已没有这条、keys 列表还没写回」的中间态，连点开关或与检测收尾
+  /// 撞车时会互相覆盖 keys 列表，条目就这么丢了。状态本来就一致时直接跳过。
   Future<void> toggleSite(Site site, bool value) async {
-    await ZyDatabase.instance.remove(DbNames.site, site.key);
-    await ZyDatabase.instance.add(DbNames.site, site.copyWith(isActive: value).toJson());
+    if (site.isActive == value) return;
+    await ZyDatabase.instance.put(
+      DbNames.site,
+      site.copyWith(isActive: value).toJson(),
+    );
     await loadSites();
   }
 
-  /// 置顶某个源（重写整库以保证顺序）
+  /// 置顶某个源（只调整顺序，不动条目）
   Future<void> pinSite(Site site) async {
-    final list = List<Site>.from(_sites);
-    final index = list.indexWhere((s) => s.key == site.key);
+    final keys = _sites.map((s) => s.key).toList();
+    final index = keys.indexOf(site.key);
     if (index <= 0) return;
-    final target = list.removeAt(index);
-    list.insert(0, target);
-    await ZyDatabase.instance.removeAll(DbNames.site);
-    for (final s in list) {
-      await ZyDatabase.instance.add(DbNames.site, s.toJson());
-    }
+    keys.removeAt(index);
+    keys.insert(0, site.key);
+    await ZyDatabase.instance.reorder(DbNames.site, keys);
     await loadSites();
   }
 
@@ -161,11 +176,14 @@ class AppState extends ChangeNotifier {
 
   /// 按给定顺序重写源库（只调顺序，不改启用状态）。
   /// 「检测全部」结束后把可用源排前、不可用排后用。
+  ///
+  /// ⚠️ 只写 key 列表顺序，**绝不 removeAll + 逐条 add**：那条路在
+  /// `add` 遇到重复 key 时静默丢条目，是「检测完源少了几条」的元凶。
   Future<void> reorderSites(List<Site> ordered) async {
-    await ZyDatabase.instance.removeAll(DbNames.site);
-    for (final s in ordered) {
-      await ZyDatabase.instance.add(DbNames.site, s.toJson());
-    }
+    await ZyDatabase.instance.reorder(
+      DbNames.site,
+      ordered.map((s) => s.key).toList(),
+    );
     await loadSites();
   }
 

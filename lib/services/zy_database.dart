@@ -153,6 +153,40 @@ class ZyDatabase {
     await _saveKeys(db, reordered);
   }
 
+  /// 只重写 key 列表的顺序，**不动条目本身**。
+  ///
+  /// 以前"重排"是在上层用 `removeAll` + 逐条 `add` 模拟的，那条路很脆：
+  /// `add` 遇到已存在的 key 会静默返回 false，一旦库里有重复 key（并发写入
+  /// 留下的脏数据）条目就被永久吃掉 —— 表现就是「检测一下，源少了几条」。
+  /// 这里改成只写顺序：条目一条不碰，[ordered] 里没覆盖到的旧 key 自动补到
+  /// 末尾，任何情况下都不会丢源。
+  Future<void> reorder(String db, List<String> ordered) async {
+    final existing = await getAllKeys(db);
+    if (existing.isEmpty) return;
+    final existingSet = existing.toSet();
+    final seen = <String>{};
+    final next = <String>[];
+    for (final key in ordered) {
+      if (key.isEmpty || !existingSet.contains(key)) continue;
+      if (seen.add(key)) next.add(key);
+    }
+    // 兜底：调用方给的列表不完整（检测期间新增/删除过源）时，剩下的原样跟上
+    for (final key in existing) {
+      if (seen.add(key)) next.add(key);
+    }
+    if (next.length == existing.length) {
+      var same = true;
+      for (var i = 0; i < next.length; i++) {
+        if (next[i] != existing[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) return; // 顺序没变，省一次磁盘写
+    }
+    await _saveKeys(db, next);
+  }
+
   /// 移除单条记录
   Future<bool> remove(String db, String key) async {
     final keys = await getAllKeys(db);

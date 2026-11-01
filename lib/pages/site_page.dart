@@ -165,14 +165,24 @@ class _SitePageState extends State<SitePage> {
         // next++ 在 await 之前同步完成，多 worker 之间不会拿到同一个下标
         if (next >= tasks.length) return;
         final group = tasks[next++];
-        final appState = context.read<AppState>();
         setState(() {
           for (final s in group) {
             _busy.add(s.key);
           }
         });
-        final result = await HttpService.instance.checkSite(group.first);
+        SiteCheckResult result;
+        try {
+          result = await HttpService.instance.checkSite(group.first);
+        } catch (e) {
+          // 检测自身出错只影响这一组，不能让它把整个批量打断
+          result = SiteCheckResult(
+            SiteHealth.fail,
+            HttpService.describeRequestError(e),
+            0,
+          );
+        }
         if (!mounted) return;
+        final appState = context.read<AppState>();
         setState(() {
           for (final s in group) {
             _busy.remove(s.key);
@@ -186,24 +196,41 @@ class _SitePageState extends State<SitePage> {
       }
     }
 
-    final workers = tasks.length < _checkConcurrency
-        ? tasks.length
-        : _checkConcurrency;
-    await Future.wait(List<Future<void>>.generate(workers, (_) => worker()));
+    try {
+      final workers = tasks.length < _checkConcurrency
+          ? tasks.length
+          : _checkConcurrency;
+      await Future.wait(List<Future<void>>.generate(workers, (_) => worker()));
+    } finally {
+      // 进度条 / 按钮必须复位，否则一次异常就让整页卡在「检测中」
+      if (mounted) {
+        setState(() {
+          _batchRunning = false;
+          _busy.clear();
+        });
+      }
+    }
     if (!mounted) return;
 
     // 检测结束后统一整理启用状态（不在中途写库，避免并发整库读改写互相覆盖）：
-    //  - 不可用（warn / fail）且当前启用的源 → 自动停用
+    //  - **彻底不可用（fail）**且当前启用的源 → 自动停用
     //  - 可用（ok）且当前停用的源 → 自动启用
-    // 实时反馈由每个源的 health chip 变色承担，落库集中到此处，状态确定、写次数少。
+    //
+    // 存疑（warn，"接口能连通但没返回片单"）**不动**：很多采集站的 `ac=list`
+    // 本来就只吐分类，judge 成 warn 的源往往还能正常播放，自动停用会把它们
+    // 从首页站点列表里悄悄拿掉 —— 用户看到的就是「检测一下源就少了」。
     final appState = context.read<AppState>();
     final toDisable = appState.sites
         .where((s) =>
-            s.isActive && _results.containsKey(s.key) && !_results[s.key]!.ok)
+            s.isActive &&
+            _results.containsKey(s.key) &&
+            _results[s.key]!.health == SiteHealth.fail)
         .toList();
     final toEnable = appState.sites
         .where((s) =>
-            !s.isActive && _results.containsKey(s.key) && _results[s.key]!.ok)
+            !s.isActive &&
+            _results.containsKey(s.key) &&
+            _results[s.key]!.ok)
         .toList();
     if (toDisable.isNotEmpty) {
       await appState.setSitesActive(toDisable, false);
@@ -215,25 +242,23 @@ class _SitePageState extends State<SitePage> {
     }
 
     // 重排：可用源排到前面，不可用（warn/fail）排到后面，没检测的放最后。
+    final latest = context.read<AppState>();
     final available = <Site>[];
     final unavailable = <Site>[];
     final undetected = <Site>[];
-    for (final s in appState.sites) {
+    for (final s in latest.sites) {
       final r = _results[s.key];
       if (r == null) {
         undetected.add(s);
-      } else if (r.ok) {
+      } else if (r.ok || r.health == SiteHealth.warn) {
         available.add(s);
       } else {
         unavailable.add(s);
       }
     }
-    await appState.reorderSites(
-      <Site>[...available, ...unavailable, ...undetected],
-    );
+    await latest.reorderSites(<Site>[...available, ...unavailable, ...undetected]);
     if (!mounted) return;
 
-    setState(() => _batchRunning = false);
     final parts = <String>[];
     if (toDisable.isNotEmpty) parts.add('停用 ${toDisable.length} 个失效源');
     if (toEnable.isNotEmpty) parts.add('启用 ${toEnable.length} 个可用源');
@@ -658,6 +683,8 @@ class _SitePageState extends State<SitePage> {
     final ok = values.where((r) => r.health == SiteHealth.ok).length;
     final warn = values.where((r) => r.health == SiteHealth.warn).length;
     final fail = values.where((r) => r.health == SiteHealth.fail).length;
+    // 带上源总数：检测完对不上一眼就能看出来，不用自己去数列表
+    final total = context.read<AppState>().sites.length;
 
     return Padding(
       padding: const EdgeInsets.only(top: 10, bottom: 8),
@@ -673,7 +700,9 @@ class _SitePageState extends State<SitePage> {
           _summaryChip(Icons.cancel_outlined, '不可用 $fail', AppColors.failDark,
               AppColors.failLight, isDark),
           Text(
-            '已检测 ${values.length} 个源',
+            values.length == total
+                ? '已检测 $total 个源'
+                : '已检测 ${values.length} / 共 $total 个源',
             style: TextStyle(
               fontSize: 12,
               color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
