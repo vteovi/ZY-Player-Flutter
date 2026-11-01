@@ -2,17 +2,36 @@ import '../models/site.dart';
 
 /// 一组「同一个接口」的重复源。
 ///
-/// [keep] 是建议保留的那条，[drop] 是其余建议删除的。
+/// [members] 是组内全部源（保持源列表原有顺序），[suggestedKey] 是建议保留
+/// 的那条 —— 具体的「留谁」由用户在清理页自己选，这里只给默认值。
 class DuplicateGroup {
-  const DuplicateGroup({required this.signature, required this.keep, required this.drop});
+  const DuplicateGroup({
+    required this.signature,
+    required this.members,
+    required this.suggestedKey,
+  });
 
   /// 规范化后的接口标识，同一组的成员它都一样。
   final String signature;
-  final Site keep;
-  final List<Site> drop;
+
+  /// 组内全部源，顺序与源列表一致（置顶过的自然排在前面）。
+  final List<Site> members;
+
+  /// 建议保留的 key：组内第一条已启用的；整组都停用时取第一条。
+  final String suggestedKey;
+
+  /// 按建议保留的那条
+  Site get keep => members.firstWhere(
+        (s) => s.key == suggestedKey,
+        orElse: () => members.first,
+      );
+
+  /// 建议删除的其余源
+  List<Site> get drop =>
+      members.where((s) => s.key != keep.key).toList(growable: false);
 
   /// 这个组一共几条源（含保留的那条）。
-  int get total => drop.length + 1;
+  int get total => members.length;
 }
 
 /// 把接口地址规范化成「同一个采集站」的标识。
@@ -71,9 +90,11 @@ const Set<String> _ignoredQueryKeys = <String>{'ac', 'pg', 't', 'tid', 'wd'};
 
 /// 找出所有重复源分组（每组至少 2 条）。
 ///
-/// 保留规则：组内**优先保留已启用的第一条**（列表靠前的优先，用户置顶过的
-/// 自然排在前面）；整组都停用时保留第一条。这样「清理重复」不会把用户正在
-/// 用的源删掉，只留下一个停用的空壳。
+/// 默认保留规则：组内**优先保留已启用的第一条**（列表靠前的优先，用户置顶过的
+/// 自然排在前面）；整组都停用时保留第一条。这样即使直接采用默认选择，也不会把
+/// 用户正在用的源删掉、只留下一个停用的空壳。
+///
+/// 这里不做任何删除，只是分组 —— 具体留谁由「清理重复源」页面让用户点选。
 List<DuplicateGroup> findDuplicateGroups(List<Site> sites) {
   final bySignature = <String, List<Site>>{};
   for (final s in sites) {
@@ -88,13 +109,13 @@ List<DuplicateGroup> findDuplicateGroups(List<Site> sites) {
     if (list.length < 2) return;
     var keepIndex = list.indexWhere((s) => s.isActive);
     if (keepIndex < 0) keepIndex = 0;
-    final keep = list[keepIndex];
-    final drop = <Site>[];
-    for (var i = 0; i < list.length; i++) {
-      if (i == keepIndex) continue;
-      drop.add(list[i]);
-    }
-    groups.add(DuplicateGroup(signature: sig, keep: keep, drop: drop));
+    groups.add(
+      DuplicateGroup(
+        signature: sig,
+        members: List<Site>.unmodifiable(list),
+        suggestedKey: list[keepIndex].key,
+      ),
+    );
   });
   return groups;
 }

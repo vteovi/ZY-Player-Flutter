@@ -7,6 +7,7 @@ import '../services/http_service.dart';
 import '../utils/app_colors.dart';
 import '../utils/site_dup.dart';
 import '../utils/toast.dart';
+import 'duplicate_page.dart';
 
 /// 视频源管理：导入源、可用性检测、启用/停用、清除死站、置顶
 class SitePage extends StatefulWidget {
@@ -283,88 +284,21 @@ class _SitePageState extends State<SitePage> {
         .toList();
   }
 
-  /// 重复源分组：不同配置里带了同一个采集接口，重复导入后就成了几条源。
+  /// 打开「清理重复源」页面：把**所有**重复组列全，逐组由用户点选保留哪一条。
   ///
-  /// 纯本地比对，不需要先检测（`ac` / `pg` 这类操作参数不参与比较，
-  /// 详见 [siteApiSignature]）。
-  List<DuplicateGroup> get _duplicateGroups =>
-      findDuplicateGroups(context.read<AppState>().sites);
-
-  /// 清理重复源：同一个接口只留一条，其余删掉。
-  ///
-  /// 保留的是**正在用的那条**（组内第一个启用的），避免把用户当前在用的源
-  /// 删掉、只留下一个停用的空壳。
-  Future<void> _dedupe() async {
-    final groups = _duplicateGroups;
-    final targets = <Site>[for (final g in groups) ...g.drop];
-    if (targets.isEmpty) return;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
-
-    // 几十组时弹窗会长到看不完，示例只列前几组
-    final preview = groups.take(4).toList();
-    final rest = groups.length - preview.length;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('清理重复源'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '发现 ${groups.length} 组重复，共 ${targets.length} 个源可以删掉。'
-                '每组只保留一个（优先保留正在用的那个）。',
-              ),
-              const SizedBox(height: 12),
-              for (final g in preview)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Text(
-                    '· 保留「${g.keep.name.isEmpty ? '未命名' : g.keep.name}」，'
-                    '删除 ${g.drop.length} 个同接口的源',
-                    style: TextStyle(fontSize: 12.5, color: subText),
-                  ),
-                ),
-              if (rest > 0)
-                Text(
-                  '…另外还有 $rest 组',
-                  style: TextStyle(fontSize: 12.5, color: subText),
-                ),
-              const SizedBox(height: 10),
-              const Text(
-                '删除后无法恢复，收藏和播放记录里来自这些源的条目将无法再打开。',
-                style: TextStyle(fontSize: 12.5),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('清理'),
-          ),
-        ],
-      ),
+  /// 之前是在弹窗里直接按「第一条启用的」批量删，用户看不到全部重复项、
+  /// 也没得选；选谁留谁这种事本来就该让用户自己决定。
+  Future<void> _openDedupe() async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const DuplicatePage()),
     );
-    if (confirmed != true) return;
-    if (!mounted) return;
-
-    final removed = await context.read<AppState>().removeSites(targets);
-    if (!mounted) return;
+    if (!mounted || changed != true) return;
+    // 源已经删了，对应的检测结果和「检测中」标记一起丢掉，否则汇总数字会一直挂着
+    final keys = context.read<AppState>().sites.map((s) => s.key).toSet();
     setState(() {
-      for (final s in targets) {
-        _results.remove(s.key);
-        _busy.remove(s.key);
-      }
+      _results.removeWhere((key, _) => !keys.contains(key));
+      _busy.removeWhere((key) => !keys.contains(key));
     });
-    showToast(context, '已清理 $removed 个重复源');
   }
 
   /// 清除死站：把检测不可用的源从列表里删掉。
@@ -577,7 +511,7 @@ class _SitePageState extends State<SitePage> {
       _toolButton(
         icon: Icons.filter_none,
         label: dup > 0 ? '清理重复 ($dup)' : '清理重复',
-        onPressed: idle || dup == 0 ? null : _dedupe,
+        onPressed: idle || dup == 0 ? null : _openDedupe,
       ),
       _toolButton(
         icon: Icons.delete_outline,
