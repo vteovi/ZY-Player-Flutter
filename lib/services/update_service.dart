@@ -16,8 +16,9 @@ export '../utils/version.dart';
 /// 自己的服务器）。默认指向本仓库 `main` 分支根目录的 `update.json`。
 ///
 /// 大陆直连 `raw.githubusercontent.com` 基本是「DNS 污染 + TCP 被重置」，
-/// 所以默认地址会**并发**尝试若干镜像，谁先成功用谁；安装包下载也一样，
-/// 直连失败会自动套一层 GitHub 加速前缀重试。
+/// 所以默认地址会**并发**尝试若干镜像，把所有能拿到的清单收齐、取版本最高
+/// 的那份（CDN 缓存可能返回旧内容，只认"第一个回包"会漏掉新版本）；
+/// 安装包下载也一样，直连失败会自动套一层 GitHub 加速前缀重试。
 class UpdateService {
   UpdateService._();
 
@@ -25,14 +26,16 @@ class UpdateService {
   static const String defaultManifestUrl =
       'https://raw.githubusercontent.com/vteovi/ZY-Player-Flutter/main/update.json';
 
-  /// 默认镜像组：raw 直连 + 两个 GitHub 加速 + jsDelivr CDN。
+  /// 默认镜像组：raw 直连 + 三个 GitHub 加速 + jsDelivr CDN。
   ///
-  /// 注意 jsDelivr 对 `@main` 有小时级缓存，清单更新可能滞后，所以放最后一位，
-  /// 只在其他都失败时才靠它兜底。
+  /// jsDelivr 对 `@main` 有小时级缓存，**可能返回 200 但内容是上一版**，
+  /// 所以只当兜底（[fetchManifest] 会把所有镜像的清单收齐、取版本最高的那份，
+  /// 不会被它的缓存版本带偏）。
   static List<String> get defaultManifestUrls => <String>[
         defaultManifestUrl,
         'https://ghproxy.net/$defaultManifestUrl',
         'https://gh-proxy.com/$defaultManifestUrl',
+        'https://ghfast.top/$defaultManifestUrl',
         'https://cdn.jsdelivr.net/gh/vteovi/ZY-Player-Flutter@main/update.json',
       ];
 
@@ -74,52 +77,79 @@ class UpdateService {
       throw const UpdateException('更新地址不合法');
     }
 
-    final resp = await _raceGet(uris);
+    final responses = await _fetchAll(uris);
 
-    if (resp.statusCode == 404) {
-      throw const UpdateException('更新清单不存在（HTTP 404），请检查更新地址');
-    }
-    if (resp.statusCode != 200) {
-      throw UpdateException('更新清单读取失败（HTTP ${resp.statusCode}）');
-    }
-
-    final text = utf8.decode(resp.bodyBytes, allowMalformed: true).trim();
-    // 有些站点 404 时会用 200 返回一个 HTML 错误页，先看首字符
-    if (!text.startsWith('{')) {
-      throw const UpdateException('更新清单格式不对（返回的不是 JSON）');
-    }
-    try {
-      final decoded = jsonDecode(text);
-      if (decoded is! Map) {
-        throw const UpdateException('更新清单格式不对');
+    // 多个镜像可能给出**不同版本**的清单（jsDelivr 的 `@main` 有小时级缓存，
+    // 常是最先返回、内容却还是上一版）。这里不认先来后到，取版本最高的那份。
+    UpdateInfo? best;
+    var sawJson = false;
+    for (final resp in responses) {
+      final text = utf8.decode(resp.bodyBytes, allowMalformed: true).trim();
+      // 有些站点 404 时会用 200 返回一个 HTML 错误页，先看首字符
+      if (!text.startsWith('{')) continue;
+      try {
+        final decoded = jsonDecode(text);
+        if (decoded is! Map) continue;
+        final info = UpdateInfo.fromJson(decoded.cast<String, dynamic>());
+        sawJson = true;
+        if (best == null ||
+            info.versionCode > best.versionCode ||
+            (info.versionCode == best.versionCode &&
+                compareVersionName(info.versionName, best.versionName) > 0)) {
+          best = info;
+        }
+      } on FormatException {
+        continue;
       }
-      return UpdateInfo.fromJson(decoded.cast<String, dynamic>());
-    } on FormatException {
-      throw const UpdateException('更新清单格式不对（JSON 解析失败）');
     }
+    if (best != null) return best;
+    throw UpdateException(
+      sawJson ? '更新清单格式不对' : '更新清单格式不对（返回的不是 JSON）',
+    );
   }
 
-  /// 并发请求 [uris]，返回**第一个 200** 的响应；全部失败时抛出人话错误。
+  /// 第一个成功返回后，再等这么久把其他镜像的清单收齐。
+  ///
+  /// 只认「第一个 200」有个真实的坑：本次发版时 raw 直连被重置、一个加速站
+  /// 连不上，只剩 jsDelivr 最先回包 —— 而它缓存的还是上一版清单，老用户就
+  /// 收不到更新提示了。多等 1.5 秒换准确，划算。
+  static const Duration _collectWindow = Duration(milliseconds: 1500);
+
+  /// 并发请求 [uris]，收集**所有成功（200）**的响应；全部失败时抛出人话错误。
   ///
   /// 并发而不是串行：串行在断网环境下要把每个地址的超时累加一遍
   /// （4 个地址 × 12 秒 = 用户等 48 秒），并发最多等一个超时。
-  static Future<http.Response> _raceGet(List<Uri> uris) async {
+  ///
+  /// 第一个成功后启动 [_collectWindow] 计时，时间到就带着已收到的结果返回，
+  /// 不必等那些还在超时里挣扎的镜像。
+  static Future<List<http.Response>> _fetchAll(List<Uri> uris) async {
     final client = http.Client();
-    final completer = Completer<http.Response>();
+    final completer = Completer<List<http.Response>>();
+    final ok = <http.Response>[];
     final failures = <String>[];
     var pending = uris.length;
     var saw404 = false;
+    Timer? window;
+
+    void finish() {
+      if (completer.isCompleted) return;
+      window?.cancel();
+      if (ok.isNotEmpty) {
+        // 快照：之后 finally 里关掉 client，列表可能还会被追加
+        completer.complete(List<http.Response>.unmodifiable(ok));
+        return;
+      }
+      final reason = failures.isEmpty ? '网络连不上' : failures.join('，');
+      completer.completeError(UpdateException(
+        saw404
+            ? '更新清单不存在（HTTP 404），请检查更新地址'
+            : '连不上更新服务器（$reason）。可挂代理后重试，或在设置里填写可用的更新地址',
+      ));
+    }
 
     void settle() {
       pending--;
-      if (pending <= 0 && !completer.isCompleted) {
-        final reason = failures.isEmpty ? '网络连不上' : failures.join('，');
-        completer.completeError(UpdateException(
-          saw404
-              ? '更新清单不存在（HTTP 404），请检查更新地址'
-              : '连不上更新服务器（$reason）。可挂代理后重试，或在设置里填写可用的更新地址',
-        ));
-      }
+      if (pending <= 0) finish();
     }
 
     for (final uri in uris) {
@@ -128,7 +158,8 @@ class UpdateService {
           .timeout(_manifestTimeout)
           .then((resp) {
         if (resp.statusCode == 200) {
-          if (!completer.isCompleted) completer.complete(resp);
+          ok.add(resp);
+          window ??= Timer(_collectWindow, finish);
         } else {
           if (resp.statusCode == 404) saw404 = true;
           failures.add('${_hostLabel(uri)} HTTP ${resp.statusCode}');
@@ -141,7 +172,7 @@ class UpdateService {
     try {
       return await completer.future;
     } finally {
-      // 胜出后立刻掐掉还在跑的请求，避免白耗流量
+      // 收工后立刻掐掉还在跑的请求，避免白耗流量
       client.close();
     }
   }
