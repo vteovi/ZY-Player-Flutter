@@ -5,6 +5,7 @@ import '../models/site.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../utils/app_colors.dart';
+import '../utils/site_dup.dart';
 import '../utils/toast.dart';
 
 /// 视频源管理：导入源、可用性检测、启用/停用、清除死站、置顶
@@ -16,6 +17,13 @@ class SitePage extends StatefulWidget {
 }
 
 class _SitePageState extends State<SitePage> {
+  /// 工具栏从「两行两列」改成「一行排开」的屏宽阈值
+  static const double _wideToolbarWidth = 660;
+
+  /// 源列表变成两列 / 三列的屏宽阈值
+  static const double _twoColumnWidth = 660;
+  static const double _threeColumnWidth = 1080;
+
   final TextEditingController _urlController = TextEditingController();
   bool _showImport = false;
   bool _importing = false;
@@ -250,6 +258,90 @@ class _SitePageState extends State<SitePage> {
         .toList();
   }
 
+  /// 重复源分组：不同配置里带了同一个采集接口，重复导入后就成了几条源。
+  ///
+  /// 纯本地比对，不需要先检测（`ac` / `pg` 这类操作参数不参与比较，
+  /// 详见 [siteApiSignature]）。
+  List<DuplicateGroup> get _duplicateGroups =>
+      findDuplicateGroups(context.read<AppState>().sites);
+
+  /// 清理重复源：同一个接口只留一条，其余删掉。
+  ///
+  /// 保留的是**正在用的那条**（组内第一个启用的），避免把用户当前在用的源
+  /// 删掉、只留下一个停用的空壳。
+  Future<void> _dedupe() async {
+    final groups = _duplicateGroups;
+    final targets = <Site>[for (final g in groups) ...g.drop];
+    if (targets.isEmpty) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+
+    // 几十组时弹窗会长到看不完，示例只列前几组
+    final preview = groups.take(4).toList();
+    final rest = groups.length - preview.length;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('清理重复源'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '发现 ${groups.length} 组重复，共 ${targets.length} 个源可以删掉。'
+                '每组只保留一个（优先保留正在用的那个）。',
+              ),
+              const SizedBox(height: 12),
+              for (final g in preview)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    '· 保留「${g.keep.name.isEmpty ? '未命名' : g.keep.name}」，'
+                    '删除 ${g.drop.length} 个同接口的源',
+                    style: TextStyle(fontSize: 12.5, color: subText),
+                  ),
+                ),
+              if (rest > 0)
+                Text(
+                  '…另外还有 $rest 组',
+                  style: TextStyle(fontSize: 12.5, color: subText),
+                ),
+              const SizedBox(height: 10),
+              const Text(
+                '删除后无法恢复，收藏和播放记录里来自这些源的条目将无法再打开。',
+                style: TextStyle(fontSize: 12.5),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('清理'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    final removed = await context.read<AppState>().removeSites(targets);
+    if (!mounted) return;
+    setState(() {
+      for (final s in targets) {
+        _results.remove(s.key);
+        _busy.remove(s.key);
+      }
+    });
+    showToast(context, '已清理 $removed 个重复源');
+  }
+
   /// 清除死站：把检测不可用的源从列表里删掉。
   ///
   /// 删除不可逆，所以先弹确认框。提示里说明：只想暂时屏蔽就点「检测全部」
@@ -349,7 +441,38 @@ class _SitePageState extends State<SitePage> {
     final state = context.watch<AppState>();
     final sites = state.sites;
     return Scaffold(
-      appBar: AppBar(title: const Text('源管理')),
+      appBar: AppBar(
+        title: const Text('源管理'),
+        actions: [
+          // 「清空所有源」是破坏性操作，放在溢出菜单里，不给它和常用按钮抢位置
+          PopupMenuButton<String>(
+            tooltip: '更多',
+            enabled: sites.isNotEmpty,
+            onSelected: (value) {
+              if (value == 'clearAll') _clearAllSites();
+            },
+            itemBuilder: (ctx) {
+              final isDark = Theme.of(ctx).brightness == Brightness.dark;
+              final danger = isDark ? AppColors.failDark : AppColors.failLight;
+              return <PopupMenuEntry<String>>[
+                PopupMenuItem<String>(
+                  value: 'clearAll',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_sweep_outlined, size: 18, color: danger),
+                      const SizedBox(width: 10),
+                      Text(
+                        '清空所有源',
+                        style: TextStyle(fontSize: 14, color: danger),
+                      ),
+                    ],
+                  ),
+                ),
+              ];
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           _buildToolbar(state),
@@ -362,23 +485,83 @@ class _SitePageState extends State<SitePage> {
           Expanded(
             child: sites.isEmpty
                 ? const _EmptySites()
-                : ListView.builder(
-                    padding: const EdgeInsets.only(top: 6, bottom: 24),
-                    itemCount: sites.length,
-                    itemBuilder: (context, index) =>
-                        _buildItem(sites[index], index, state),
-                  ),
+                : _buildSiteList(sites, state),
           ),
         ],
       ),
     );
   }
 
+  /// 源列表：手机上单列；平板 / 桌面按屏宽排成两到三列，
+  /// 一屏能看全更多源，也免得上滑下滑翻半天。
+  Widget _buildSiteList(List<Site> sites, AppState state) {
+    final width = MediaQuery.sizeOf(context).width;
+    final columns = width >= _threeColumnWidth
+        ? 3
+        : (width >= _twoColumnWidth ? 2 : 1);
+    if (columns == 1) {
+      return ListView.builder(
+        padding: const EdgeInsets.only(top: 6, bottom: 24),
+        itemCount: sites.length,
+        itemBuilder: (context, index) => _buildItem(sites[index], index, state),
+      );
+    }
+    final rowCount = (sites.length + columns - 1) ~/ columns;
+    return ListView.builder(
+      padding: const EdgeInsets.only(top: 6, bottom: 24),
+      itemCount: rowCount,
+      itemBuilder: (context, row) {
+        final start = row * columns;
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var c = 0; c < columns; c++)
+              Expanded(
+                child: start + c < sites.length
+                    ? _buildItem(sites[start + c], start + c, state)
+                    : const SizedBox.shrink(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildToolbar(AppState state) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final danger = Theme.of(context).brightness == Brightness.dark
+        ? AppColors.failDark
+        : AppColors.failLight;
     // 「清除死站」得先检测出 fail 才有目标，没检测时为 0 → 按钮保持禁用
     final dead = _deadSites.length;
+    // 「清理重复」是纯本地比对，不依赖有没有检测过
+    final dup = duplicateDropCount(state.sites);
     final idle = _batchRunning || state.sites.isEmpty;
+    final wide = MediaQuery.sizeOf(context).width >= _wideToolbarWidth;
+
+    final actions = <Widget>[
+      _toolButton(
+        icon: _showImport ? Icons.close : Icons.file_download_outlined,
+        label: _showImport ? '取消' : '导入视频源',
+        onPressed: _toggleImport,
+      ),
+      _toolButton(
+        icon: Icons.network_check,
+        label: _batchRunning ? '检测中 $_done/$_total' : '检测全部',
+        onPressed: idle ? null : _checkAll,
+      ),
+      _toolButton(
+        icon: Icons.filter_none,
+        label: dup > 0 ? '清理重复 ($dup)' : '清理重复',
+        onPressed: idle || dup == 0 ? null : _dedupe,
+      ),
+      _toolButton(
+        icon: Icons.delete_outline,
+        label: dead > 0 ? '清除死站 ($dead)' : '清除死站',
+        onPressed: idle || dead == 0 ? null : _clearDead,
+        color: danger,
+      ),
+    ];
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
       child: Column(
@@ -421,65 +604,54 @@ class _SitePageState extends State<SitePage> {
                 ],
               ),
             ),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _toggleImport,
-                  icon: Icon(
-                    _showImport ? Icons.close : Icons.file_download_outlined,
-                    size: 18,
-                  ),
-                  label: Text(_showImport ? '取消' : '导入视频源'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _batchRunning || state.sites.isEmpty
-                      ? null
-                      : _checkAll,
-                  icon: const Icon(Icons.network_check, size: 18),
-                  label: Text(_batchRunning ? '检测中 $_done/$_total' : '检测全部'),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: idle || dead == 0 ? null : _clearDead,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('清除死站', style: TextStyle(fontSize: 13)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                        isDark ? AppColors.failDark : AppColors.failLight,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: idle ? null : _clearAllSites,
-                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                  label: const Text('清空所有源', style: TextStyle(fontSize: 13)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                        isDark ? AppColors.failDark : AppColors.failLight,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          // 宽屏把按钮排成一行（按内容取宽，不拉满整行显得空）；
+          // 窄屏两行两列，拇指区更好点。
+          if (wide)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(spacing: 10, runSpacing: 8, children: actions),
+            )
+          else ...[
+            _twoColumn(actions[0], actions[1]),
+            const SizedBox(height: 8),
+            _twoColumn(actions[2], actions[3]),
+          ],
           if (_results.isNotEmpty) _buildSummary(),
         ],
       ),
     );
   }
 
-  /// 检测结果汇总（清理动作放在工具栏第二行，这里只报数）
+  /// 窄屏工具栏的一行两个等宽按钮
+  Widget _twoColumn(Widget a, Widget b) {
+    return Row(
+      children: [
+        Expanded(child: a),
+        const SizedBox(width: 10),
+        Expanded(child: b),
+      ],
+    );
+  }
+
+  /// 工具栏统一按钮：内外边距一致，宽屏按内容取宽时也不会高矮参差
+  Widget _toolButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    Color? color,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label, style: const TextStyle(fontSize: 13)),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: color,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      ),
+    );
+  }
+
+  /// 检测结果汇总（清理动作放在工具栏，这里只报数）
   Widget _buildSummary() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final values = _results.values;
@@ -622,7 +794,9 @@ class _SitePageState extends State<SitePage> {
                         )
                       : Row(
                           children: [
-                            _resultChip(result, isDark),
+                            // 多列布局下卡片更窄，长结论（如「域名解析失败…」）
+                            // 必须能省略，否则整行溢出
+                            Flexible(child: _resultChip(result, isDark)),
                             const SizedBox(width: 6),
                             Text(
                               '${result.ms}ms',
@@ -675,18 +849,23 @@ class _SitePageState extends State<SitePage> {
 
   Widget _resultChip(SiteCheckResult result, bool isDark) {
     final color = _healthColor(result, isDark);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: isDark ? 0.15 : 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        result.message,
-        style: TextStyle(
-          fontSize: 11,
-          color: color,
-          fontWeight: FontWeight.w500,
+    return Tooltip(
+      message: result.message,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: isDark ? 0.15 : 0.1),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Text(
+          result.message,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 11,
+            color: color,
+            fontWeight: FontWeight.w500,
+          ),
         ),
       ),
     );

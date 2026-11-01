@@ -4,8 +4,8 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 
 ## ⚠️ 协作纪律（用户明确要求，勿破）
 1. **构建（APK / Windows 包）一律由用户跑**（2026-10-06 原话：「你不进行构建…你只负责写代码」）。交付 = 改动清单 + 静态自检结论 + 给用户执行的命令。
-2. **只 `git commit` 本地，绝不 `git push`**（2026-10-01）。改完 `git add` + `commit`，确认 `git status --porcelain` 为空再汇报；推送命令只附给用户。
-3. **绝不主动重试网络操作**。2026-10-30 实测本机直连 `github.com:443` 不通（DNS 正常、TCP 21s 超时），沙箱代理只放行 `api.github.com`/`codeload.github.com`，无 SSH key、无本地代理端口。push 跑一次失败就把命令交用户。
+2. **默认只 `git commit`，push 需用户明确要求**（2026-10-01 定，2026-11-01 放宽）：用户说「你来帮我推」时可以直接 push；否则改完 `git add` + `commit`，确认 `git status --porcelain` 为空再汇报，推送命令附给用户。
+3. **push 可以成功，网络时通时不通**。2026-10-30 直连 `github.com:443` 全部超时；2026-11-01 一次成功（main + tag 都推上去了，credential 已由 Git Credential Manager 缓存且有效）。所以 push 先试一次即可：报 `failed to receive handshake` / 超时就别再重试，把命令交用户；成功就直接往下走。`git push` 成功不代表 Release 资产下载快（见下），两者是不同的线路。
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
 5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
 6. 每次发版同步维护根目录 `更新记录.MD`：按版本**倒序**，每条「日期 + 新增/优化/修复/调整 + 一句人话」，不写实现细节与 chore/docs 提交；头部「当前版本」一起改。
