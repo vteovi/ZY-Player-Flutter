@@ -9,6 +9,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
 5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
 6. 每次发版同步维护根目录 `更新记录.MD`：按版本**倒序**，每条「日期 + 新增/优化/修复/调整 + 一句人话」，不写实现细节与 chore/docs 提交；头部「当前版本」一起改。
+7. **分支纪律（2026-11-04 用户要求）**：`main` = 稳定发布版，只放已验收的代码；新功能 / 试验性改动一律在 **`dev`** 分支做，稳定后再合回 `main`。日常开发默认在 `dev` 上 `commit`，不要直接在 `main` 上写代码。合回 `main` 用 `git checkout main && git merge --no-ff dev`，合完照常 bump 版本 + 打 tag 发版。CI 只由 `v*` tag 或手动触发，push 到 `dev` **不会**触发云端构建。
 
 ## 构建
 - Flutter 3.32.6 在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）；`tools/build_apk_all_abi.bat` 一次出三 ABI。**版本号只需同步两处**：`pubspec.yaml` + `android/local.properties`（被 gitignore，不入库）；设置页副标题 1.18.0 起走原生 `PackageManager`，不再手写。
