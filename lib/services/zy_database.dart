@@ -111,46 +111,77 @@ class ZyDatabase {
   }
 
   /// 批量写入（upsert 合并）：已存在的 key 覆盖、新增的追加。
-  /// 用于局域网同步把远端数据合并进本地库。返回成功写入（新增或更新）的条数。
+  /// 用于局域网同步把远端数据合并进本地库。
+  ///
+  /// 返回**实际发生变化**（新增，或内容确实不同）的条数；同一个库反复同步时
+  /// 返回 0，因为没有任何一个字节需要落盘。
+  ///
+  /// 为什么要先比对内容再写：Windows 端的 shared_preferences 是纯 Dart 实现，
+  /// **每次 `setString` 都会把整份偏好重新 `json.encode` 一次，再
+  /// `writeAsStringSync` 把整个文件重写一遍**（同步阻塞 UI 线程）。逐条 put
+  /// 等于「N 次全量序列化 + N 次全量写盘」，几百条历史就能让界面卡住十几秒。
+  /// 先比对、只写差异之后，重复同步退化成纯内存比较，一次磁盘写都没有。
   ///
   /// 写完后重排 key 列表，使同步过来的条目按**来源顺序**排在前面、接收端独有的
   /// 条目保持在后面（保留其原有相对顺序）。这样来源的排序（尤其是视频源的手动
   /// 排序 / 置顶 / 检测后重排结果）也能一并同步过来，而不是把新源全堆到末尾。
-  Future<int> importRaw(String db, List<Map<String, dynamic>> items) async {
+  /// 顺序没变就不写，key 列表全程只落盘一次。
+  Future<int> importRaw(
+    String db,
+    List<Map<String, dynamic>> items, {
+    void Function(int done, int total)? onProgress,
+  }) async {
     if (items.isEmpty) return 0;
-    var count = 0;
+    final store = await _store;
+    final oldKeys = await getAllKeys(db);
+
+    // key -> 待写入的新内容。内容与本地一致的条目不进表，直接跳过。
+    final changed = <String, String>{};
+    final sourceOrder = <String>[];
+    final seenSource = <String>{};
+
     for (final item in items) {
       final key = (item['key'] ?? '').toString();
       if (key.isEmpty) continue;
-      if (await put(db, item)) count++;
+      if (seenSource.add(key)) sourceOrder.add(key);
+      final encoded = jsonEncode(item);
+      // getString 走的是内存缓存，不产生磁盘 IO
+      if (store.getString(_itemKey(db, key)) != encoded) {
+        changed[key] = encoded;
+      }
     }
-    await _reorderKeysAfterImport(db, items);
-    return count;
-  }
 
-  /// 导入后重排 key 列表：来源顺序在前、接收端独有在后。
-  Future<void> _reorderKeysAfterImport(
-    String db,
-    List<Map<String, dynamic>> items,
-  ) async {
-    final sourceOrder = items
-        .map((e) => (e['key'] ?? '').toString())
-        .where((k) => k.isNotEmpty)
-        .toList();
-    if (sourceOrder.isEmpty) return;
-    final keys = await getAllKeys(db);
-    final sourceSet = sourceOrder.toSet();
-    final reordered = <String>[];
+    // 目标顺序：来源条目按来源顺序排前，本地独有的按原有相对顺序跟在后
+    final next = <String>[];
     final seen = <String>{};
-    // 1) 来源条目按来源相对顺序排前（去重）
-    for (final k in sourceOrder) {
-      if (seen.add(k)) reordered.add(k);
+    for (final key in sourceOrder) {
+      if (seen.add(key)) next.add(key);
     }
-    // 2) 接收端独有的条目排后（保持原有相对顺序）
-    for (final k in keys) {
-      if (!sourceSet.contains(k) && seen.add(k)) reordered.add(k);
+    for (final key in oldKeys) {
+      if (seen.add(key)) next.add(key);
     }
-    await _saveKeys(db, reordered);
+    var sameOrder = next.length == oldKeys.length;
+    if (sameOrder) {
+      for (var i = 0; i < next.length; i++) {
+        if (next[i] != oldKeys[i]) {
+          sameOrder = false;
+          break;
+        }
+      }
+    }
+
+    if (changed.isEmpty && sameOrder) return 0;
+
+    final total = changed.length;
+    var done = 0;
+    for (final entry in changed.entries) {
+      await store.setString(_itemKey(db, entry.key), entry.value);
+      done++;
+      // 每 20 条报一次，界面上的数字能一直在走，不至于看着像死了
+      if (done % 20 == 0 || done == total) onProgress?.call(done, total);
+    }
+    if (!sameOrder) await _saveKeys(db, next);
+    return changed.length;
   }
 
   /// 只重写 key 列表的顺序，**不动条目本身**。

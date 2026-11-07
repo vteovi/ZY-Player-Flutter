@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 /// 局域网设备同步：零依赖，全部基于 dart:io 标准库。
 ///
@@ -220,22 +221,40 @@ class SyncServer {
   SyncServer._(this._server);
 
   /// 启动服务。端口被占用时返回 null（调用方提示用户）。
+  ///
+  /// [load] 在**每次请求时**调用，实时导出当前数据。
+  /// 以前是把导出的结果当参数传进来 —— 那是「点开启共享」那一刻的快照，
+  /// 之后新加的收藏、刚看的记录都不会进共享，对端同步到的是旧数据。
   static Future<SyncServer?> start(
-    Map<String, List<Map<String, dynamic>>> payload, {
+    Future<Map<String, List<Map<String, dynamic>>>> Function() load, {
     int port = 9527,
   }) async {
     try {
       final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
+      // 对端只连不发（比如点了一下「测试连接」）时，别把连接挂两分钟
+      server.idleTimeout = const Duration(seconds: 15);
       final instance = SyncServer._(server);
       server.listen((request) async {
-        if (request.method == 'GET' && request.uri.path == '/sync') {
+        if (request.method != 'GET' || request.uri.path != '/sync') {
+          request.response.statusCode = 404;
+          await request.response.close();
+          return;
+        }
+        try {
+          final payload = await load();
+          final bytes = utf8.encode(
+            jsonEncode(<String, dynamic>{'ok': true, 'data': payload}),
+          );
           request.response
             ..statusCode = 200
             ..headers.contentType = ContentType.json
-            ..write(jsonEncode(<String, dynamic>{'ok': true, 'data': payload}));
+            // 带上长度，接收端才能算出进度、也能立刻知道总共多大
+            ..contentLength = bytes.length
+            ..add(bytes);
           await request.response.close();
-        } else {
-          request.response.statusCode = 404;
+        } catch (_) {
+          // 导出失败（比如正好在清库）也要回一个明确的响应，不能让对端干等
+          request.response.statusCode = 500;
           await request.response.close();
         }
       });
@@ -261,27 +280,46 @@ class SyncException implements Exception {
   String toString() => message;
 }
 
+/// 用户中途点了取消。单独成类，好让上层把它和「失败」分开显示。
+class SyncCancelled implements Exception {
+  const SyncCancelled();
+
+  @override
+  String toString() => '已取消';
+}
+
 /// 同步端 HTTP 客户端：拉取对方共享的数据。
 class SyncClient {
-  static const Duration defaultTimeout = Duration(seconds: 12);
+  /// 建连超时。局域网里握手迟迟握不上，基本就是对方没开共享，或者手机
+  /// 息屏后进程被系统冻结了。
+  static const Duration connectTimeout = Duration(seconds: 10);
+
+  /// 接收数据时的**空闲**超时：只要还有字节在来就不算超时。
+  ///
+  /// 以前是一个固定 12 秒的总超时，历史记录一多，数据还没传完就被掐断，
+  /// 用户看到的是「卡半天，然后报连接超时」—— 其实对方一直在传。
+  static const Duration idleTimeout = Duration(seconds: 20);
 
   /// 拉取数据。
   ///
-  /// 连接阶段失败会自动补试一次（[retries]）：手机息屏后 Wi-Fi 进入省电，
-  /// 第一个 SYN 常被直接丢掉，隔几百毫秒再发往往就能连上。
+  /// 连接阶段失败会自动补试一次：手机息屏后 Wi-Fi 进入省电，第一个 SYN
+  /// 常被直接丢掉，隔几百毫秒再发往往就能连上。
+  ///
+  /// [onProgress] 每收到一块数据回调一次，参数是已接收字节数（用于界面进度）。
+  /// [isCancelled] 返回 true 时立刻中断，并抛 [SyncCancelled]。
   static Future<Map<String, List<Map<String, dynamic>>>> fetch(
     String host,
     int port, {
-    Duration timeout = defaultTimeout,
-    int retries = 1,
+    void Function(int received)? onProgress,
+    bool Function()? isCancelled,
   }) async {
     Object? lastError;
-    for (var attempt = 0; attempt <= retries; attempt++) {
+    for (var attempt = 0; attempt <= 1; attempt++) {
       try {
-        return await _fetchOnce(host, port, timeout);
+        return await _fetchOnce(host, port, onProgress, isCancelled);
       } catch (e) {
         lastError = e;
-        if (attempt >= retries || !_retryable(e)) break;
+        if (attempt >= 1 || !_retryable(e)) break;
         await Future<void>.delayed(const Duration(milliseconds: 700));
       }
     }
@@ -291,14 +329,16 @@ class SyncClient {
   static Future<Map<String, List<Map<String, dynamic>>>> _fetchOnce(
     String host,
     int port,
-    Duration timeout,
+    void Function(int received)? onProgress,
+    bool Function()? isCancelled,
   ) async {
     final client = HttpClient();
     try {
-      client.connectionTimeout = timeout;
+      client.connectionTimeout = connectTimeout;
+      client.idleTimeout = idleTimeout;
       final uri = Uri.http('$host:$port', '/sync');
-      final request = await client.getUrl(uri);
-      final response = await request.close().timeout(timeout);
+      final request = await client.getUrl(uri).timeout(connectTimeout);
+      final response = await request.close().timeout(connectTimeout);
       if (response.statusCode != 200) {
         // 对方已经回了响应，说明服务在跑，重试没有意义
         await response.drain<void>();
@@ -307,9 +347,39 @@ class SyncClient {
           '这个端口上跑的可能不是本应用',
         );
       }
-      final body =
-          await response.transform(utf8.decoder).join().timeout(timeout);
-      final decoded = jsonDecode(body);
+
+      final total = response.contentLength; // 对方没给长度时是 -1
+      var received = 0;
+      final bytes = BytesBuilder(copy: false);
+      try {
+        // Stream.timeout 计的是「两块数据之间的间隔」，不是总时长：
+        // 只要还在传就不会误判，真卡死才断。
+        await for (final chunk in response.timeout(idleTimeout)) {
+          bytes.add(chunk);
+          received += chunk.length;
+          onProgress?.call(received);
+          if (isCancelled?.call() ?? false) throw const SyncCancelled();
+        }
+      } on TimeoutException {
+        throw SyncException(
+          total > 0
+              ? '数据传到 ${_sizeText(received)} / ${_sizeText(total)} 就停住了。\n'
+                  '· 手机是否刚息屏或被切到后台\n'
+                  '· 两台设备之间的 Wi-Fi 是否稳定'
+              : '数据传到 ${_sizeText(received)} 就停住了。\n'
+                  '· 手机是否刚息屏或被切到后台\n'
+                  '· 两台设备之间的 Wi-Fi 是否稳定',
+        );
+      }
+
+      Object? decoded;
+      try {
+        decoded = jsonDecode(
+          utf8.decode(bytes.takeBytes(), allowMalformed: true),
+        );
+      } on FormatException {
+        throw SyncException('对方返回的数据不是合法 JSON，可能传到一半被截断了');
+      }
       if (decoded is! Map) throw SyncException('对方返回的数据格式不正确');
       final data = decoded['data'];
       if (data is! Map) throw SyncException('对方返回的数据缺少 data 字段');
@@ -326,6 +396,13 @@ class SyncClient {
     } finally {
       client.close(force: true);
     }
+  }
+
+  /// 字节数转成人能读的大小
+  static String _sizeText(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   static bool _retryable(Object e) =>
@@ -350,6 +427,7 @@ class SyncClient {
   /// 对人没有意义 —— 它既没说哪一端有问题，也没说下一步该干什么。
   static String describeError(Object error, String host, int port) {
     final target = '$host:$port';
+    if (error is SyncCancelled) return '已取消同步，本地数据没有改动。';
     if (error is SyncException) return error.message;
     if (error is TimeoutException) {
       return '连接 $target 超时：对方没有回应。\n'

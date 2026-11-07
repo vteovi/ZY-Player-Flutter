@@ -3,16 +3,20 @@
 uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/源管理/设置），引擎只认 maccms json/xml 采集站。provider + ChangeNotifier（全局 `AppState`）；shared_preferences 存储（键 `ZY-{db}-DB` / `{db}-{key}`）；包名 `com.zy.player`、minSdk 24、targetSdk 35。日期细节见同目录日誌。
 
 ## ⚠️ 协作纪律（用户明确要求，勿破）
-1. **构建（APK / Windows 包）一律由用户跑**（2026-10-06 原话：「你不进行构建…你只负责写代码」）。交付 = 改动清单 + 静态自检结论 + 给用户执行的命令。
+1. **构建一律走 GitHub Actions，本机没有 Flutter（2026-11-07 用户原话：「我把 flutter 环境全部去掉了，你改为 GitHub 在线构建吧」）**。`C:\flutter` 已不存在，`dart`/`flutter` 命令都没有，`tools/build_apk.bat` 之类本地脚本已失效。交付 = 改动清单 + push 到 `dev` 等 CI 结论 + 告诉用户去 Actions 手动触发打包。
 2. **默认只 `git commit`，push 需用户明确要求**（2026-10-01 定，2026-11-01 放宽）：用户说「你来帮我推」时可以直接 push；否则改完 `git add` + `commit`，确认 `git status --porcelain` 为空再汇报，推送命令附给用户。
 3. **push 可以成功，网络时通时不通**。2026-10-30 直连 `github.com:443` 全部超时；2026-11-01 一次成功（main + tag 都推上去了，credential 已由 Git Credential Manager 缓存且有效）。所以 push 先试一次即可：报 `failed to receive handshake` / 超时就别再重试，把命令交用户；成功就直接往下走。**例外（2026-11-01 实测有效）**：连续报 `schannel: failed to receive handshake` 时改用 `git -c http.version=HTTP/1.1 push origin main` 往往就通了（HTTP/2 握手在这里不稳）；`CONNECT tunnel failed 502` 直接重试一次即可。`git push` 成功不代表 Release 资产下载快（见下），两者是不同的线路。
 4. 跑 git 前先 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
-5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
+5. 改完必须静态校验 + bump 版本号（SemVer：feat→MINOR / fix→PATCH，versionCode +1）。**本机已无 Dart SDK，`dart analyze` 跑不了** —— 静态校验靠 `.github/workflows/analyze.yml`（push 到 `dev`/`main` 或 PR 自动跑 `flutter analyze`），改完 push 后看 CI 结论再汇报。不编译发现不了错误，改引用后务必人肉复查仍被使用的符号（曾误删仍在用的 import）。
 6. 每次发版同步维护根目录 `更新记录.MD`：按版本**倒序**，每条「日期 + 新增/优化/修复/调整 + 一句人话」，不写实现细节与 chore/docs 提交；头部「当前版本」一起改。
 7. **分支纪律（2026-11-04 用户要求）**：`main` = 稳定发布版，只放已验收的代码；新功能 / 试验性改动一律在 **`dev`** 分支做，稳定后再合回 `main`。日常开发默认在 `dev` 上 `commit`，不要直接在 `main` 上写代码。合回 `main` 用 `git checkout main && git merge --no-ff dev`，合完照常 bump 版本 + 打 tag 发版。CI 只由 `v*` tag 或手动触发，push 到 `dev` **不会**触发云端构建。
 
 ## 构建
-- Flutter 3.32.6 在 `C:\flutter`；`tools/build_apk.bat` 一键（日志 `build_log.txt`）；`tools/build_apk_all_abi.bat` 一次出三 ABI。**版本号只需同步两处**：`pubspec.yaml` + `android/local.properties`（被 gitignore，不入库）；设置页副标题 1.18.0 起走原生 `PackageManager`，不再手写。
+- **本机已无 Flutter（2026-11-07 用户删除）**，`C:\flutter`、`tools/build_apk.bat`、`tools/build_apk_all_abi.bat` 全部作废，别再让用户跑本地脚本。**版本号仍同步两处**：`pubspec.yaml` + `android/local.properties`（被 gitignore，不入库；如已随环境删除则只改 pubspec）；设置页副标题 1.18.0 起走原生 `PackageManager`，不再手写。
+- **出包方式**：仓库 Actions → `Build APK + Windows` → Run workflow → 选分支（`dev` 验功能 / `main` 发正式）→ 选 `variant`（split 推荐）。手动触发**不会**发 Release，产物只在 Artifacts（需登录，保留 30 天）。只有 push `v*` tag 才建 Release。
+- **静态检查**：`.github/workflows/analyze.yml`，push `dev`/`main` 或开 PR 自动跑 `flutter analyze --no-fatal-infos --no-fatal-warnings lib`（error 才红）。查结论：`curl -s api.github.com/repos/vteovi/ZY-Player-Flutter/actions/runs?per_page=3`。
+- **分支**：`main` = 稳定发布线，`dev` = 开发线；push 到 `dev` 只跑 analyze，不打包。
+
 - 环境：`ANDROID_HOME=C:\Android\Sdk`、`JAVA_HOME=C:\Java\jdk-17` 须持久化；NDK 固定 `27.0.12077973`；gradle.properties 关 kotlin 增量 + in-process；release 关 lint/jetifier。
 - **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 包 ~68MB（`app-release.apk`）；纯 arm64 ~18MB 必须 `--split-per-abi`（`app-arm64-release.apk`）。首次出包 ~26 分钟，日志阶段性不刷属正常。
 - **GitHub Actions**（`.github/workflows/build-apk.yml`）：手动 `variant`=split/fat/both，或 push `v*` tag 自动构建并发 Release；产物收集在 `tools/ci-collect-apk.sh`（两批构建各调一次，放最后会被覆盖）。`runs-on` 已固定 `ubuntu-24.04`（ubuntu-latest 2026-10 起迁 Ubuntu 26）。actions 版本 2026-10 已升：checkout@v7 / setup-java@v6 / cache@v6 / upload-artifact@v7（Node20 弃用提示即因此）。

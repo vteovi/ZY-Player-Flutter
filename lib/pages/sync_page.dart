@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../services/sync_service.dart';
 import '../services/zy_database.dart';
+import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 
 /// 局域网设备同步。
@@ -47,6 +48,19 @@ class _SyncPageState extends State<SyncPage>
   bool _testing = false;
   String _testResult = '';
   bool _testOk = false;
+
+  /// 同步过程中的阶段说明（连接中 / 正在接收 xx KB / 正在写入 N 条）。
+  /// 「卡住不动」有一半是没有反馈造成的，所以每一步都要说出来。
+  String _syncPhase = '';
+
+  /// 用户点了取消。接收阶段每收到一块数据检查一次。
+  bool _cancelRequested = false;
+
+  /// 只有接收阶段能取消；已经进入写库阶段就让它写完，避免写一半。
+  bool _cancelEnabled = false;
+
+  /// 进度回调节流，避免每收一个 TCP 包就重建一次界面。
+  DateTime _lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// 可同步的数据类别（顺序固定，影响 UI 与导出键）
   static const List<_SyncScope> _scopes = [
@@ -104,9 +118,11 @@ class _SyncPageState extends State<SyncPage>
       showToast(context, '请至少选择一类数据', success: false);
       return;
     }
-    final payload =
-        await context.read<AppState>().exportDbs(_shareSelected);
-    final server = await SyncServer.start(payload);
+    // 每次请求时实时导出：开启共享之后新加的收藏、刚看完的记录也能同步过去，
+    // 而不是只能同步「点开启共享那一刻」的快照。
+    final appState = context.read<AppState>();
+    final dbs = Set<String>.from(_shareSelected);
+    final server = await SyncServer.start(() => appState.exportDbs(dbs));
     if (server == null) {
       showToast(context, '共享端口 9527 被占用，请稍后重试', success: false);
       return;
@@ -180,32 +196,87 @@ class _SyncPageState extends State<SyncPage>
     setState(() {
       _syncing = true;
       _syncResult = '';
+      _cancelRequested = false;
+      _cancelEnabled = true;
+      _syncPhase = '正在连接 $host:$port…';
     });
     try {
-      final data = await SyncClient.fetch(host, port);
+      final data = await SyncClient.fetch(
+        host,
+        port,
+        onProgress: _pushProgress,
+        isCancelled: () => _cancelRequested,
+      );
+      if (!mounted) return;
+
       // 只合并用户在接收端勾选的类别（对方可能共享了更多）
       final wanted = <String, List<Map<String, dynamic>>>{};
       for (final key in _pullSelected) {
         if (data[key] != null) wanted[key] = data[key]!;
       }
-      final summary =
-          await context.read<AppState>().importDbs(wanted);
+      final incoming = wanted.values.fold<int>(0, (sum, list) => sum + list.length);
+      setState(() {
+        // 进入写库阶段就不再允许取消：写到一半停下会留下半套数据
+        _cancelEnabled = false;
+        _syncPhase = incoming == 0
+            ? '对方没有勾选范围内的数据'
+            : '正在写入 $incoming 条…';
+      });
+
+      final appState = context.read<AppState>();
+      final summary = await appState.importDbs(
+        wanted,
+        onProgress: (db, done, total) {
+          if (!mounted) return;
+          setState(() => _syncPhase = '正在写入${_scopeLabel(db)} $done/$total 条…');
+        },
+      );
       if (!mounted) return;
+
+      final changed = summary.values.fold<int>(0, (sum, n) => sum + n);
       final parts = summary.entries
+          .where((e) => e.value > 0)
           .map((e) => '${_scopeLabel(e.key)} ${e.value} 条')
           .toList();
       setState(() {
-        _syncResult = parts.isEmpty ? '没有可同步的数据' : '同步完成：\n${parts.join('，')}';
+        _syncResult = changed == 0
+            ? '数据已是最新，没有需要更新的条目。'
+            : '同步完成：\n${parts.join('，')}';
       });
-      showToast(context, '同步完成', success: true);
+      showToast(context, changed == 0 ? '数据已是最新' : '同步完成', success: true);
     } catch (e) {
       if (!mounted) return;
-      final msg = SyncClient.describeError(e, host, port);
-      setState(() => _syncResult = '同步失败：$msg');
-      showToast(context, '同步失败：$msg', success: false);
+      if (e is SyncCancelled) {
+        setState(() => _syncResult = '已取消同步，本地数据没有改动。');
+      } else {
+        final msg = SyncClient.describeError(e, host, port);
+        setState(() => _syncResult = '同步失败：$msg');
+        showToast(context, '同步失败：$msg', success: false);
+      }
     } finally {
-      if (mounted) setState(() => _syncing = false);
+      if (mounted) {
+        setState(() {
+          _syncing = false;
+          _syncPhase = '';
+          _cancelEnabled = false;
+        });
+      }
     }
+  }
+
+  /// 接收进度回调节流到约 12 次/秒，够看出动静，又不至于把界面刷爆。
+  void _pushProgress(int received) {
+    final now = DateTime.now();
+    if (now.difference(_lastProgressAt).inMilliseconds < 80) return;
+    _lastProgressAt = now;
+    if (!mounted) return;
+    setState(() => _syncPhase = '正在接收数据… ${_fmtBytes(received)}');
+  }
+
+  static String _fmtBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
   /// 只测「这台电脑能不能连到对方 9527」，不导入任何数据。
@@ -341,6 +412,12 @@ class _SyncPageState extends State<SyncPage>
                 Text('本机名称：$_deviceName'),
                 Text('本机 IP：${_localIp.isEmpty ? '获取中…' : _localIp}'),
                 Text('端口：9527'),
+                const SizedBox(height: 8),
+                const Text(
+                  '同步期间请让本机屏幕保持常亮。息屏后系统会冻结后台网络，'
+                  '对方会一直等到超时才报错。',
+                  style: TextStyle(fontSize: 11.5, color: Colors.grey, height: 1.4),
+                ),
               ],
             ),
           ),
@@ -452,17 +529,53 @@ class _SyncPageState extends State<SyncPage>
           });
         }),
         const SizedBox(height: 20),
-        FilledButton.icon(
-          onPressed: _syncing ? null : _doSync,
-          icon: _syncing
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.sync),
-          label: Text(_syncing ? '同步中…' : '开始同步'),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _syncing ? null : _doSync,
+                icon: _syncing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.sync),
+                label: Text(_syncing ? '同步中…' : '开始同步'),
+              ),
+            ),
+            if (_syncing) ...[
+              const SizedBox(width: 10),
+              OutlinedButton(
+                onPressed:
+                    _cancelEnabled ? () => setState(() => _cancelRequested = true) : null,
+                child: const Text('取消'),
+              ),
+            ],
+          ],
         ),
+        if (_syncing && _syncPhase.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Icon(
+                Icons.hourglass_bottom,
+                size: 14,
+                color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _syncPhase,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 10),
         OutlinedButton.icon(
           onPressed: (_syncing || _testing) ? null : _testConnection,
@@ -484,7 +597,8 @@ class _SyncPageState extends State<SyncPage>
           _resultBox(
             isDark,
             _syncResult,
-            ok: _syncResult.startsWith('同步完成') || _syncResult == '没有可同步的数据',
+            ok: _syncResult.startsWith('同步完成') ||
+                _syncResult.startsWith('数据已是最新'),
           ),
         ],
       ],
