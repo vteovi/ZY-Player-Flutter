@@ -561,13 +561,27 @@ class AppState extends ChangeNotifier {
     return result;
   }
 
-  /// 把远端拉取的数据合并进本地（按 key upsert）。返回各库写入（新增/更新）条数。
+  /// 把远端拉取的数据合并进本地（按 key upsert）。
+  ///
+  /// 返回各库**实际发生变化**（新增或内容不同）的条数 —— 反复同步同一份数据
+  /// 时全是 0，因为没有任何写入。
+  ///
+  /// [onProgress] 在写库过程中回报进度（库名、已写、总数），用于界面显示
+  /// 「正在写入 320/1200」。
   Future<Map<String, int>> importDbs(
-    Map<String, List<Map<String, dynamic>>> data,
-  ) async {
+    Map<String, List<Map<String, dynamic>>> data, {
+    void Function(String db, int done, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     final summary = <String, int>{};
     for (final entry in data.entries) {
-      final written = await ZyDatabase.instance.importRaw(entry.key, entry.value);
+      if (isCancelled?.call() ?? false) break;
+      final written = await ZyDatabase.instance.importRaw(
+        entry.key,
+        entry.value,
+        onProgress: (done, total) => onProgress?.call(entry.key, done, total),
+        isCancelled: isCancelled,
+      );
       summary[entry.key] = written;
     }
     // 同步完后统一刷新内存，让收藏 / 历史 / 源 / 配置实时生效

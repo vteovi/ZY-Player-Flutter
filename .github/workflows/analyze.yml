@@ -1,0 +1,46 @@
+name: Analyze
+
+# 本机已不再安装 Flutter，静态检查全部交给云端。
+# 推送到 dev / main、以及任何 PR 都会自动跑一遍，几分钟内出结论；
+# 推 dev 只跑这个，不会触发打包（打包只认 v* tag 或手动触发）。
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: analyze-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.32.6
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Flutter ${{ env.FLUTTER_VERSION }}
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 拉取依赖
+        run: flutter pub get
+
+      # 编译错误必须拦下；既有代码里的 info / warning 不拦
+      # （历史遗留 7 条 info，不想每推一次都红）
+      - name: 静态分析
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings lib

@@ -111,47 +111,114 @@ class ZyDatabase {
   }
 
   /// 批量写入（upsert 合并）：已存在的 key 覆盖、新增的追加。
-  /// 用于局域网同步把远端数据合并进本地库。返回成功写入（新增或更新）的条数。
+  /// 用于局域网同步把远端数据合并进本地库。
+  ///
+  /// 返回**实际发生变化**（新增，或内容确实不同）的条数；同一个库反复同步时
+  /// 返回 0，因为没有任何一个字节需要落盘。
+  ///
+  /// 为什么要先比对内容再写：Windows 端的 shared_preferences 是纯 Dart 实现，
+  /// **每次 `setString` 都会把整份偏好重新 `json.encode` 一次，再
+  /// `writeAsStringSync` 把整个文件重写一遍**（同步阻塞 UI 线程）。逐条 put
+  /// 等于「N 次全量序列化 + N 次全量写盘」，几百条历史就能让界面卡住十几秒。
+  /// 先比对、只写差异之后，重复同步退化成纯内存比较，一次磁盘写都没有。
   ///
   /// 写完后重排 key 列表，使同步过来的条目按**来源顺序**排在前面、接收端独有的
   /// 条目保持在后面（保留其原有相对顺序）。这样来源的排序（尤其是视频源的手动
   /// 排序 / 置顶 / 检测后重排结果）也能一并同步过来，而不是把新源全堆到末尾。
-  Future<int> importRaw(String db, List<Map<String, dynamic>> items) async {
+  /// 顺序没变就不写，key 列表全程只落盘一次。
+  /// [isCancelled] 在每条之间检查一次，返回 true 就停止继续写（已写的保留，
+  /// 因为是 upsert，中断不会留下坏数据，再同步一次即可补齐）。
+  Future<int> importRaw(
+    String db,
+    List<Map<String, dynamic>> items, {
+    void Function(int done, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     if (items.isEmpty) return 0;
-    var count = 0;
+    final store = await _store;
+    final oldKeys = await getAllKeys(db);
+
+    // key -> 待写入的新内容。内容与本地一致的条目不进表，直接跳过。
+    final changed = <String, String>{};
+    final sourceOrder = <String>[];
+    final seenSource = <String>{};
+
     for (final item in items) {
       final key = (item['key'] ?? '').toString();
       if (key.isEmpty) continue;
-      if (await put(db, item)) count++;
+      if (seenSource.add(key)) sourceOrder.add(key);
+      final encoded = jsonEncode(item);
+      // getString 走的是内存缓存，不产生磁盘 IO
+      if (store.getString(_itemKey(db, key)) != encoded) {
+        changed[key] = encoded;
+      }
     }
-    await _reorderKeysAfterImport(db, items);
-    return count;
+
+    // 目标顺序：来源条目按来源顺序排前，本地独有的按原有相对顺序跟在后
+    final next = <String>[];
+    final seen = <String>{};
+    for (final key in sourceOrder) {
+      if (seen.add(key)) next.add(key);
+    }
+    for (final key in oldKeys) {
+      if (seen.add(key)) next.add(key);
+    }
+    var sameOrder = next.length == oldKeys.length;
+    if (sameOrder) {
+      for (var i = 0; i < next.length; i++) {
+        if (next[i] != oldKeys[i]) {
+          sameOrder = false;
+          break;
+        }
+      }
+    }
+
+    if (changed.isEmpty && sameOrder) return 0;
+
+    final total = changed.length;
+    if (total > 0) onProgress?.call(0, total);
+    var done = 0;
+
+    // Windows 端的 setString 内部是 `json.encode(整份偏好)` + `writeAsStringSync`
+    // —— 全是**同步**操作，await 它只会排一个 microtask，不会把控制权交还给
+    // 事件循环。几百条连着写就是一个长达数十秒的 microtask 链：界面一帧都不刷、
+    // 触摸事件排不上队，取消按钮自然也按不动。
+    // 所以每写一批就主动让出一次：条数到阈值、或累计耗时超预算都算一批。
+    var lastYield = DateTime.now();
+    final written = <String>{};
+    for (final entry in changed.entries) {
+      if (isCancelled?.call() ?? false) break;
+      await store.setString(_itemKey(db, entry.key), entry.value);
+      written.add(entry.key);
+      done++;
+      // 每 5 条报一次，界面上的数字能一直在走，不至于看着像死了
+      if (done % 5 == 0 || done == total) onProgress?.call(done, total);
+
+      final now = DateTime.now();
+      if (done % _yieldEvery == 0 ||
+          now.difference(lastYield).inMilliseconds >= _yieldBudgetMs) {
+        lastYield = now;
+        // 让出到事件循环（timer 是 event，microtask 不是），UI 才能喘口气
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+    if (!sameOrder) {
+      // 中途取消时，索引里不能出现「还没真正写进去的新 key」——否则条目和
+      // 索引对不上。没取消时 written 已是全部变化项，这个过滤是恒等的。
+      final valid = <String>{...written, ...oldKeys};
+      await _saveKeys(db, next.where(valid.contains).toList());
+    }
+    return done;
   }
 
-  /// 导入后重排 key 列表：来源顺序在前、接收端独有在后。
-  Future<void> _reorderKeysAfterImport(
-    String db,
-    List<Map<String, dynamic>> items,
-  ) async {
-    final sourceOrder = items
-        .map((e) => (e['key'] ?? '').toString())
-        .where((k) => k.isNotEmpty)
-        .toList();
-    if (sourceOrder.isEmpty) return;
-    final keys = await getAllKeys(db);
-    final sourceSet = sourceOrder.toSet();
-    final reordered = <String>[];
-    final seen = <String>{};
-    // 1) 来源条目按来源相对顺序排前（去重）
-    for (final k in sourceOrder) {
-      if (seen.add(k)) reordered.add(k);
-    }
-    // 2) 接收端独有的条目排后（保持原有相对顺序）
-    for (final k in keys) {
-      if (!sourceSet.contains(k) && seen.add(k)) reordered.add(k);
-    }
-    await _saveKeys(db, reordered);
-  }
+  /// 单次连续写入的时间预算（毫秒）。超过就先让出一次。
+  ///
+  /// 取 24ms 是为了压在 16ms 一帧的两倍以内：即使某一条特别大，一帧的卡顿也
+  /// 只有一个，用户感觉不到。文件越大单条越贵，这个值会让让出变得更频繁。
+  static const int _yieldBudgetMs = 24;
+
+  /// 不管多快，每写这么多条也让出一次（兜底，防止按条数算才让出时批次太大）。
+  static const int _yieldEvery = 12;
 
   /// 只重写 key 列表的顺序，**不动条目本身**。
   ///
