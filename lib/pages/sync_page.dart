@@ -53,11 +53,15 @@ class _SyncPageState extends State<SyncPage>
   /// 「卡住不动」有一半是没有反馈造成的，所以每一步都要说出来。
   String _syncPhase = '';
 
-  /// 用户点了取消。接收阶段每收到一块数据检查一次。
+  /// 用户点了取消。接收和写库阶段都会检查，随时可以停。
   bool _cancelRequested = false;
 
-  /// 只有接收阶段能取消；已经进入写库阶段就让它写完，避免写一半。
+  /// 当前阶段能不能点取消。
   bool _cancelEnabled = false;
+
+  /// 写库阶段的确定进度（0~1）；null 表示当前阶段没有可量化的进度，
+  /// 用不确定进度条（左右跑的那种）表示"活着，但不知道还剩多少"。
+  double? _syncProgress;
 
   /// 进度回调节流，避免每收一个 TCP 包就重建一次界面。
   DateTime _lastProgressAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -216,8 +220,10 @@ class _SyncPageState extends State<SyncPage>
       }
       final incoming = wanted.values.fold<int>(0, (sum, list) => sum + list.length);
       setState(() {
-        // 进入写库阶段就不再允许取消：写到一半停下会留下半套数据
-        _cancelEnabled = false;
+        // 写库阶段同样允许取消：每条之间都会检查标记，写进去的每一条都是
+        // 完整的 upsert 结果，中途停下不会留下坏数据，重新同步一次就能补齐。
+        _cancelEnabled = true;
+        _syncProgress = null;
         _syncPhase = incoming == 0
             ? '对方没有勾选范围内的数据'
             : '正在写入 $incoming 条…';
@@ -228,22 +234,47 @@ class _SyncPageState extends State<SyncPage>
         wanted,
         onProgress: (db, done, total) {
           if (!mounted) return;
-          setState(() => _syncPhase = '正在写入${_scopeLabel(db)} $done/$total 条…');
+          final finished = total > 0 && done >= total;
+          final now = DateTime.now();
+          // 写库回调很密（每 5 条一次），节流到 ~80ms 一次就够看清数字在跳
+          if (!finished &&
+              now.difference(_lastProgressAt).inMilliseconds < 80) {
+            return;
+          }
+          _lastProgressAt = now;
+          setState(() {
+            _syncPhase = '正在写入${_scopeLabel(db)} $done/$total 条…';
+            _syncProgress = total <= 0 ? null : done / total;
+          });
         },
+        isCancelled: () => _cancelRequested,
       );
       if (!mounted) return;
 
+      final cancelled = _cancelRequested;
       final changed = summary.values.fold<int>(0, (sum, n) => sum + n);
       final parts = summary.entries
           .where((e) => e.value > 0)
           .map((e) => '${_scopeLabel(e.key)} ${e.value} 条')
           .toList();
       setState(() {
-        _syncResult = changed == 0
-            ? '数据已是最新，没有需要更新的条目。'
-            : '同步完成：\n${parts.join('，')}';
+        _syncProgress = null;
+        if (cancelled) {
+          _syncResult = changed == 0
+              ? '已取消，没有写入任何数据。'
+              : '已停止导入：写入 ${parts.join('，')} 后取消。\n'
+                  '剩下的没有导入，再同步一次可以补齐。';
+        } else {
+          _syncResult = changed == 0
+              ? '数据已是最新，没有需要更新的条目。'
+              : '同步完成：\n${parts.join('，')}';
+        }
       });
-      showToast(context, changed == 0 ? '数据已是最新' : '同步完成', success: true);
+      if (cancelled) {
+        showToast(context, '已停止导入', success: false);
+      } else {
+        showToast(context, changed == 0 ? '数据已是最新' : '同步完成', success: true);
+      }
     } catch (e) {
       if (!mounted) return;
       if (e is SyncCancelled) {
@@ -258,6 +289,7 @@ class _SyncPageState extends State<SyncPage>
         setState(() {
           _syncing = false;
           _syncPhase = '';
+          _syncProgress = null;
           _cancelEnabled = false;
         });
       }
@@ -547,9 +579,10 @@ class _SyncPageState extends State<SyncPage>
             if (_syncing) ...[
               const SizedBox(width: 10),
               OutlinedButton(
-                onPressed:
-                    _cancelEnabled ? () => setState(() => _cancelRequested = true) : null,
-                child: const Text('取消'),
+                onPressed: _cancelEnabled && !_cancelRequested
+                    ? () => setState(() => _cancelRequested = true)
+                    : null,
+                child: Text(_cancelRequested ? '取消中…' : '取消'),
               ),
             ],
           ],
@@ -574,6 +607,16 @@ class _SyncPageState extends State<SyncPage>
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              // 写库阶段有确切的 done/total，其它阶段用不确定进度条：
+              // 「条还在动」本身就是没死机的证据。
+              value: _syncProgress,
+              minHeight: 3,
+            ),
           ),
         ],
         const SizedBox(height: 10),

@@ -126,10 +126,13 @@ class ZyDatabase {
   /// 条目保持在后面（保留其原有相对顺序）。这样来源的排序（尤其是视频源的手动
   /// 排序 / 置顶 / 检测后重排结果）也能一并同步过来，而不是把新源全堆到末尾。
   /// 顺序没变就不写，key 列表全程只落盘一次。
+  /// [isCancelled] 在每条之间检查一次，返回 true 就停止继续写（已写的保留，
+  /// 因为是 upsert，中断不会留下坏数据，再同步一次即可补齐）。
   Future<int> importRaw(
     String db,
     List<Map<String, dynamic>> items, {
     void Function(int done, int total)? onProgress,
+    bool Function()? isCancelled,
   }) async {
     if (items.isEmpty) return 0;
     final store = await _store;
@@ -173,16 +176,49 @@ class ZyDatabase {
     if (changed.isEmpty && sameOrder) return 0;
 
     final total = changed.length;
+    if (total > 0) onProgress?.call(0, total);
     var done = 0;
+
+    // Windows 端的 setString 内部是 `json.encode(整份偏好)` + `writeAsStringSync`
+    // —— 全是**同步**操作，await 它只会排一个 microtask，不会把控制权交还给
+    // 事件循环。几百条连着写就是一个长达数十秒的 microtask 链：界面一帧都不刷、
+    // 触摸事件排不上队，取消按钮自然也按不动。
+    // 所以每写一批就主动让出一次：条数到阈值、或累计耗时超预算都算一批。
+    var lastYield = DateTime.now();
+    final written = <String>{};
     for (final entry in changed.entries) {
+      if (isCancelled?.call() ?? false) break;
       await store.setString(_itemKey(db, entry.key), entry.value);
+      written.add(entry.key);
       done++;
-      // 每 20 条报一次，界面上的数字能一直在走，不至于看着像死了
-      if (done % 20 == 0 || done == total) onProgress?.call(done, total);
+      // 每 5 条报一次，界面上的数字能一直在走，不至于看着像死了
+      if (done % 5 == 0 || done == total) onProgress?.call(done, total);
+
+      final now = DateTime.now();
+      if (done % _yieldEvery == 0 ||
+          now.difference(lastYield).inMilliseconds >= _yieldBudgetMs) {
+        lastYield = now;
+        // 让出到事件循环（timer 是 event，microtask 不是），UI 才能喘口气
+        await Future<void>.delayed(Duration.zero);
+      }
     }
-    if (!sameOrder) await _saveKeys(db, next);
-    return changed.length;
+    if (!sameOrder) {
+      // 中途取消时，索引里不能出现「还没真正写进去的新 key」——否则条目和
+      // 索引对不上。没取消时 written 已是全部变化项，这个过滤是恒等的。
+      final valid = <String>{...written, ...oldKeys};
+      await _saveKeys(db, next.where(valid.contains).toList());
+    }
+    return done;
   }
+
+  /// 单次连续写入的时间预算（毫秒）。超过就先让出一次。
+  ///
+  /// 取 24ms 是为了压在 16ms 一帧的两倍以内：即使某一条特别大，一帧的卡顿也
+  /// 只有一个，用户感觉不到。文件越大单条越贵，这个值会让让出变得更频繁。
+  static const int _yieldBudgetMs = 24;
+
+  /// 不管多快，每写这么多条也让出一次（兜底，防止按条数算才让出时批次太大）。
+  static const int _yieldEvery = 12;
 
   /// 只重写 key 列表的顺序，**不动条目本身**。
   ///

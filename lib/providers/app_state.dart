@@ -571,13 +571,16 @@ class AppState extends ChangeNotifier {
   Future<Map<String, int>> importDbs(
     Map<String, List<Map<String, dynamic>>> data, {
     void Function(String db, int done, int total)? onProgress,
+    bool Function()? isCancelled,
   }) async {
     final summary = <String, int>{};
     for (final entry in data.entries) {
+      if (isCancelled?.call() ?? false) break;
       final written = await ZyDatabase.instance.importRaw(
         entry.key,
         entry.value,
         onProgress: (done, total) => onProgress?.call(entry.key, done, total),
+        isCancelled: isCancelled,
       );
       summary[entry.key] = written;
     }
