@@ -29,11 +29,13 @@ SliverGridDelegateWithMaxCrossAxisExtent landscapeGridDelegate(
   final width = availableWidth > 0 ? availableWidth : 360.0;
   // 与 SliverGridDelegateWithMaxCrossAxisExtent 的列数算法保持一致
   final columns = (width / maxExtent).ceil().clamp(1, 12);
-  final cardWidth = (width / columns - cardMargin).clamp(60.0, 2000.0);
-  final cardHeight = cardWidth / _landscapeCoverRatio + _cardCaptionHeight;
+  final tile = width / columns;
+  // 格子高度 = 封面 + 上下 margin(12) + 两行文字(56)；封面高度由**卡宽**定
+  final coverHeight = (tile - cardMargin) / _landscapeCoverRatio;
+  final cardHeight = coverHeight + cardMargin + _cardCaptionHeight;
   return SliverGridDelegateWithMaxCrossAxisExtent(
     maxCrossAxisExtent: maxExtent,
-    childAspectRatio: cardWidth / cardHeight,
+    childAspectRatio: tile / cardHeight,
     crossAxisSpacing: 0,
     mainAxisSpacing: 0,
   );
