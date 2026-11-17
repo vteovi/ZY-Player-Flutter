@@ -7,27 +7,41 @@ import '../utils/app_colors.dart';
 import 'common_widgets.dart';
 import 'video_card.dart';
 
-/// 网格的列数与卡片比例。
+/// 横版封面的宽高比：16:10（比 16:9 略微高一点，横版海报上下不容易被裁）。
+const double _landscapeCoverRatio = 16 / 10;
+
+/// 卡片封面**下方**两行文字占的固定高度，与 [VideoCard] / [RecordCard] 对齐：
+/// 片名行 8+20，元信息行 4+16+8。
 ///
-/// 真实网格（[VideoGridView]）与骨架屏（[VideoGridSkeleton]）**共用这一份策略**，
-/// 保证占位卡和真实卡形状完全一致，数据到达时不会跳版。
-SliverGridDelegateWithMaxCrossAxisExtent videoGridDelegate(BuildContext context) {
-  // ⚠️ 用 select 而不是 watch：watch 会让整个网格订阅 AppState 的**所有**变化
-  // （收藏、历史、同步状态……），任何一次 notifyListeners 都重建几十个卡片。
-  // 这里只关心「横版 / 竖版」这一个开关，用 select 之后其余状态变化与网格无关。
-  final landscape = context.select<AppState, bool>((s) => s.config.landscapeCard);
-  if (landscape) {
-    // 横版海报卡片：手机竖屏（<420）1 列，平板 2 列，更宽屏幕 3+ 列
-    return const SliverGridDelegateWithMaxCrossAxisExtent(
-      maxCrossAxisExtent: 420,
-      childAspectRatio: 1.38,
-      crossAxisSpacing: 0,
-      mainAxisSpacing: 0,
-    );
-  }
-  // 竖向卡片：列数随宽度递增，宽屏多列、窄屏保底 2 列
-  final w = MediaQuery.of(context).size.width;
-  final columns = switch (w) {
+/// ⚠️ 网格给的是**整张卡片**的宽高比，封面只是卡片的一部分。想让封面是某个
+/// 比例，必须把这几十像素的文字高度从卡片高度里扣掉再换算，否则横屏大屏上
+/// 封面会明显偏扁（列越宽偏得越多）。
+const double _cardCaptionHeight = 56;
+
+/// 横版卡片网格：封面按 16:10 排布。
+///
+/// [availableWidth] 是网格**实际可用宽度**（已扣掉外层 padding / 侧栏），
+/// 卡宽由它推出来，保证任何屏幕宽度下封面都接近 16:10。
+SliverGridDelegateWithMaxCrossAxisExtent landscapeGridDelegate(
+    double availableWidth) {
+  const double maxExtent = 420; // 单列上限：再宽就多排一列
+  const double cardMargin = 12; // Card 左右各 6
+  final width = availableWidth > 0 ? availableWidth : 360.0;
+  // 与 SliverGridDelegateWithMaxCrossAxisExtent 的列数算法保持一致
+  final columns = (width / maxExtent).ceil().clamp(1, 12);
+  final cardWidth = (width / columns - cardMargin).clamp(60.0, 2000.0);
+  final cardHeight = cardWidth / _landscapeCoverRatio + _cardCaptionHeight;
+  return SliverGridDelegateWithMaxCrossAxisExtent(
+    maxCrossAxisExtent: maxExtent,
+    childAspectRatio: cardWidth / cardHeight,
+    crossAxisSpacing: 0,
+    mainAxisSpacing: 0,
+  );
+}
+
+/// 竖向卡片网格：列数随宽度递增，宽屏多列、窄屏保底 2 列。
+SliverGridDelegateWithMaxCrossAxisExtent portraitGridDelegate(double width) {
+  final columns = switch (width) {
     >= 1600 => 8,
     >= 1280 => 6,
     >= 960 => 5,
@@ -35,7 +49,7 @@ SliverGridDelegateWithMaxCrossAxisExtent videoGridDelegate(BuildContext context)
     >= 520 => 3,
     _ => 2,
   };
-  final maxExtent = (w / columns).clamp(150.0, 300.0);
+  final maxExtent = (width / columns).clamp(150.0, 300.0);
   return SliverGridDelegateWithMaxCrossAxisExtent(
     maxCrossAxisExtent: maxExtent,
     childAspectRatio: 0.62,
@@ -47,7 +61,7 @@ SliverGridDelegateWithMaxCrossAxisExtent videoGridDelegate(BuildContext context)
 /// 视频网格（首页分类页、搜索结果共用）。
 ///
 /// 竖向模式：竖版海报，列数随屏幕宽度自适应（2~8 列）。
-/// 横向模式（设置里开启）：海报横版（约 16:9）图上文下，
+/// 横向模式（设置里开启）：海报横版 **16:10** 图上文下，
 /// 手机竖屏每行一个，平板大屏自适应多列（每列上限 420 宽）。
 class VideoGridView extends StatelessWidget {
   final List<Video> videos;
@@ -75,35 +89,49 @@ class VideoGridView extends StatelessWidget {
         icon: Icons.search_off,
       );
     }
-    // 列宽决定封面解码尺寸：屏幕越宽单列越宽，但解码像素按显示尺寸的 ~2 倍即可，
-    // 平板大屏不盲目用高位图，能省下大量 GPU 纹理内存、滚动更跟手。
-    final delegate = videoGridDelegate(context);
-    final memW = (delegate.maxCrossAxisExtent * 2)
-        .round()
-        .clamp(300, 480);
-    return GridView.builder(
-      controller: scrollController,
-      // 关键性能项：关掉「自动保留滚出屏幕的元素」。列表一长，保留的元素会无限
-      // 膨胀元素树（平板 8 列时膨胀速度是手机的 8 倍），导致滑动越远越卡甚至滑不动。
-      // 单元格是无状态、重建极轻的，关掉它反而更顺；滚回去会按 id 从本地缓存秒重建。
-      addAutomaticKeepAlives: false,
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-      itemCount: videos.length + (loadingMore ? 1 : 0),
-      gridDelegate: delegate,
-      itemBuilder: (context, index) {
-        if (index >= videos.length) {
-          return const Padding(
-            padding: EdgeInsets.all(16),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        final video = videos[index];
-        return VideoCard(
-          key: ValueKey(video.id),
-          video: video,
-          sourceLabel: labelOf?.call(video),
-          memCacheWidth: memW,
-          onTap: () => onTap(video),
+    // 横竖开关在 build 阶段读一次；布局阶段（LayoutBuilder 内）不能再读
+    // InheritedWidget，否则会触发「依赖注册发生在 layout」的断言。
+    final landscape =
+        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    final screenWidth = MediaQuery.of(context).size.width;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 用**真实可用宽度**算卡片比例：大屏带侧栏时 MediaQuery 会偏大，
+        // 按它算会让封面比设定值更扁。
+        final available = constraints.maxWidth.isFinite && constraints.maxWidth > 0
+            ? constraints.maxWidth - 12 // GridView 左右各 6
+            : screenWidth - 12;
+        final delegate = landscape
+            ? landscapeGridDelegate(available)
+            : portraitGridDelegate(available);
+        // 列宽决定封面解码尺寸：屏幕越宽单列越宽，但解码像素按显示尺寸的 ~2 倍即可，
+        // 平板大屏不盲目用高位图，能省下大量 GPU 纹理内存、滚动更跟手。
+        final memW = (delegate.maxCrossAxisExtent * 2).round().clamp(300, 480);
+        return GridView.builder(
+          controller: scrollController,
+          // 关键性能项：关掉「自动保留滚出屏幕的元素」。列表一长，保留的元素会无限
+          // 膨胀元素树（平板 8 列时膨胀速度是手机的 8 倍），导致滑动越远越卡甚至滑不动。
+          // 单元格是无状态、重建极轻的，关掉它反而更顺；滚回去会按 id 从本地缓存秒重建。
+          addAutomaticKeepAlives: false,
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          itemCount: videos.length + (loadingMore ? 1 : 0),
+          gridDelegate: delegate,
+          itemBuilder: (context, index) {
+            if (index >= videos.length) {
+              return const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final video = videos[index];
+            return VideoCard(
+              key: ValueKey(video.id),
+              video: video,
+              sourceLabel: labelOf?.call(video),
+              memCacheWidth: memW,
+              onTap: () => onTap(video),
+            );
+          },
         );
       },
     );
@@ -127,7 +155,8 @@ Widget buildVideoGrid({
       labelOf: labelOf,
     );
 
-/// 网格骨架屏：加载中用与真实卡片同形的占位块，形状跟着 [videoGridDelegate] 走。
+/// 网格骨架屏：加载中用与真实卡片同形的占位块，形状跟着
+/// [landscapeGridDelegate] / [portraitGridDelegate] 走。
 ///
 /// 取代原来的「灰黑遮罩 + 居中转圈」——
 /// 遮罩会把整块区域压暗，而首次进分栏时底下本来就是空的，
@@ -163,43 +192,57 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
         isDark ? AppColors.darkSkeletonLow : AppColors.lightSkeletonLow;
     final Color highlight =
         isDark ? AppColors.darkSkeletonHigh : AppColors.lightSkeletonHigh;
-    // 在 build 期取一次（含 watch 依赖），别放进 AnimatedBuilder 里反复读
-    final delegate = videoGridDelegate(context);
+    // 在 build 期取一次（含 select 依赖），别放进 AnimatedBuilder / LayoutBuilder
+    // 里反复读 —— 布局阶段注册依赖会触发断言。
+    final landscape =
+        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    final screenWidth = MediaQuery.of(context).size.width;
 
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final t = Curves.easeInOut.transform(_controller.value);
-        final color = Color.lerp(base, highlight, t)!;
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: widget.itemCount,
-          gridDelegate: delegate,
-          itemBuilder: (context, _) => Card(
-            clipBehavior: Clip.antiAlias,
-            margin: const EdgeInsets.all(6),
-            // 底色交给 CardTheme（深色下是纯黑）
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ColoredBox(color: color),
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available =
+            constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                ? constraints.maxWidth - 12
+                : screenWidth - 12;
+        final delegate = landscape
+            ? landscapeGridDelegate(available)
+            : portraitGridDelegate(available);
+        return AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final t = Curves.easeInOut.transform(_controller.value);
+            final color = Color.lerp(base, highlight, t)!;
+            return GridView.builder(
+              padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: widget.itemCount,
+              gridDelegate: delegate,
+              itemBuilder: (context, _) => Card(
+                clipBehavior: Clip.antiAlias,
+                margin: const EdgeInsets.all(6),
+                // 底色交给 CardTheme（深色下是纯黑）
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: ColoredBox(color: color),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                      child: _bar(color, height: 12, widthFactor: 0.82),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                      child: _bar(color, height: 10, widthFactor: 0.5),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                  child: _bar(color, height: 12, widthFactor: 0.82),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                  child: _bar(color, height: 10, widthFactor: 0.5),
-                ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
