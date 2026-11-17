@@ -16,12 +16,17 @@ class RecordCard extends StatelessWidget {
   final VoidCallback? onLongPress;
   final bool isHistory;
 
+  /// 来源角标（站点名）：与搜索结果卡片一致，贴在封面左上角。
+  /// 为空表示该记录所属视频源已被删除，此时不显示角标。
+  final String? sourceLabel;
+
   const RecordCard({
     super.key,
     required this.item,
     required this.onTap,
     this.onLongPress,
     this.isHistory = false,
+    this.sourceLabel,
   });
 
   @override
@@ -44,7 +49,11 @@ class RecordCard extends StatelessWidget {
                 Expanded(
                   child: SizedBox(
                     width: double.infinity,
-                    child: PosterCover(pic: item.pic, isDark: isDark),
+                    child: PosterCover(
+                      pic: item.pic,
+                      isDark: isDark,
+                      sourceLabel: sourceLabel,
+                    ),
                   ),
                 ),
                 if (isHistory && progress > 0)
