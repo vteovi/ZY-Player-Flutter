@@ -176,6 +176,15 @@ class _StarPageState extends State<StarPage>
     if (items.isEmpty) {
       return EmptyHint(message: emptyMessage, icon: emptyIcon);
     }
+    // 记录 key 是 `{siteKey}-{videoId}`，反解出所属站点名做封面角标
+    // （与搜索结果的来源角标一致）。站点被删除后 siteOf 返回 null，则不出角标。
+    final app = context.read<AppState>();
+    final labels = <String, String>{};
+    for (final item in items) {
+      final siteKey = app.resolveRecordKey(item.key).first;
+      final name = app.siteOf(siteKey)?.name ?? '';
+      if (name.isNotEmpty) labels[item.key] = name;
+    }
     // 与首页共用同一套网格列数/卡片比例策略。横竖开关在 build 期读一次，
     // 布局阶段（LayoutBuilder 内）不能再读 InheritedWidget。
     final landscape =
@@ -199,6 +208,7 @@ class _StarPageState extends State<StarPage>
               key: ValueKey(item.key),
               item: item,
               isHistory: isHistory,
+              sourceLabel: labels[item.key],
               onTap: () => onTap(item),
               onLongPress: () => onLongPress(item),
             );
