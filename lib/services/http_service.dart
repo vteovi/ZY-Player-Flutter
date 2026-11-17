@@ -601,7 +601,7 @@ class HttpService {
 
     var classes = _classesFromJson(payload.json);
     if (classes.isEmpty) classes = _classesFromXml(payload.xmlDoc);
-    var videos = _videosFrom(payload);
+    var videos = _videosFrom(payload, site);
 
     // 部分 xml 站只在裸地址输出 <class>，与 fetchClasses 的回退保持一致。
     // 但如果带 `ac=list` 就已经返回网页，说明接口路径整体换了 —— 换裸地址
@@ -612,7 +612,7 @@ class HttpService {
         final bare = await _load(api, timeout: _checkTimeout);
         classes = _classesFromJson(bare.json);
         if (classes.isEmpty) classes = _classesFromXml(bare.xmlDoc);
-        videos = _videosFrom(bare);
+        videos = _videosFrom(bare, site);
       } catch (_) {
         // 裸地址失败不影响已有结论
       }
@@ -650,19 +650,56 @@ class HttpService {
     if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
     params['pg'] = '$pg';
     final url = _apiUrl(site, params);
-    if (strict) return _videosFrom(await _load(url));
+    if (strict) return _videosFrom(await _load(url), site);
     try {
-      return _videosFrom(await _load(url));
+      return _videosFrom(await _load(url), site);
     } catch (_) {
       return <Video>[];
     }
   }
 
-  /// 从解析结果里取片单：JSON / XML 两种结构都认，谁有数据用谁
-  static List<Video> _videosFrom(_Payload payload) {
+  /// 从解析结果里取片单：JSON / XML 两种结构都认，谁有数据用谁。
+  ///
+  /// 顺便把封面地址补成绝对 URL —— 采集站的 `vod_pic` 常见三种不规范写法
+  /// （`//host/a.jpg`、`/upload/a.jpg`、`img.host.com/a.jpg`），图片组件拿到
+  /// 这种地址解析失败，只会显示成破图标。
+  static List<Video> _videosFrom(_Payload payload, Site site) {
     final fromJson = _videosFromJson(payload.json);
-    if (fromJson.isNotEmpty) return fromJson;
-    return _videosFromXml(payload.xmlDoc);
+    final list = fromJson.isNotEmpty ? fromJson : _videosFromXml(payload.xmlDoc);
+    if (list.isEmpty) return list;
+    return list
+        .map((v) =>
+            v.pic.isEmpty ? v : v.copyWith(pic: _absolutePic(v.pic, site)))
+        .toList();
+  }
+
+  /// 图片地址补全：已经是 http(s) 的原样返回，其余按站点域名拼出绝对地址。
+  static String _absolutePic(String pic, Site site) {
+    final p = pic.trim();
+    if (p.isEmpty) return p;
+    final lower = p.toLowerCase();
+    if (lower.startsWith('http://') || lower.startsWith('https://')) return p;
+
+    String origin = '';
+    try {
+      final u = Uri.parse(site.api.trim());
+      if (u.hasScheme && u.host.isNotEmpty) origin = '${u.scheme}://${u.host}';
+    } catch (_) {
+      // 站点地址本身不规范就放弃拼域名，保留原值
+    }
+    // 省了协议：//host/a.jpg
+    if (p.startsWith('//')) return 'https:$p';
+    // 省了域名：/upload/a.jpg
+    if (p.startsWith('/')) return origin.isEmpty ? p : '$origin$p';
+
+    // 省了协议：img.host.com/upload/a.jpg（首段像域名才补，避免把
+    // `upload/a.jpg` 这种相对路径误拼成 http://upload/...）
+    final firstSeg = p.split('/').first;
+    final looksLikeHost = firstSeg.contains('.') &&
+        !RegExp(r'\.(?:jpe?g|png|gif|webp|bmp|avif)$', caseSensitive: false)
+            .hasMatch(firstSeg);
+    if (looksLikeHost) return 'http://$p';
+    return p;
   }
 
   static List<Video> _videosFromJson(Map<String, dynamic>? json) {
@@ -712,12 +749,30 @@ class HttpService {
     );
   }
 
-  /// 搜索资源
+  /// 搜索资源。
+  ///
+  /// ⚠️ 必须带 `ac=videolist`。采集站默认走 `ac=list`，只回精简字段
+  /// （`vod_id` / `vod_name` / `vod_remarks`…），**不含 `vod_pic`**。首页列表一直
+  /// 带着 videolist 所以有封面，搜索漏了这个参数，表现就是「搜索结果的卡片全没图，
+  /// 点进详情（走的是另一支接口）却能看到海报，返回列表继续没图」。
+  ///
+  /// 少数站不认 `videolist + wd`（返回网页或直接报错），这时退回老参数再试一次：
+  /// 宁可没封面，也不能搜不到。
   Future<List<Video>> search(Site site, String keyword) async {
     try {
-      return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})));
+      final payload =
+          await _load(_apiUrl(site, {'ac': 'videolist', 'wd': keyword}));
+      // 返回的不是采集数据（网页 / 空正文）→ 这个站不认 videolist，退回老参数
+      if (payload.json == null && payload.xmlDoc == null) {
+        return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})), site);
+      }
+      return _videosFrom(payload, site);
     } catch (_) {
-      return <Video>[];
+      try {
+        return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})), site);
+      } catch (_) {
+        return <Video>[];
+      }
     }
   }
 
