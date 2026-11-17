@@ -176,19 +176,33 @@ class _StarPageState extends State<StarPage>
     if (items.isEmpty) {
       return EmptyHint(message: emptyMessage, icon: emptyIcon);
     }
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
-      itemCount: items.length,
-      // 与首页共用同一套网格列数/卡片比例策略
-      gridDelegate: videoGridDelegate(context),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return RecordCard(
-          key: ValueKey(item.key),
-          item: item,
-          isHistory: isHistory,
-          onTap: () => onTap(item),
-          onLongPress: () => onLongPress(item),
+    // 与首页共用同一套网格列数/卡片比例策略。横竖开关在 build 期读一次，
+    // 布局阶段（LayoutBuilder 内）不能再读 InheritedWidget。
+    final landscape =
+        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    final screenWidth = MediaQuery.of(context).size.width;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available =
+            constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                ? constraints.maxWidth - 12
+                : screenWidth - 12;
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          itemCount: items.length,
+          gridDelegate: landscape
+              ? landscapeGridDelegate(available)
+              : portraitGridDelegate(available),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return RecordCard(
+              key: ValueKey(item.key),
+              item: item,
+              isHistory: isHistory,
+              onTap: () => onTap(item),
+              onLongPress: () => onLongPress(item),
+            );
+          },
         );
       },
     );
