@@ -11,18 +11,35 @@ import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 
-/// 一条搜索结果：来自哪个源 + 影片
+/// 搜索范围：全部站点 / 当前站点 / 收藏 / 历史记录
+enum _SearchScope { all, current, favorites, history }
+
+/// 一条搜索结果：来自哪个源 + 影片。
+///
+/// 收藏 / 历史范围下的结果来自本地记录，站点可能已被删除：
+/// 此时 [siteName] 为 null（不显示角标），[siteKey] 仍保留以便打开详情。
 class _Hit {
-  final Site site;
+  final String siteKey;
+  final String? siteName;
   final Video video;
-  const _Hit(this.site, this.video);
+
+  const _Hit({
+    required this.siteKey,
+    this.siteName,
+    required this.video,
+  });
 }
 
-/// 搜索页：顶部输入 + 历史搜索记录（可点选/删除/清空）+ 搜索结果网格。
-/// 从首页搜索框点击进入，搜索范围为**全部启用的视频源**（聚合搜索）：
-/// 分批并发请求，各源结果陆续合并展示，结果卡片带来源角标。
+/// 搜索页：顶部输入框 + 搜索范围切换 + 搜索历史 + 结果网格。
+///
+/// - 全部站点 / 当前站点：走网络聚合搜索（分批并发），结果带来源角标。
+/// - 收藏 / 历史记录：直接从内存里的记录过滤，不走网络、瞬间出结果。
 class SearchPage extends StatefulWidget {
-  const SearchPage({super.key});
+  /// 进入搜索页前正在浏览的站点，供「当前站点」范围使用。
+  /// 首页还没选源时为 null，该选项会置灰。
+  final Site? currentSite;
+
+  const SearchPage({super.key, this.currentSite});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -32,6 +49,9 @@ class _SearchPageState extends State<SearchPage> {
   final TextEditingController _controller = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
+
+  /// 当前搜索范围，默认全部站点
+  _SearchScope _scope = _SearchScope.all;
 
   /// 搜索代次：重新搜索 / 清空时 +1，旧请求的回调直接丢弃
   int _searchGen = 0;
@@ -78,6 +98,22 @@ class _SearchPageState extends State<SearchPage> {
     if (mounted) setState(() => _history = list);
   }
 
+  /// 当前范围下的输入框提示语
+  String get _hintText => switch (_scope) {
+        _SearchScope.all => '搜索全部视频源',
+        _SearchScope.current => '搜索当前视频源',
+        _SearchScope.favorites => '搜索我的收藏',
+        _SearchScope.history => '搜索历史记录',
+      };
+
+  /// 切范围后，如果已经搜过且输入框有词，立刻用新范围重搜
+  void _changeScope(_SearchScope scope) {
+    if (scope == _scope) return;
+    setState(() => _scope = scope);
+    final kw = _controller.text.trim();
+    if (_searched && kw.isNotEmpty) _doSearch(kw);
+  }
+
   Future<void> _doSearch(String rawKeyword) async {
     final kw = rawKeyword.trim();
     if (kw.isEmpty) return;
@@ -88,8 +124,54 @@ class _SearchPageState extends State<SearchPage> {
     await app.addSearchKeyword(kw);
     await _loadHistory();
 
-    final sites = app.activeSites;
     final gen = ++_searchGen;
+    final scope = _scope;
+
+    // ---- 收藏 / 历史：本地记录过滤，不走网络 ----
+    if (scope == _SearchScope.favorites || scope == _SearchScope.history) {
+      final source =
+          scope == _SearchScope.favorites ? app.stars : app.histories;
+      final lower = kw.toLowerCase();
+      final hits = <_Hit>[];
+      for (final item in source) {
+        // 匹配片名、最近集名、分类、备注、年份、地区、演员、导演
+        final haystack = [
+          item.name,
+          item.label,
+          item.type,
+          item.note,
+          item.year,
+          item.area,
+          item.actor,
+          item.director,
+        ].join(' ').toLowerCase();
+        if (!haystack.contains(lower)) continue;
+        final siteKey = app.resolveRecordKey(item.key).first;
+        hits.add(_Hit(
+          siteKey: siteKey,
+          siteName: app.siteOf(siteKey)?.name,
+          video: item,
+        ));
+      }
+      if (!mounted || gen != _searchGen) return;
+      setState(() {
+        _searched = true;
+        _loading = false;
+        _done = 0;
+        _total = 0;
+        _results
+          ..clear()
+          ..addAll(hits);
+      });
+      return;
+    }
+
+    // ---- 全部站点 / 当前站点：走网络聚合搜索 ----
+    final sites = scope == _SearchScope.current
+        ? (widget.currentSite == null
+            ? <Site>[]
+            : <Site>[widget.currentSite!])
+        : app.activeSites;
     if (mounted) {
       setState(() {
         _searched = true;
@@ -112,7 +194,13 @@ class _SearchPageState extends State<SearchPage> {
         chunk.map((site) async {
           try {
             final list = await HttpService.instance.search(site, kw);
-            return list.map((v) => _Hit(site, v)).toList();
+            return list
+                .map((v) => _Hit(
+                      siteKey: site.key,
+                      siteName: site.name,
+                      video: v,
+                    ))
+                .toList();
           } catch (_) {
             return <_Hit>[];
           }
@@ -156,6 +244,7 @@ class _SearchPageState extends State<SearchPage> {
     // VideoCard 持有的就是 _results 里的同一对象，按对象身份找回所属源
     for (final hit in _results) {
       if (identical(hit.video, video)) {
+        if (hit.siteKey.isEmpty) return;
         // 离开搜索页前先清掉搜索框焦点，避免从详情页 pop 回来时
         // Flutter 恢复焦点又把键盘弹出来
         _focusNode.unfocus();
@@ -163,7 +252,7 @@ class _SearchPageState extends State<SearchPage> {
             .push(
           MaterialPageRoute(
             builder: (_) =>
-                DetailPage(siteKey: hit.site.key, videoId: video.id),
+                DetailPage(siteKey: hit.siteKey, videoId: video.id),
           ),
         )
             .then((_) {
@@ -191,7 +280,7 @@ class _SearchPageState extends State<SearchPage> {
           textInputAction: TextInputAction.search,
           onSubmitted: _doSearch,
           decoration: InputDecoration(
-            hintText: '搜索全部视频源',
+            hintText: _hintText,
             hintStyle: TextStyle(
               color: isDark ? Colors.white54 : Colors.black54,
             ),
@@ -212,17 +301,70 @@ class _SearchPageState extends State<SearchPage> {
           ),
         ],
       ),
-      body: _searched ? _buildResultBody(isDark) : _buildHistoryBody(isDark),
+      body: Column(
+        children: [
+          _buildScopeBar(),
+          Expanded(
+            child: _searched
+                ? _buildResultBody(isDark)
+                : _buildHistoryBody(isDark),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _buildResultBody(bool isDark) {
-    if (_total == 0) {
-      return const EmptyHint(
-        message: '暂无启用的视频源，请先在源管理中开启',
-        icon: Icons.video_library_outlined,
+  /// 搜索范围切换条：窄屏自动换行，当前站点未选时置灰
+  Widget _buildScopeBar() {
+    Widget chip(_SearchScope scope, String label) {
+      final unavailable =
+          scope == _SearchScope.current && widget.currentSite == null;
+      return ChoiceChip(
+        label: Text(label),
+        selected: _scope == scope,
+        showCheckmark: false,
+        onSelected: unavailable ? null : (_) => _changeScope(scope),
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        tooltip: scope == _SearchScope.current && widget.currentSite != null
+            ? '当前站点：${widget.currentSite!.name}'
+            : null,
       );
     }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 2,
+        children: [
+          chip(_SearchScope.all, '全部站点'),
+          chip(
+            _SearchScope.current,
+            widget.currentSite == null ? '当前站点(未选)' : '当前站点',
+          ),
+          chip(_SearchScope.favorites, '收藏'),
+          chip(_SearchScope.history, '历史'),
+        ],
+      ),
+    );
+  }
+
+  /// 按范围给出空结果提示
+  String get _emptyHint {
+    if (_scope == _SearchScope.favorites) return '收藏里没有匹配的影片';
+    if (_scope == _SearchScope.history) return '历史记录里没有匹配的影片';
+    if (_total == 0) {
+      return _scope == _SearchScope.current
+          ? '请先在首页选择一个视频源'
+          : '暂无启用的视频源，请先在源管理中开启';
+    }
+    return _scope == _SearchScope.current
+        ? '当前站点没有搜到相关资源'
+        : '所有源都没有搜到相关资源';
+  }
+
+  Widget _buildResultBody(bool isDark) {
     if (_loading && _results.isEmpty) {
       return Center(
         child: Column(
@@ -242,15 +384,12 @@ class _SearchPageState extends State<SearchPage> {
       );
     }
     if (_results.isEmpty) {
-      return const EmptyHint(
-        message: '所有源都没有搜到相关资源',
-        icon: Icons.search_off,
-      );
+      return EmptyHint(message: _emptyHint, icon: Icons.search_off);
     }
     return Column(
       children: [
         // 搜索进行中的进度条（结果已陆续展示）
-        if (_loading)
+        if (_loading && _total > 0)
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
             child: Row(
@@ -279,7 +418,7 @@ class _SearchPageState extends State<SearchPage> {
             scrollController: _scrollController,
             labelOf: (video) {
               for (final hit in _results) {
-                if (identical(hit.video, video)) return hit.site.name;
+                if (identical(hit.video, video)) return hit.siteName;
               }
               return null;
             },

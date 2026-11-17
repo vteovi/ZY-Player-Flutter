@@ -190,7 +190,8 @@ class FilmPageState extends State<FilmPage>
 
   Future<void> _openSearch() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SearchPage()),
+      // 带上当前正在浏览的源，搜索页「当前站点」范围要用
+      MaterialPageRoute(builder: (_) => SearchPage(currentSite: _site)),
     );
   }
 
