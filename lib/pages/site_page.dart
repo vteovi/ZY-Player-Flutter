@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/site.dart';
@@ -679,6 +680,23 @@ class _SitePageState extends State<SitePage> {
     );
   }
 
+  /// 长按卡片复制这个源的接口地址。
+  ///
+  /// 分享单个源、或者把地址贴到别处排查时用得上 —— 源列表里的地址是省略号
+  /// 截断显示的，光靠看复制不到完整地址。
+  Future<void> _copyApi(Site site) async {
+    final api = site.api.trim();
+    if (api.isEmpty) {
+      showToast(context, '这个源没有接口地址', success: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: api));
+    if (!mounted) return;
+    // 长按没有点击那样明确的「按下」反馈，补一次震动让人知道操作生效了
+    HapticFeedback.mediumImpact();
+    showToast(context, '已复制接口地址');
+  }
+
   Widget _buildItem(Site site, int index, AppState state) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final result = _results[site.key];
@@ -686,110 +704,115 @@ class _SitePageState extends State<SitePage> {
     final accent = _healthColor(result, isDark);
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(
-        // 深色下卡片用纯黑，靠描边区分边界（提亮底色会让整屏发灰）
-        color: isDark ? AppColors.darkBg : AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: result == null
-              ? (isDark ? AppColors.darkOutline : AppColors.lightOutline)
-              : accent.withValues(alpha: isDark ? 0.5 : 0.42),
+    // 长按整张卡片复制接口地址。包在外层而不是用 InkWell，是为了不动卡片内部
+    // 的开关和两个图标按钮 —— 它们的手势优先级更高于外层，点击不受影响。
+    return GestureDetector(
+      onLongPress: () => _copyApi(site),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          // 深色下卡片用纯黑，靠描边区分边界（提亮底色会让整屏发灰）
+          color: isDark ? AppColors.darkBg : AppColors.lightSurface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: result == null
+                ? (isDark ? AppColors.darkOutline : AppColors.lightOutline)
+                : accent.withValues(alpha: isDark ? 0.5 : 0.42),
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _statusDot(accent, busy),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        site.name.isEmpty ? '未命名' : site.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w500,
-                          color: site.isActive
-                              ? null
-                              : (isDark ? Colors.white38 : Colors.black38),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 8, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  _statusDot(accent, busy),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          site.name.isEmpty ? '未命名' : site.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: site.isActive
+                                ? null
+                                : (isDark ? Colors.white38 : Colors.black38),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${site.type} · ${site.group}',
-                        style: TextStyle(fontSize: 11, color: subText),
-                      ),
-                    ],
-                  ),
-                ),
-                Switch(
-                  value: site.isActive,
-                  onChanged: (v) => state.toggleSite(site, v),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              site.api,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: isDark ? const Color(0xFF6E6E73) : const Color(0xFFB4B8BE),
-              ),
-            ),
-            Row(
-              children: [
-                Expanded(
-                  child: result == null
-                      ? Text(
-                          busy ? '检测中…' : '未检测',
+                        const SizedBox(height: 2),
+                        Text(
+                          '${site.type} · ${site.group}',
                           style: TextStyle(fontSize: 11, color: subText),
-                        )
-                      : Row(
-                          children: [
-                            // 多列布局下卡片更窄，长结论（如「域名解析失败…」）
-                            // 必须能省略，否则整行溢出
-                            Flexible(child: _resultChip(result, isDark)),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${result.ms}ms',
-                              style: TextStyle(fontSize: 11, color: subText),
-                            ),
-                          ],
                         ),
-                ),
-                IconButton(
-                  onPressed: busy ? null : () => _checkOne(site),
-                  icon: Icon(
-                    result == null ? Icons.network_check : Icons.refresh,
-                    size: 18,
+                      ],
+                    ),
                   ),
-                  tooltip: result == null ? '检测' : '重新检测',
-                  visualDensity: VisualDensity.compact,
-                  color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+                  Switch(
+                    value: site.isActive,
+                    onChanged: (v) => state.toggleSite(site, v),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                site.api,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark ? const Color(0xFF6E6E73) : const Color(0xFFB4B8BE),
                 ),
-                if (index > 0)
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: result == null
+                        ? Text(
+                            busy ? '检测中…' : '未检测',
+                            style: TextStyle(fontSize: 11, color: subText),
+                          )
+                        : Row(
+                            children: [
+                              // 多列布局下卡片更窄，长结论（如「域名解析失败…」）
+                              // 必须能省略，否则整行溢出
+                              Flexible(child: _resultChip(result, isDark)),
+                              const SizedBox(width: 6),
+                              Text(
+                                '${result.ms}ms',
+                                style: TextStyle(fontSize: 11, color: subText),
+                              ),
+                            ],
+                          ),
+                  ),
                   IconButton(
-                    onPressed: () => state.pinSite(site),
-                    icon: const Icon(Icons.vertical_align_top, size: 18),
-                    tooltip: '置顶',
+                    onPressed: busy ? null : () => _checkOne(site),
+                    icon: Icon(
+                      result == null ? Icons.network_check : Icons.refresh,
+                      size: 18,
+                    ),
+                    tooltip: result == null ? '检测' : '重新检测',
                     visualDensity: VisualDensity.compact,
-                    color:
-                        isDark ? AppColors.darkSubText : AppColors.lightSubText,
+                    color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
                   ),
-              ],
-            ),
-          ],
+                  if (index > 0)
+                    IconButton(
+                      onPressed: () => state.pinSite(site),
+                      icon: const Icon(Icons.vertical_align_top, size: 18),
+                      tooltip: '置顶',
+                      visualDensity: VisualDensity.compact,
+                      color:
+                          isDark ? AppColors.darkSubText : AppColors.lightSubText,
+                    ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
