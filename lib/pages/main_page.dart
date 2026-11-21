@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
 
-import '../providers/app_state.dart';
 import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 import 'film_page.dart';
@@ -52,8 +50,11 @@ class _MainPageState extends State<MainPage> {
       _filmKey.currentState?.reloadIfNeeded();
     } else {
       _syncPageTo(index);
-      context.read<AppState>().refresh();
     }
+    // 这里**不要**调 AppState.refresh()：它会重新读 4 张表、还会走一次原生
+    // 通道（setForceSoftwareDecode），并连发 5 次 notifyListeners。收藏/历史
+    // 在增删时就已经内存内更新并 notify 过，切页时再全量重载纯属白做，
+    // 而且正好压在翻页动画那几帧上，滑动手感直接变卡。
   }
 
   /// 点导航切到某一页时把 PageView 拨过去。
@@ -70,13 +71,14 @@ class _MainPageState extends State<MainPage> {
     });
   }
 
-  /// 左右滑动切页：反向同步底部导航的高亮
+  /// 左右滑动切页：反向同步底部导航的高亮。
+  ///
+  /// 只改选中项，不做数据刷新 —— 理由同 `_onTap`：翻页动画期间重载数据会掉帧。
   void _onPageChanged(int page) {
     final index = page + 1;
     if (index == _index) return;
     _lastBackAt = null;
     setState(() => _index = index);
-    context.read<AppState>().refresh();
   }
 
   /// 系统返回键（只在 MainPage 处于栈顶时才会走到这里 —— 详情/播放/源管理
@@ -190,14 +192,23 @@ class _MainPageState extends State<MainPage> {
     final body = IndexedStack(
       index: _index == _homeIndex ? 0 : 1,
       children: [
-        FilmPage(key: _filmKey),
+        // IndexedStack 只是「不绘制」未选中的子树，里面的 Ticker 照样在跑。
+        // 首页的骨架屏是 repeat(reverse) 的呼吸动画、加载条是 indeterminate，
+        // 停在收藏/历史页时它们仍在每帧驱动重绘，滑动手势就会掉帧。
+        // 用 TickerMode 把离开首页时的动画真正停掉。
+        TickerMode(
+          enabled: _index == _homeIndex,
+          child: RepaintBoundary(child: FilmPage(key: _filmKey)),
+        ),
+        // 每页各自一层 RepaintBoundary：翻页时只重绘发生位移的两页，
+        // 不会把整块 body 连同导航栏一起重建重绘。
         PageView(
           controller: _pageController,
           onPageChanged: _onPageChanged,
           children: const [
-            _KeepAlive(child: StarPage(only: 0)),
-            _KeepAlive(child: StarPage(only: 1)),
-            _KeepAlive(child: MePage()),
+            RepaintBoundary(child: _KeepAlive(child: StarPage(only: 0))),
+            RepaintBoundary(child: _KeepAlive(child: StarPage(only: 1))),
+            RepaintBoundary(child: _KeepAlive(child: MePage())),
           ],
         ),
       ],
