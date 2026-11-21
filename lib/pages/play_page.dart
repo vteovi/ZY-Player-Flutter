@@ -246,7 +246,11 @@ class _PlayPageState extends State<PlayPage> {
   void initState() {
     super.initState();
     final config = context.read<AppState>().config;
-    _aspect = PlayerAspects.byKey(config.playerAspect);
+    _aspect = PlayerAspects.byKey(
+      config.playerAspect,
+      customRatio: PlayerAspects.parseRatio(config.playerCustomAspect),
+      customLabel: config.playerCustomAspect,
+    );
     _scaleMode = PlayerScales.byKey(config.playerScale);
     _flip = config.playerFlip;
     _showSpeed = config.showSpeed;
@@ -932,6 +936,122 @@ class _PlayPageState extends State<PlayPage> {
     context.read<AppState>().setPlayerAspect(option.key);
     // 全屏中换比例，方向可能要从横屏切回竖屏（9:16）或反之
     if (_fullscreen) _applyFullscreenOrientation();
+  }
+
+  /// 应用用户自定义的比例。[raw] 形如 `21:9`，同时记住原文以便下次沿用。
+  void _applyCustomAspect(String raw) {
+    final ratio = PlayerAspects.parseRatio(raw);
+    if (ratio == null) return;
+    final option = PlayerAspects.custom(ratio, label: raw);
+    setState(() => _aspect = option);
+    final app = context.read<AppState>();
+    app.setPlayerCustomAspect(raw);
+    app.setPlayerAspect(PlayerAspects.customKey);
+    if (_fullscreen) _applyFullscreenOrientation();
+  }
+
+  /// 弹窗让用户填画面比例的宽和高（如 21 : 9）
+  Future<void> _editCustomAspect() async {
+    final config = context.read<AppState>().config;
+    final saved = PlayerAspects.parseParts(config.playerCustomAspect);
+    final wCtrl =
+        TextEditingController(text: _fmtAspectPart(saved?.$1 ?? 16));
+    final hCtrl = TextEditingController(text: _fmtAspectPart(saved?.$2 ?? 9));
+    String? error;
+
+    final raw = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          void submit() {
+            final w = double.tryParse(wCtrl.text.trim());
+            final h = double.tryParse(hCtrl.text.trim());
+            if (w == null || h == null || w <= 0 || h <= 0) {
+              setDlg(() => error = '宽和高都要填大于 0 的数字');
+              return;
+            }
+            final r = w / h;
+            if (!PlayerAspects.isValidRatio(r)) {
+              setDlg(() => error = '比例范围是 1:5 ~ 5:1');
+              return;
+            }
+            // 保留用户填的样子（如 21:9），不化简成 7:3
+            Navigator.of(ctx).pop(
+              '${_fmtAspectPart(w)}:${_fmtAspectPart(h)}',
+            );
+          }
+
+          return AlertDialog(
+            title: const Text('自定义画面比例'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '填写画面的宽和高，例如 21 : 9。也支持小数，如 2.35 : 1。',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: wCtrl,
+                        autofocus: true,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(labelText: '宽'),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(':'),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        controller: hCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        onSubmitted: (_) => submit(),
+                        decoration: const InputDecoration(labelText: '高'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    error!,
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFFFF4445)),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消'),
+              ),
+              TextButton(
+                onPressed: submit,
+                child: const Text('应用'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    wCtrl.dispose();
+    hCtrl.dispose();
+    if (!mounted || raw == null) return;
+    _applyCustomAspect(raw);
+  }
+
+  /// 对话框回填用：整数不带小数点，小数最多两位
+  String _fmtAspectPart(double v) {
+    if ((v - v.roundToDouble()).abs() < 0.001) return v.round().toString();
+    return v.toStringAsFixed(2);
   }
 
   void _selectScale(ScaleOption option) {
@@ -2331,6 +2451,14 @@ class _PlayPageState extends State<PlayPage> {
             selected: option.key == _aspect.key,
             onTap: () => _selectAspect(option),
           ),
+        // 自定义比例：自己填宽高（如 21 : 9），选过一次会被记住
+        _buildChip(
+          label: _aspect.key == PlayerAspects.customKey
+              ? '自定义 ${_aspect.label}'
+              : '自定义…',
+          selected: _aspect.key == PlayerAspects.customKey,
+          onTap: _editCustomAspect,
+        ),
         // 少数源上报的分辨率方向与实际画面相反（竖屏视频被当成横屏），
         // 用这个一键把宽高对调；选择会被记住
         _buildChip(

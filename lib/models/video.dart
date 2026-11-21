@@ -315,6 +315,10 @@ class AppConfig {
   /// 播放页画面比例，见 `utils/player_options.dart` 的 PlayerAspects
   final String playerAspect;
 
+  /// 自定义画面比例（如 `21:9`、`2.35:1`）。
+  /// 仅当 [playerAspect] 为 `custom` 时使用，空串表示还没设置过。
+  final String playerCustomAspect;
+
   /// 播放页画面大小 / 填充方式，见 PlayerScales
   final String playerScale;
 
@@ -357,6 +361,7 @@ class AppConfig {
     this.id = 0,
     this.key = 'config',
     this.playerAspect = 'auto',
+    this.playerCustomAspect = '',
     this.playerScale = 'fit',
     this.playerFlip = false,
     this.showSpeed = false,
@@ -374,6 +379,7 @@ class AppConfig {
       id: json['id'] is int ? json['id'] as int : int.tryParse('${json['id']}') ?? 0,
       key: (json['key'] ?? 'config').toString(),
       playerAspect: (json['playerAspect'] ?? 'auto').toString(),
+      playerCustomAspect: (json['playerCustomAspect'] ?? '').toString(),
       playerScale: (json['playerScale'] ?? 'fit').toString(),
       playerFlip: json['playerFlip'] == true || json['playerFlip'].toString() == 'true',
       showSpeed: json['showSpeed'] == true || json['showSpeed'].toString() == 'true',
@@ -396,6 +402,7 @@ class AppConfig {
         'id': id,
         'key': key,
         'playerAspect': playerAspect,
+        'playerCustomAspect': playerCustomAspect,
         'playerScale': playerScale,
         'playerFlip': playerFlip,
         'showSpeed': showSpeed,
@@ -409,6 +416,7 @@ class AppConfig {
 
   AppConfig copyWith({
     String? playerAspect,
+    String? playerCustomAspect,
     String? playerScale,
     bool? playerFlip,
     bool? showSpeed,
@@ -423,6 +431,7 @@ class AppConfig {
         id: id,
         key: key,
         playerAspect: playerAspect ?? this.playerAspect,
+        playerCustomAspect: playerCustomAspect ?? this.playerCustomAspect,
         playerScale: playerScale ?? this.playerScale,
         playerFlip: playerFlip ?? this.playerFlip,
         showSpeed: showSpeed ?? this.showSpeed,
