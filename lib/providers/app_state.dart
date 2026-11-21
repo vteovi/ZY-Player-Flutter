@@ -284,6 +284,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 记住自定义画面比例（形如 `21:9`；空串表示未设置）
+  Future<void> setPlayerCustomAspect(String value) async {
+    if (_config.playerCustomAspect == value) return;
+    _config = _config.copyWith(playerCustomAspect: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   /// 记住播放页选择的画面大小
   Future<void> setPlayerScale(String key) async {
     if (_config.playerScale == key) return;
