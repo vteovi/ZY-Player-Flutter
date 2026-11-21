@@ -140,15 +140,23 @@ class _StarPageState extends State<StarPage>
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    // 单栏模式：底部导航的「收藏」「历史」两个独立页面
+    // 只订阅自己真正需要的那份列表，不用 `watch<AppState>()`。
+    // 播放页每 10 秒写一次播放进度都会 notifyListeners，watch 整个 AppState
+    // 会让这整页网格（含 AppBar）跟着重建 —— 哪怕当前根本不在这一页，
+    // 每次 notify 也要白跑一遍 build，滑动时抢帧预算。
+    // select 按列表实例比较：loadStars/loadHistories 会换新 List，变更照常触发；
+    // 其它字段（站点、配置）变化则不再牵连本页。
     final only = widget.only;
+    // 单栏模式：底部导航的「收藏」「历史」两个独立页面
     if (only != null) {
       final history = only == 1;
+      final items = context.select(
+        (AppState s) => history ? s.histories : s.stars,
+      );
       return Scaffold(
         appBar: AppBar(title: Text(history ? '历史记录' : '我的收藏')),
         body: _buildPane(
-          items: history ? app.histories : app.stars,
+          items: items,
           isHistory: history,
           emptyMessage: history ? '还没有播放记录' : '还没有收藏任何影片',
           emptyIcon: history ? Icons.history : Icons.star_border,
@@ -157,14 +165,16 @@ class _StarPageState extends State<StarPage>
         ),
       );
     }
+    final stars = context.select((AppState s) => s.stars);
+    final histories = context.select((AppState s) => s.histories);
     return Scaffold(
       appBar: AppBar(
         title: const Text('收藏与历史'),
         bottom: TabBar(
           controller: _tabController,
           tabs: [
-            Tab(text: '收藏 ${app.stars.length}'),
-            Tab(text: '历史记录 ${app.histories.length}'),
+            Tab(text: '收藏 ${stars.length}'),
+            Tab(text: '历史记录 ${histories.length}'),
           ],
         ),
       ),
@@ -172,7 +182,7 @@ class _StarPageState extends State<StarPage>
         controller: _tabController,
         children: [
           _buildPane(
-            items: app.stars,
+            items: stars,
             isHistory: false,
             emptyMessage: '还没有收藏任何影片',
             emptyIcon: Icons.star_border,
@@ -180,7 +190,7 @@ class _StarPageState extends State<StarPage>
             onLongPress: _removeStar,
           ),
           _buildPane(
-            items: app.histories,
+            items: histories,
             isHistory: true,
             emptyMessage: '还没有播放记录',
             emptyIcon: Icons.history,
