@@ -168,6 +168,30 @@ class HttpService {
     return '$base?$query';
   }
 
+  /// 列表类请求的公共参数（分类 + 页码）。
+  ///
+  /// ⚠️ `t` / `pg` 是 maccms 的标准参数名，但有一批站（例如
+  /// `http://movie.iqinu.com/api.php/v1.vod`）的网关只认 `tid` / `page`，
+  /// 对 `t` / `pg` **完全无视**：请求照样 200、照样回片单，只是永远回最新那一页。
+  /// 在 App 里就表现成「点了别的分类还是同一批片」「翻页一直翻不动」——
+  /// 用户看到的就是「这个网站只能获取到一个分类」。
+  ///
+  /// 所以两套参数同时带上：标准站会忽略不认识的 `tid` / `page`（实测红牛等
+  /// 内置源带不带完全一致），非标准站则靠自己的那一套生效。
+  static Map<String, String> _listParams({String? tid, int? pg}) {
+    final params = <String, String>{'ac': 'videolist'};
+    final t = (tid ?? '').trim();
+    if (t.isNotEmpty && t != '0') {
+      params['t'] = t;
+      params['tid'] = t;
+    }
+    if (pg != null) {
+      params['pg'] = '$pg';
+      params['page'] = '$pg';
+    }
+    return params;
+  }
+
   /// 发起请求：**先 GET，必要时再回退 POST**。
   ///
   /// 原实现统一走 POST（对齐 uni-app 版 uni-ajax），但实测有采集站
@@ -445,7 +469,7 @@ class HttpService {
       id: _s(v['vod_id']),
       tid: _s(v['type_id']),
       name: _s(v['vod_name']),
-      type: _s(v['type_name']),
+      type: _typeName(v),
       pic: _s(v['vod_pic']),
       lang: _s(v['vod_lang']),
       area: _s(v['vod_area']),
@@ -458,12 +482,33 @@ class HttpService {
     );
   }
 
+  /// 分类名。
+  ///
+  /// 标准接口给扁平的字符串 `type_name`；新版 maccms（如 `movie.iqinu.com`）
+  /// 把整个分类对象塞进 `type`、顶层 `type_name` 为空，直接 `toString()` 会把
+  /// `{type_id: 3, type_name: 综艺, …}` 整串显示到卡片上。
+  static String _typeName(Map<dynamic, dynamic> v) {
+    final flat = _s(v['type_name']).trim();
+    if (flat.isNotEmpty) return flat;
+    final type = v['type'];
+    if (type is Map) return _s(type['type_name']).trim();
+    return _s(type).trim();
+  }
+
   static PageInfo _mapPage(Map<dynamic, dynamic> d) {
+    final size = _i(d['limit'] ?? d['pagesize'], 20);
+    final total = _i(d['total'] ?? d['recordcount'], 0);
+    var pages = _i(d['pagecount'], 0);
+    // 有些网关只给 total + limit、不给 pagecount（`movie.iqinu.com` 就是）。
+    // 缺了就自己算，否则总页数被当成 1，列表永远翻不到第二页。
+    if (pages <= 0 && total > 0 && size > 0) {
+      pages = (total + size - 1) ~/ size;
+    }
     return PageInfo(
       page: _i(d['page'], 1),
-      pagecount: _i(d['pagecount'], 1),
-      pagesize: _i(d['limit'], 20),
-      recordcount: _i(d['total'], 0),
+      pagecount: pages > 0 ? pages : 1,
+      pagesize: size > 0 ? size : 20,
+      recordcount: total,
     );
   }
 
@@ -532,6 +577,13 @@ class HttpService {
       if (fromJson.isNotEmpty) return fromJson;
       final fromXml = _classesFromXml(payload.xmlDoc);
       if (fromXml.isNotEmpty) return fromXml;
+      // 兜底：接口只回片单、压根不给 class 列表（如 `movie.iqinu.com` 的
+      // `/api.php/v1.vod`，`ac=list` 也只是最新 20 条）。这类站本来会被判成
+      // 「只有『最新』一个分类」，所以从片单里的 `type` 反推分类表。
+      final fromVideos = _classesFromVideos(payload.json);
+      if (fromVideos.isNotEmpty) {
+        return _extendClasses(site, fromVideos);
+      }
     }
     return <VideoClass>[];
   }
@@ -564,6 +616,86 @@ class HttpService {
       ));
     }
     return list;
+  }
+
+  /// 从片单反推分类（接口没有 class 列表时的兜底）。
+  ///
+  /// 兼容两种字段形态：标准 maccms 是顶层 `type_id` + `type_name`（或字符串
+  /// `type`）；新版 maccms 把**整个分类对象**塞进 `type`（`type_name` 在里面）。
+  /// 只看顶层字段会得到空表，那就是「这个网站只有一个分类」的由来。
+  static List<VideoClass> _classesFromVideos(Map<String, dynamic>? json) {
+    final out = <VideoClass>[];
+    if (json == null) return out;
+    final raw =
+        json['list'] ?? (json['data'] is Map ? json['data']['list'] : null);
+    if (raw is! List) return out;
+    final seen = <String>{};
+    for (final item in raw) {
+      if (item is! Map) continue;
+      final type = item['type'];
+      var tid = _s(item['type_id']).trim();
+      var name = _s(item['type_name']).trim();
+      if (type is Map) {
+        if (tid.isEmpty) tid = _s(type['type_id']).trim();
+        if (name.isEmpty) name = _s(type['type_name']).trim();
+      } else if (name.isEmpty) {
+        name = _s(type).trim();
+      }
+      if (tid.isEmpty || name.isEmpty) continue;
+      if (seen.add(tid)) out.add(VideoClass(tid: tid, name: name));
+    }
+    return out;
+  }
+
+  /// 反推最多补几个相邻分类。
+  static const int _classProbeExtra = 4;
+
+  /// 补齐反推漏掉的冷门分类。
+  ///
+  /// 片单反推只覆盖「最新」那一页里出现过的类型，冷门分类（短剧之类）一条
+  /// 都不会出现。按 tid 顺序往后探几个就能补上——分类 id 在 maccms 里是连续
+  /// 分配的。探测并发执行，且**只在反推路径**上跑，正常给 class 的站不受影响。
+  Future<List<VideoClass>> _extendClasses(
+    Site site,
+    List<VideoClass> base,
+  ) async {
+    final nums = base.map((c) => int.tryParse(c.tid)).whereType<int>().toList();
+    if (nums.isEmpty) return base;
+    final maxTid = nums.reduce((a, b) => a > b ? a : b);
+    final extra = (await Future.wait(<Future<VideoClass?>>[
+      for (var i = 1; i <= _classProbeExtra; i++)
+        _probeClass(site, '${maxTid + i}'),
+    ]))
+        .whereType<VideoClass>()
+        .toList();
+    if (extra.isEmpty) return base;
+    final out = <VideoClass>[...base, ...extra]
+      ..sort((a, b) {
+        final x = int.tryParse(a.tid);
+        final y = int.tryParse(b.tid);
+        if (x == null || y == null) return 0;
+        return x.compareTo(y);
+      });
+    return out;
+  }
+
+  /// 探一个 tid 有没有资源；有就带上它自己的分类名。
+  ///
+  /// 站点若忽略 `tid`（回了「全部」片单），里面没有 tid 相同的项，这里返回
+  /// null —— 不会凭空多出一个错分类。
+  Future<VideoClass?> _probeClass(Site site, String tid) async {
+    try {
+      final payload = await _load(
+        _apiUrl(site, _listParams(tid: tid, pg: 1)),
+        timeout: const Duration(seconds: 6),
+      );
+      for (final c in _classesFromVideos(payload.json)) {
+        if (c.tid == tid) return c;
+      }
+    } catch (_) {
+      // 探测失败就当没有，不影响已经反推出的分类
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -654,10 +786,7 @@ class HttpService {
     String? tid,
     bool strict = false,
   }) async {
-    final params = <String, String>{'ac': 'videolist'};
-    if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
-    params['pg'] = '$pg';
-    final url = _apiUrl(site, params);
+    final url = _apiUrl(site, _listParams(tid: tid, pg: pg));
     if (strict) return _videosFrom(await _load(url), site);
     try {
       return _videosFrom(await _load(url), site);
@@ -730,9 +859,7 @@ class HttpService {
   /// 获取总资源数与页数
   Future<PageInfo> fetchPage(Site site, {String? tid}) async {
     try {
-      final params = <String, String>{'ac': 'videolist'};
-      if (tid != null && tid.isNotEmpty && tid != '0') params['t'] = tid;
-      final payload = await _load(_apiUrl(site, params));
+      final payload = await _load(_apiUrl(site, _listParams(tid: tid)));
       if (payload.json != null) return _pageFromJson(payload.json!);
       return _pageFromXml(payload.xmlDoc);
     } catch (_) {
