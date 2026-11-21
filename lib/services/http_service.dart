@@ -65,11 +65,19 @@ class PageInfo {
   final int pagesize;
   final int recordcount;
 
+  /// 这次请求是否真的拿到了分页信息。
+  ///
+  /// [HttpService.fetchPage] 内部会吞掉网络异常并返回一个空对象，调用方必须靠这个
+  /// 标记区分「站点真的只有 1 页」和「这次没取到」。否则一次超时就会把总页数写成 1，
+  /// 列表被误判成「没有更多了」再也翻不动，元信息缓存也被污染。
+  final bool ok;
+
   const PageInfo({
     this.page = 1,
     this.pagecount = 1,
     this.pagesize = 20,
     this.recordcount = 0,
+    this.ok = true,
   });
 }
 
@@ -728,7 +736,7 @@ class HttpService {
       if (payload.json != null) return _pageFromJson(payload.json!);
       return _pageFromXml(payload.xmlDoc);
     } catch (_) {
-      return const PageInfo();
+      return const PageInfo(ok: false);
     }
   }
 
@@ -740,7 +748,8 @@ class HttpService {
 
   static PageInfo _pageFromXml(xml.XmlDocument? doc) {
     final listNode = _firstElement(doc, 'list');
-    if (listNode == null) return const PageInfo();
+    // 拿到网页而不是采集接口时 listNode 为空：这是「没取到」而不是「只有 1 页」
+    if (listNode == null) return const PageInfo(ok: false);
     return PageInfo(
       page: _i(listNode.getAttribute('page'), 1),
       pagecount: _i(listNode.getAttribute('pagecount'), 1),

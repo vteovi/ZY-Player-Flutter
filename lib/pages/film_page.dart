@@ -25,7 +25,10 @@ class FilmPage extends StatefulWidget {
 }
 
 class FilmPageState extends State<FilmPage>
-    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+    with
+        SingleTickerProviderStateMixin,
+        AutomaticKeepAliveClientMixin,
+        WidgetsBindingObserver {
   static const _latestClass = VideoClass(tid: '0', name: '最新');
 
   /// 宽屏阈值（与 MainPage 的 _wideThreshold 一致）：达到后把搜索框并进
@@ -37,6 +40,16 @@ class FilmPageState extends State<FilmPage>
 
   /// 顶部网站切换旁的「共 X 资源」：按分类 tid 缓存各分类的资源数
   final Map<String, int> _recordCounts = <String, int>{};
+
+  /// 每个分类的「刷新令牌」：+1 就通知对应分栏静默重拉片单。
+  /// 只给当前可见分类加，避免一次回到前台就朝源站打十几个并发请求。
+  final Map<String, int> _refreshTicks = <String, int>{};
+
+  /// 上次触发（或页面刚建好）的时间。回到前台 / 切回首页时据此判断内容是否偏旧。
+  DateTime _lastRefreshAt = DateTime.now();
+
+  /// 内容超过这个时长就认为「旧了」，需要静默刷新一次
+  static const Duration _staleAfter = Duration(minutes: 10);
 
   late TabController _tabController;
   int _lastTabIndex = 0;
@@ -59,6 +72,7 @@ class FilmPageState extends State<FilmPage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: _classes.length, vsync: this);
     _tabController.addListener(_onTabChanged);
     // 直接进主页时 sites 可能还没加载完（bootstrap 是异步的），先挂监听：
@@ -69,10 +83,29 @@ class FilmPageState extends State<FilmPage>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     context.read<AppState>().removeListener(_onAppStateChanged);
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
+  }
+
+  /// App 从后台回到前台：片单可能已经放了一整夜没动过，静默刷一次头部页面。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) refreshIfStale();
+  }
+
+  /// 内容放了超过 [_staleAfter] 就刷新当前可见分类；否则什么都不做。
+  ///
+  /// 首页用 IndexedStack 常驻（切到收藏、设置再切回来不会重建），没有这一步的话
+  /// 第一屏内容会一直停在「打开 App 那一刻」，看着就像「从来没更新过」。
+  void refreshIfStale() {
+    if (!mounted || _site == null) return;
+    if (DateTime.now().difference(_lastRefreshAt) < _staleAfter) return;
+    _lastRefreshAt = DateTime.now();
+    final tid = _activeClass.tid;
+    setState(() => _refreshTicks[tid] = (_refreshTicks[tid] ?? 0) + 1);
   }
 
   /// AppState 任意变化（含 sites 加载完成）时尝试按需重载。
@@ -107,10 +140,13 @@ class FilmPageState extends State<FilmPage>
     return state.activeSites.map((s) => s.key).join(',');
   }
 
-  /// 视频源改动过时才重新拉取（切换 tab 时调用）
+  /// 视频源改动过时才重新拉取（切换 tab 时调用）；
+  /// 源没变但内容放太久，就静默刷新当前分类。
   Future<void> reloadIfNeeded() async {
     if (_currentSignature != _signature) {
       await reload();
+    } else {
+      refreshIfStale();
     }
   }
 
@@ -120,6 +156,8 @@ class FilmPageState extends State<FilmPage>
   Future<void> reload() async {
     if (!mounted) return;
     _signature = _currentSignature;
+    // 刚整批重拉过，重置陈旧计时，避免紧接着又被 refreshIfStale 触发一次
+    _lastRefreshAt = DateTime.now();
     final state = context.read<AppState>();
     final sites = state.activeSites;
     if (sites.isEmpty) {
@@ -179,6 +217,7 @@ class FilmPageState extends State<FilmPage>
       labelBuilder: (s) => s.name,
     );
     if (picked == null || picked.key == _site?.key) return;
+    _lastRefreshAt = DateTime.now();
     setState(() {
       _loading = true;
       _site = picked;
@@ -397,6 +436,7 @@ class FilmPageState extends State<FilmPage>
               videoClass: c,
               onRecordCount: _onRecordCount,
               onTapVideo: _openDetail,
+              refreshTick: _refreshTicks[c.tid] ?? 0,
             ),
           )
           .toList(),
@@ -411,12 +451,19 @@ class CategoryTab extends StatefulWidget {
   final void Function(String tid, int count) onRecordCount;
   final void Function(Video video) onTapVideo;
 
+  /// 「刷新令牌」：父级把某个分类的令牌 +1，本分栏就静默重拉一次片单。
+  ///
+  /// 用自增 int 而不是 GlobalKey 调子 State 方法，是因为分栏都在
+  /// `AutomaticKeepAlive` 里常驻，GlobalKey 还要跟着换源重建、清理，容易出错。
+  final int refreshTick;
+
   const CategoryTab({
     super.key,
     required this.site,
     required this.videoClass,
     required this.onRecordCount,
     required this.onTapVideo,
+    this.refreshTick = 0,
   });
 
   @override
@@ -428,7 +475,16 @@ class CategoryTabState extends State<CategoryTab>
   final List<Video> _videos = <Video>[];
   final ScrollController _scrollController = ScrollController();
 
-  int _pageCount = 0;
+  /// 下一个要加载的页号。
+  ///
+  /// ⚠️ 采集接口 `pg=1` 才是**最新**内容，页码越大内容越老（实测某源
+  /// `pg=1` 是今天更新的片子，末页是 2023 年的）。所以这里从 1 开始递增，
+  /// 一旦搞反，「最新」分栏取到的就是全站最老的那批片子，永远不变。
+  int _pageCount = 1;
+
+  /// 源站总页数（pagecount）。0 表示还没问到，边界未知。
+  int _totalPages = 0;
+
   int _recordCount = 0;
   bool _loading = false;
   bool _loadingMore = false;
@@ -438,12 +494,16 @@ class CategoryTabState extends State<CategoryTab>
   /// 而是给一个明确的重试入口 —— 否则用户只看到转圈消失、列表不动。
   bool _loadMoreFailed = false;
 
+  /// 首次/整页刷新失败且手上一条数据都没有：给一个可点的失败提示，
+  /// 而不是永远停在骨架屏或一片空白。
+  bool _loadFailed = false;
+
   /// 连续「加载了但列表没增长」的次数：给「内容没撑满可视区就续拉」兜底，
   /// 防止对返回重复页的源站空转狂刷。
   int _noGrowStreak = 0;
 
-  /// 已加载的页号集合：用于「后台刷新」时只替换最新尾页、不抹掉用户已下滑加载的
-  /// 更早页面，并让「加载更多」接着已加载的最早一页继续往前翻（不重复取页）。
+  /// 已加载的页号集合：用于「后台刷新」时只替换最新的头部页面、不抹掉用户已下滑
+  /// 加载的后续页面，并让「加载更多」接着已加载的最后一页继续往后翻（不重复取页）。
   final Set<int> _loadedPages = <int>{};
 
   @override
@@ -464,11 +524,24 @@ class CategoryTabState extends State<CategoryTab>
     super.dispose();
   }
 
+  /// 上一次静默刷新是否还在进行中，防止「回到前台」和「切回首页」同时触发两次请求
+  bool _refreshing = false;
+
   @override
   void didChangeMetrics() {
     // 旋转 / 分屏改变可视区大小：横屏列变多后内容可能不再溢出，没有滚动事件就
     // 触发不了加载更多。这里重新检查是否要补内容（否则同样会卡在「滑不动」）。
     _maybeContinueLoad();
+  }
+
+  @override
+  void didUpdateWidget(covariant CategoryTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 父级要求刷新（回到前台 / 切回首页且内容偏旧）：只静默替换头部页面，
+    // 用户已下滑加载的内容保持不动。
+    if (widget.refreshTick != oldWidget.refreshTick) {
+      unawaited(_refresh());
+    }
   }
 
   void _onScroll() {
@@ -494,13 +567,14 @@ class CategoryTabState extends State<CategoryTab>
     final siteKey = widget.site.key;
     final tid = widget.videoClass.tid;
 
-    // ① 本地缓存优先：恢复元信息与「末页 + 末页-1」（与网络取数顺序一致）
+    // ① 本地缓存优先：恢复元信息与「第 1、2 页」（与网络取数顺序一致）
     final meta = await ListCache.getMeta(siteKey, tid);
     if (meta != null) {
       _recordCount = meta.recordcount;
+      _totalPages = meta.pagecount;
       widget.onRecordCount(tid, _recordCount);
-      final pages = <int>[meta.pagecount];
-      if (meta.pagecount > 1) pages.add(meta.pagecount - 1);
+      final pages = <int>[1];
+      if (meta.pagecount > 1) pages.add(2);
       final restored = <Video>[];
       for (final pg in pages) {
         final cached = await ListCache.getPage(siteKey, tid, pg);
@@ -530,31 +604,64 @@ class CategoryTabState extends State<CategoryTab>
     try {
       await _refresh();
     } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadFailed = _videos.isEmpty;
+        });
+      }
+    }
+  }
+
+  /// 静默刷新入口：防重入后转给 [_doRefresh]
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+      await _doRefresh();
+    } finally {
+      _refreshing = false;
     }
   }
 
   /// 向源站重新拉取片单并写回缓存，最后用最新数据**合并**进显示。
   ///
-  /// 取数顺序：从末页往前翻，凑够至少 6 条（末页不足则继续往前几页），单趟不重复取页。
-  /// ⚠️ 关键：刷新只替换「最新的尾页」，必须保留用户已经下滑加载出来的更早页面——
+  /// 取数顺序：从 `pg=1`（最新）往后翻，凑够至少 6 条，单趟不重复取页。
+  /// ⚠️ 关键：刷新只替换「最新的头部页面」，必须保留用户已经下滑加载出来的后续页面——
   /// 否则后台刷新一返回就把已加载内容整段抹除（表现为「滑一下闪一下、内容少了一截」，
   /// 再滑又刷出来）。做法：fresh 作前缀，再把当前列表里 id 不在 fresh 中的旧条目
   /// 按原顺序接在后面（相同 id 用 fresh 的新数据覆盖）。
-  Future<void> _refresh() async {
+  Future<void> _doRefresh() async {
     if (!mounted) return;
     final site = widget.site;
     final tid = widget.videoClass.tid;
     final info = await HttpService.instance.fetchPage(site, tid: tid);
     if (!mounted) return;
+    if (!info.ok) {
+      // 连总页数都没问到：**不写缓存、不动分页边界**，保留已显示的内容。
+      // 早先这里会把 pagecount=1 当成真的只有一页写进缓存，之后这个分类就
+      // 再也翻不动了。手上一条数据都没有时给个可重试的提示。
+      setState(() {
+        _loading = false;
+        _loadFailed = _videos.isEmpty;
+      });
+      return;
+    }
     _recordCount = info.recordcount;
+    _totalPages = info.pagecount;
+    _loadFailed = false;
     widget.onRecordCount(tid, _recordCount);
     await ListCache.putMeta(site.key, tid, info.pagecount, info.recordcount);
 
-    // 从末页往前取，直到攒够至少 6 条或翻到第一页为止（单趟，不重复取页）
+    // 从第 1 页往后取，直到攒够至少 6 条或翻到末页为止（单趟，不重复取页）。
+    // 最多试 3 页：万一源站对 videolist 返回空列表（不是报错），`fresh.length < 6`
+    // 会一直成立，没有这个上限就会朝一个几千页的源空打几千次请求。
     final fresh = <Video>[];
-    var page = info.pagecount;
-    while (page >= 1 && (fresh.isEmpty || fresh.length < 6)) {
+    var page = 1;
+    var tries = 0;
+    while (page <= info.pagecount &&
+        tries < 3 &&
+        (fresh.isEmpty || fresh.length < 6)) {
       try {
         await _appendPage(page, sink: fresh);
       } catch (_) {
@@ -562,7 +669,8 @@ class CategoryTabState extends State<CategoryTab>
         break;
       }
       _loadedPages.add(page);
-      page--;
+      page++;
+      tries++;
     }
     if (!mounted) return;
     setState(() {
@@ -582,10 +690,10 @@ class CategoryTabState extends State<CategoryTab>
       }
       _loading = false;
     });
-    // 已加载的最早一页：接下来 loadMore 从这里继续往前翻，不重复取已加载的页
+    // 已加载的最后一页：接下来 loadMore 从这里继续往后翻，不重复取已加载的页
     _pageCount = _loadedPages.isEmpty
-        ? info.pagecount
-        : _loadedPages.reduce((a, b) => a < b ? a : b);
+        ? 1
+        : _loadedPages.reduce((a, b) => a > b ? a : b) + 1;
     // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
     unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
     // 横屏 / 大屏列多时这几页可能整屏放得下 —— 没有滚动事件就等于「加载更多」永不
@@ -606,17 +714,18 @@ class CategoryTabState extends State<CategoryTab>
   /// 等用户真正滑到底时 [_loadMore] 还会再试一次。
   Future<void> _warmUp(int pages) async {
     for (var i = 0; i < pages; i++) {
-      if (!mounted || _loading || _loadingMore || _pageCount <= 1) return;
+      if (!mounted || _loading || _loadingMore) return;
+      if (_totalPages > 0 && _pageCount > _totalPages) return;
       if (_loadMoreFailed) return;
       _loadingMore = true;
       final page = _pageCount;
-      _pageCount--;
+      _pageCount++;
       var ok = true;
       try {
         await _appendPage(page);
         _loadedPages.add(page);
       } catch (_) {
-        _pageCount++; // 失败不消耗页号
+        _pageCount--; // 失败不消耗页号
         ok = false;
       }
       _loadingMore = false;
@@ -633,7 +742,7 @@ class CategoryTabState extends State<CategoryTab>
   ///
   /// [sink] 非空时把结果累加进外部列表（用于后台刷新：先攒齐再一次性替换显示）；
   /// 为空时直接累加进 [_videos]（用于滚动加载更多：边取边显示）。
-  /// 不在此处递归翻页——翻页节奏统一由调用方（_refresh / _loadMore）控制，
+  /// 不在此处递归翻页——翻页节奏统一由调用方（_doRefresh / _loadMore）控制，
   /// 避免重复取页；重复 id 的条目也在此处直接跳过，作最后一层兜底。
   Future<void> _appendPage(int page, {List<Video>? sink}) async {
     if (page <= 0) return;
@@ -659,30 +768,32 @@ class CategoryTabState extends State<CategoryTab>
     }
   }
 
-  /// 滚动到底部时加载更早的分页。
+  /// 滚动到底部时加载下一页（更早的内容）。
   ///
   /// ⚠️ 两点易踩的坑都已修：
-  /// 1) 取页（网络）异常必须用 try/finally 复位 `_loadingMore`，否则一旦某页失败，
+  /// 1) 取页（网络）异常必须复位 `_loadingMore`，否则一旦某页失败，
   ///    该标志永久停在 true，后续所有加载都被 guard 拦掉——表现为「滑到某处就再也不动了」。
   ///    失败时回退 `_pageCount`，下次还能重试这一页。
   /// 2) 加载完若用户仍停在底部（静止、无新滚动事件），`_onScroll` 不会再触发，必须
   ///    「来回滑一下」才续拉。这里在成功贴底且列表确有增长时**自动续拉下一页**，
   ///    让到底即连续加载，不再需要手动划动。重复页（源站返回相同 id）不增长则不续拉，
-  ///    避免对问题源站空转狂刷；`_pageCount` 一路递减到 1 自然收尾。
+  ///    避免对问题源站空转狂刷；`_pageCount` 一路递增超过 pagecount 自然收尾。
   Future<void> _loadMore() async {
-    if (_loadingMore || _loading || _pageCount <= 1) return;
+    if (_loadingMore || _loading) return;
+    if (_totalPages > 0 && _pageCount > _totalPages) return;
     _loadingMore = true;
     if (_loadMoreFailed && mounted) {
       setState(() => _loadMoreFailed = false);
     }
     final before = _videos.length;
-    _pageCount--;
+    final page = _pageCount;
+    _pageCount++;
     var ok = true;
     try {
-      await _appendPage(_pageCount);
-      _loadedPages.add(_pageCount);
+      await _appendPage(page);
+      _loadedPages.add(page);
     } catch (e) {
-      _pageCount++; // 回退，待下次滚动重试本页
+      _pageCount--; // 回退，待下次滚动重试本页
       ok = false;
     }
     if (!mounted) {
@@ -711,11 +822,12 @@ class CategoryTabState extends State<CategoryTab>
   /// 「打开就已经到底、上滑没反应、只有左右切分类能用」。
   ///
   /// 这里在每帧布局完成后检查：仍然不可滚动 / 仍然贴底就继续翻页，直到能滑、
-  /// 翻到第一页，或连续两页都没新增（源站在返回重复页）为止。
+  /// 翻到末页，或连续两页都没新增（源站在返回重复页）为止。
   void _maybeContinueLoad() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_loading || _loadingMore || _pageCount <= 1) return;
+      if (_loading || _loadingMore) return;
+      if (_totalPages > 0 && _pageCount > _totalPages) return;
       if (_noGrowStreak >= 2) return;
       if (!_scrollController.hasClients) return;
       final pos = _scrollController.position;
@@ -733,13 +845,20 @@ class CategoryTabState extends State<CategoryTab>
     // 只在顶部压一条细进度线，避免「切一下变灰、内容消失又长回来」。
     final Widget content = (_loading && _videos.isEmpty)
         ? const VideoGridSkeleton()
-        : buildVideoGrid(
-            context: context,
-            videos: _videos,
-            scrollController: _scrollController,
-            loadingMore: _loadingMore,
-            onTap: widget.onTapVideo,
-          );
+        : (_loadFailed && _videos.isEmpty)
+            ? EmptyHint(
+                message: '片单加载失败\n可能是网络波动，或这个源暂时打不开',
+                icon: Icons.cloud_off_outlined,
+                actionText: '重试',
+                onAction: _retryLoad,
+              )
+            : buildVideoGrid(
+                context: context,
+                videos: _videos,
+                scrollController: _scrollController,
+                loadingMore: _loadingMore,
+                onTap: widget.onTapVideo,
+              );
     return Stack(
       children: [
         content,
@@ -766,8 +885,10 @@ class CategoryTabState extends State<CategoryTab>
           ),
         // 翻页失败：底部浮一条可点重试的提示。源站偶发超时时，
         // 原来的「转圈消失、列表不动」看不出发生了什么，用户只能干等。
-        // 已翻到第 1 页（没有更早的页可取了）就不再提示重试，避免点了没反应。
-        if (_loadMoreFailed && !_loadingMore && _pageCount > 1)
+        // 已翻到末页（没有更多页了）就不再提示重试，避免点了没反应。
+        if (_loadMoreFailed &&
+            !_loadingMore &&
+            (_totalPages <= 0 || _pageCount <= _totalPages))
           Positioned(
             left: 0,
             right: 0,
@@ -776,6 +897,16 @@ class CategoryTabState extends State<CategoryTab>
           ),
       ],
     );
+  }
+
+  /// 失败提示上的「重试」：重新走一遍静默刷新
+  void _retryLoad() {
+    if (_refreshing || !mounted) return;
+    setState(() {
+      _loading = true;
+      _loadFailed = false;
+    });
+    unawaited(_refresh());
   }
 
   Widget _buildRetryTip() {
