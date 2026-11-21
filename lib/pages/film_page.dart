@@ -568,7 +568,16 @@ class CategoryTabState extends State<CategoryTab>
     final tid = widget.videoClass.tid;
 
     // ① 本地缓存优先：恢复元信息与「第 1、2 页」（与网络取数顺序一致）
-    final meta = await ListCache.getMeta(siteKey, tid);
+    // ⚠️ 读缓存任何一环出问题都只当「没有缓存」处理，绝不能让异常跳出 _load ——
+    // 那样 _loading 会停在 false、列表又空，界面就显示成「该分类下暂无资源」，
+    // 看起来像源站没内容，实际是本地读取失败、网络请求根本还没发出去。
+    CachedMeta? meta;
+    try {
+      meta = await ListCache.getMeta(siteKey, tid);
+    } catch (_) {
+      meta = null;
+    }
+    if (!mounted) return;
     if (meta != null) {
       _recordCount = meta.recordcount;
       _totalPages = meta.pagecount;
@@ -577,20 +586,27 @@ class CategoryTabState extends State<CategoryTab>
       if (meta.pagecount > 1) pages.add(2);
       final restored = <Video>[];
       for (final pg in pages) {
-        final cached = await ListCache.getPage(siteKey, tid, pg);
-        if (cached != null) {
-          restored.addAll(cached);
-          _loadedPages.add(pg);
+        try {
+          final cached = await ListCache.getPage(siteKey, tid, pg);
+          if (cached != null && cached.isNotEmpty) {
+            restored.addAll(cached);
+            _loadedPages.add(pg);
+          }
+        } catch (_) {
+          // 这一页缓存读坏了就跳过，剩下的照常恢复
         }
       }
       if (mounted) {
         setState(() {
-          _videos.addAll(restored);
-          // 有缓存可显示就不铺骨架屏，直接展示
-          _loading = false;
+          if (restored.isNotEmpty) _videos.addAll(restored);
+          // 有缓存可显示就立刻展示；缓存是空的（只有元信息没分页数据）时
+          // 继续铺骨架屏，别先闪一下「暂无资源」再长回来。
+          _loading = restored.isEmpty;
         });
-        // 抢先预取这些封面的磁盘缓存：本次滚动、下次打开直接读本地不再转圈
-        unawaited(ImagePrefetch.prefetch(restored.map((v) => v.pic).toList()));
+        if (restored.isNotEmpty) {
+          // 抢先预取这些封面的磁盘缓存：本次滚动、下次打开直接读本地不再转圈
+          unawaited(ImagePrefetch.prefetch(restored.map((v) => v.pic).toList()));
+        }
       }
     } else if (mounted) {
       setState(() {
@@ -651,19 +667,30 @@ class CategoryTabState extends State<CategoryTab>
     _totalPages = info.pagecount;
     _loadFailed = false;
     widget.onRecordCount(tid, _recordCount);
-    await ListCache.putMeta(site.key, tid, info.pagecount, info.recordcount);
+    try {
+      await ListCache.putMeta(site.key, tid, info.pagecount, info.recordcount);
+    } catch (_) {
+      // 元信息写不进去只影响下次秒开，不能连累这一次的显示
+    }
 
-    // 从第 1 页往后取，直到攒够至少 6 条或翻到末页为止（单趟，不重复取页）。
-    // 最多试 3 页：万一源站对 videolist 返回空列表（不是报错），`fresh.length < 6`
-    // 会一直成立，没有这个上限就会朝一个几千页的源空打几千次请求。
+    // 从第 1 页往后取。首屏**只要 1 页**（20 条）就够把手机竖屏铺满两屏多，
+    // 不再一次取 3 页：首页十几个分类同时初始化时，每栏多发两个请求就会叠成
+    // 几十个并发，源站一限流就整屏返回失败 —— 那才是「所有分类都暂无资源」的
+    // 直接原因。少而稳比多而全重要，剩下的交给滚动加载去补。
+    // `pagecount <= 0`（有些源对父分类不给分页信息）时至少试第 1 页，
+    // 否则 `page <= 0` 一次都不循环，明明有内容也会显示成空。
+    final lastPage = info.pagecount <= 0 ? 1 : info.pagecount;
     final fresh = <Video>[];
     var page = 1;
     var tries = 0;
-    while (page <= info.pagecount &&
-        tries < 3 &&
-        (fresh.isEmpty || fresh.length < 6)) {
+    // 是否至少有「一次取页是成功返回的」。用来区分两种空：
+    //  - 全部请求失败（网络/限流）→ 该给「加载失败 + 重试」
+    //  - 请求成功但源站就是没内容（父分类常见）→ 才是真的「暂无资源」
+    var anyOk = false;
+    while (page <= lastPage && tries < 2 && (fresh.isEmpty || fresh.length < 6)) {
       try {
         await _appendPage(page, sink: fresh);
+        anyOk = true;
       } catch (_) {
         // 这一页没取到就收手，已经拿到的内容照常显示（不让整次刷新炸掉）
         break;
@@ -687,6 +714,11 @@ class CategoryTabState extends State<CategoryTab>
           ..clear()
           ..addAll(fresh)
           ..addAll(kept);
+      } else if (_videos.isEmpty && !anyOk) {
+        // 一页都没取到，且手上没有旧内容：这是「没取到」不是「没资源」。
+        // 以前这里静默留空，界面就显示「该分类下暂无资源」，把网络问题
+        // 伪装成源站没内容，用户只能干看着。现在给一个能点的重试。
+        _loadFailed = true;
       }
       _loading = false;
     });
@@ -700,8 +732,12 @@ class CategoryTabState extends State<CategoryTab>
     // 触发，这里主动检查并续拉，修掉「打开就已经到底、上滑没反应」。
     _noGrowStreak = 0;
     _maybeContinueLoad();
-    // 首屏画出来之后，后台把后面两页也先取回来（不阻塞首屏）
-    unawaited(_warmUp(2));
+    // 首屏画出来之后，再错峰垫一页。不在这里立刻连发两个请求，是因为首页
+    // 十几个分类几乎同时初始化，每栏再多两个请求就会叠成几十个并发，源站
+    // 一限流整屏都变成「暂无资源」。延迟 + 只垫一页，把峰值压下来。
+    unawaited(Future<void>.delayed(const Duration(milliseconds: 700), () {
+      if (mounted) unawaited(_warmUp(1));
+    }));
   }
 
   /// 首屏内容出现后，后台**再补几页**，把「滑几个就撞上等网络」的空档填掉。
@@ -747,18 +783,12 @@ class CategoryTabState extends State<CategoryTab>
   Future<void> _appendPage(int page, {List<Video>? sink}) async {
     if (page <= 0) return;
     final target = sink ?? _videos;
-    final list = await HttpService.instance.fetchList(
-      widget.site,
-      pg: page,
-      tid: widget.videoClass.tid,
-      strict: true, // 失败要抛出，好让调用方区分「没更多」和「没取到」
-    );
-    await ListCache.putPage(
-      widget.site.key,
-      widget.videoClass.tid,
-      page,
-      list,
-    );
+    var list = await _fetchPageVideos(page);
+    if (list.isEmpty) {
+      // 空页（有些源偶发返回空）等一小会儿再问一次，别直接判成「没更多了」
+      await Future<void>.delayed(const Duration(milliseconds: 350));
+      list = await _fetchPageVideos(page);
+    }
     if (!mounted) return;
     final seen = <String>{for (final v in target) if (v.id.isNotEmpty) v.id};
     for (final v in list) {
@@ -766,7 +796,29 @@ class CategoryTabState extends State<CategoryTab>
       target.add(v);
       if (v.id.isNotEmpty) seen.add(v.id);
     }
+    // ⚠️ 缓存必须放在「数据已经进列表」之后，且失败只吞掉：写缓存是锦上添花，
+    // 一旦磁盘/序列化出问题就抛出去，会让刚刚取到的这一页连同循环一起作废，
+    // 最终显示成「暂无资源」。
+    try {
+      await ListCache.putPage(
+        widget.site.key,
+        widget.videoClass.tid,
+        page,
+        list,
+      );
+    } catch (_) {
+      // ignore：不影响本次显示
+    }
   }
+
+  /// 取一页片单（失败抛异常，供调用方区分「没更多」与「没取到」）
+  Future<List<Video>> _fetchPageVideos(int page) =>
+      HttpService.instance.fetchList(
+        widget.site,
+        pg: page,
+        tid: widget.videoClass.tid,
+        strict: true,
+      );
 
   /// 滚动到底部时加载下一页（更早的内容）。
   ///
@@ -852,13 +904,22 @@ class CategoryTabState extends State<CategoryTab>
                 actionText: '重试',
                 onAction: _retryLoad,
               )
-            : buildVideoGrid(
-                context: context,
-                videos: _videos,
-                scrollController: _scrollController,
-                loadingMore: _loadingMore,
-                onTap: widget.onTapVideo,
-              );
+            : (_videos.isEmpty)
+                ? EmptyHint(
+                    message: '该分类下暂无资源',
+                    icon: Icons.search_off,
+                    // 有些源对父分类确实不给内容，但也可能是刚才那一次请求
+                    // 恰好失败。给个刷新入口，用户点一下就能自己验证。
+                    actionText: '刷新',
+                    onAction: _retryLoad,
+                  )
+                : buildVideoGrid(
+                    context: context,
+                    videos: _videos,
+                    scrollController: _scrollController,
+                    loadingMore: _loadingMore,
+                    onTap: widget.onTapVideo,
+                  );
     return Stack(
       children: [
         content,
