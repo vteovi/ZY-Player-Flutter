@@ -96,12 +96,36 @@ class _AppRoot extends StatelessWidget {
         scrolledUnderElevation: 0,
         centerTitle: false,
       ),
-      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+      // 底部导航（M3 NavigationBar）：选中项 = 圆形胶囊底色 + 实心图标 +
+      // 加粗标签。纯黑主题下「白色 vs 白 70%」几乎看不出差别，所以选中态
+      // 统一用一块暗蓝底 + 白色文字来拉开层次；浅色模式用淡蓝底 + 品牌蓝。
+      navigationBarTheme: NavigationBarThemeData(
         backgroundColor: isDark ? AppColors.darkBg : Colors.white,
-        selectedItemColor: isDark ? Colors.white : const Color(0xFF303133),
-        unselectedItemColor:
-            isDark ? Colors.white70 : const Color(0xFF909399),
-        type: BottomNavigationBarType.fixed,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        height: 66,
+        indicatorColor:
+            isDark ? const Color(0xFF12314F) : const Color(0xFFE3F0FC),
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final on = states.contains(WidgetState.selected);
+          return IconThemeData(
+            size: on ? 25 : 22,
+            color: on
+                ? (isDark ? Colors.white : AppColors.brand)
+                : (isDark ? Colors.white54 : const Color(0xFF909399)),
+          );
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final on = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: on ? 11.5 : 11,
+            fontWeight: on ? FontWeight.w600 : FontWeight.w400,
+            color: on
+                ? (isDark ? Colors.white : AppColors.brand)
+                : (isDark ? Colors.white54 : const Color(0xFF909399)),
+          );
+        }),
       ),
       cardTheme: CardThemeData(
         color: isDark ? AppColors.darkBg : Colors.white,

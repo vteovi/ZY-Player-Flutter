@@ -10,15 +10,22 @@ import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 import 'play_page.dart';
 
-  /// 收藏与历史：顶部 TabBar 两个分栏
+  /// 收藏与历史。
   /// - 收藏：卡片网格，点开详情，长按取消收藏
   /// - 历史记录：卡片网格（带进度条），点开续播，长按清除记录
+  ///
+  /// 两种形态：[only] 为空时是带顶部 TabBar 的双分栏（设置页「播放记录」
+  /// 入口仍走这形态）；给了 0 / 1 就只渲染单栏，供底部导航的「收藏」「历史」
+  /// 两个独立页面使用 —— 单栏没有再套 TabBarView，横向滑动才能交给外层
+  /// 的 PageView。
 class StarPage extends StatefulWidget {
   /// 初始分栏：0 = 收藏（默认），1 = 历史记录。
-  /// 设置页「播放记录」入口可传 1 直接落到历史分栏。
   final int initialTab;
 
-  const StarPage({super.key, this.initialTab = 0});
+  /// 只显示某一栏：0 = 收藏，1 = 历史，null = 双分栏。
+  final int? only;
+
+  const StarPage({super.key, this.initialTab = 0, this.only});
 
   @override
   State<StarPage> createState() => _StarPageState();
@@ -26,15 +33,19 @@ class StarPage extends StatefulWidget {
 
 class _StarPageState extends State<StarPage>
     with SingleTickerProviderStateMixin {
-  late final TabController _tabController = TabController(
-    length: 2,
-    vsync: this,
-    initialIndex: widget.initialTab.clamp(0, 1),
-  );
+  /// 只有双分栏模式才需要，单栏模式保持 null
+  TabController? _tabController;
 
   @override
   void initState() {
     super.initState();
+    if (widget.only == null) {
+      _tabController = TabController(
+        length: 2,
+        vsync: this,
+        initialIndex: widget.initialTab.clamp(0, 1),
+      );
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         context.read<AppState>().loadStars();
@@ -45,7 +56,7 @@ class _StarPageState extends State<StarPage>
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
 
@@ -130,6 +141,22 @@ class _StarPageState extends State<StarPage>
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
+    // 单栏模式：底部导航的「收藏」「历史」两个独立页面
+    final only = widget.only;
+    if (only != null) {
+      final history = only == 1;
+      return Scaffold(
+        appBar: AppBar(title: Text(history ? '历史记录' : '我的收藏')),
+        body: _buildPane(
+          items: history ? app.histories : app.stars,
+          isHistory: history,
+          emptyMessage: history ? '还没有播放记录' : '还没有收藏任何影片',
+          emptyIcon: history ? Icons.history : Icons.star_border,
+          onTap: history ? _play : _openDetail,
+          onLongPress: history ? _removeHistory : _removeStar,
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(
         title: const Text('收藏与历史'),

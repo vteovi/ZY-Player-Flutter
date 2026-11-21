@@ -366,7 +366,7 @@ class MePage extends StatelessWidget {
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
-            onTap: () => _push(context, const StarPage(initialTab: 1)),
+            onTap: () => _push(context, const StarPage(only: 1)),
           ),
           _MenuItem(
             title: '视频源管理',
