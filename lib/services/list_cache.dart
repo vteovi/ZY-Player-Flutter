@@ -29,9 +29,21 @@ class ListCache {
   /// 置真、清理还没跑完，后面的就直接读到即将被删掉的旧缓存了。
   static Future<void>? _versionReady;
 
-  /// 首次访问时校验缓存版本，不一致就清空整个片单缓存库
-  static Future<void> _ensureVersion() =>
-      _versionReady ??= _doEnsureVersion();
+  /// 首次访问时校验缓存版本，不一致就清空整个片单缓存库。
+  ///
+  /// ⚠️ 失败时必须把缓存的 Future 丢掉以便下次重试：Future 一旦以错误状态完成，
+  /// 之后每次 await 都会立刻重新抛出同一个异常 —— 那等于整个分页缓存永久瘫痪，
+  /// 首页每个分栏都会在 `getMeta` 处抛出去，界面就只剩「该分类下暂无资源」。
+  static Future<void> _ensureVersion() {
+    final ready = _versionReady;
+    if (ready != null) return ready;
+    return _versionReady = _doEnsureVersion().then<void>(
+      (_) {},
+      onError: (Object _) {
+        _versionReady = null;
+      },
+    );
+  }
 
   static Future<void> _doEnsureVersion() async {
     final item = await ZyDatabase.instance.get(DbNames.listcache, '__ver');
