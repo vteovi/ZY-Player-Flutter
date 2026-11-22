@@ -224,8 +224,7 @@ class MePage extends StatelessWidget {
   /// 自定义播放器（PC / Windows 专属）：用文件选择器选一个 .exe，
   /// 之后「外部播放」会直接启动它而不是自动查找已安装的播放器。
   Widget _buildExternalPlayerTile(BuildContext context) {
-    final path =
-        context.select((AppState s) => s.config.externalPlayerPath);
+    final path = context.watch<AppState>().config.externalPlayerPath;
     final fileName = path.isNotEmpty
         ? path.split(RegExp(r'[\\/]')).last
         : null;
@@ -358,10 +357,7 @@ class MePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 只订阅 config：设置页这一屏只用到配置项。用 `watch<AppState>()` 的话，
-    // 播放页每 10 秒写一次进度、收藏变动都会让这整屏（含文件选择器等重组件）
-    // 白白重建一遍。
-    final config = context.select((AppState s) => s.config);
+    final appState = context.watch<AppState>();
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
@@ -370,7 +366,7 @@ class MePage extends StatelessWidget {
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
-            onTap: () => _push(context, const StarPage(only: 1)),
+            onTap: () => _push(context, const StarPage(initialTab: 1)),
           ),
           _MenuItem(
             title: '视频源管理',
@@ -401,14 +397,14 @@ class MePage extends StatelessWidget {
             title: const Text('横向卡片模式'),
             subtitle: const Text(
                 '开启后海报横版显示（图上文下），竖屏手机每行一个，平板自适应多列'),
-            value: config.landscapeCard,
+            value: appState.config.landscapeCard,
             onChanged: (value) =>
                 context.read<AppState>().setLandscapeCard(value),
           ),
           SwitchListTile(
             title: const Text('显示实时下载速度'),
             subtitle: const Text('全屏播放时在右上角显示实时网速'),
-            value: config.showSpeed,
+            value: appState.config.showSpeed,
             onChanged: (value) => context.read<AppState>().setShowSpeed(value),
           ),
           if (Platform.isAndroid)
@@ -416,7 +412,7 @@ class MePage extends StatelessWidget {
               title: const Text('强制软件解码'),
               subtitle: const Text(
                   '部分机型硬解会报「播放失败」，开启后改用软件解码器（兼容性更好、略耗电），下次播放生效'),
-              value: config.forceSoftwareDecode,
+              value: appState.config.forceSoftwareDecode,
               onChanged: (value) =>
                   context.read<AppState>().setForceSoftwareDecode(value),
             ),
@@ -424,7 +420,7 @@ class MePage extends StatelessWidget {
           ListTile(
             title: const Text('长按加速倍率'),
             subtitle: Text(
-              '全屏播放时长按画面可加速，当前：${config.playerLongPressRate.toStringAsFixed(1)} 倍',
+              '全屏播放时长按画面可加速，当前：${appState.config.playerLongPressRate.toStringAsFixed(1)} 倍',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showLongPressRatePicker(context),
@@ -436,7 +432,7 @@ class MePage extends StatelessWidget {
                 'system': '跟随系统',
                 'light': '浅色',
                 'dark': '深色',
-              }[config.themeMode] ?? '跟随系统'}',
+              }[appState.config.themeMode] ?? '跟随系统'}',
             ),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _showThemeModePicker(context),

@@ -10,22 +10,15 @@ import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 import 'play_page.dart';
 
-  /// 收藏与历史。
+  /// 收藏与历史：顶部 TabBar 两个分栏
   /// - 收藏：卡片网格，点开详情，长按取消收藏
   /// - 历史记录：卡片网格（带进度条），点开续播，长按清除记录
-  ///
-  /// 两种形态：[only] 为空时是带顶部 TabBar 的双分栏（设置页「播放记录」
-  /// 入口仍走这形态）；给了 0 / 1 就只渲染单栏，供底部导航的「收藏」「历史」
-  /// 两个独立页面使用 —— 单栏没有再套 TabBarView，横向滑动才能交给外层
-  /// 的 PageView。
 class StarPage extends StatefulWidget {
   /// 初始分栏：0 = 收藏（默认），1 = 历史记录。
+  /// 设置页「播放记录」入口可传 1 直接落到历史分栏。
   final int initialTab;
 
-  /// 只显示某一栏：0 = 收藏，1 = 历史，null = 双分栏。
-  final int? only;
-
-  const StarPage({super.key, this.initialTab = 0, this.only});
+  const StarPage({super.key, this.initialTab = 0});
 
   @override
   State<StarPage> createState() => _StarPageState();
@@ -33,19 +26,15 @@ class StarPage extends StatefulWidget {
 
 class _StarPageState extends State<StarPage>
     with SingleTickerProviderStateMixin {
-  /// 只有双分栏模式才需要，单栏模式保持 null
-  TabController? _tabController;
+  late final TabController _tabController = TabController(
+    length: 2,
+    vsync: this,
+    initialIndex: widget.initialTab.clamp(0, 1),
+  );
 
   @override
   void initState() {
     super.initState();
-    if (widget.only == null) {
-      _tabController = TabController(
-        length: 2,
-        vsync: this,
-        initialIndex: widget.initialTab.clamp(0, 1),
-      );
-    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         context.read<AppState>().loadStars();
@@ -56,7 +45,7 @@ class _StarPageState extends State<StarPage>
 
   @override
   void dispose() {
-    _tabController?.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -140,41 +129,15 @@ class _StarPageState extends State<StarPage>
 
   @override
   Widget build(BuildContext context) {
-    // 只订阅自己真正需要的那份列表，不用 `watch<AppState>()`。
-    // 播放页每 10 秒写一次播放进度都会 notifyListeners，watch 整个 AppState
-    // 会让这整页网格（含 AppBar）跟着重建 —— 哪怕当前根本不在这一页，
-    // 每次 notify 也要白跑一遍 build，滑动时抢帧预算。
-    // select 按列表实例比较：loadStars/loadHistories 会换新 List，变更照常触发；
-    // 其它字段（站点、配置）变化则不再牵连本页。
-    final only = widget.only;
-    // 单栏模式：底部导航的「收藏」「历史」两个独立页面
-    if (only != null) {
-      final history = only == 1;
-      final items = context.select(
-        (AppState s) => history ? s.histories : s.stars,
-      );
-      return Scaffold(
-        appBar: AppBar(title: Text(history ? '历史记录' : '我的收藏')),
-        body: _buildPane(
-          items: items,
-          isHistory: history,
-          emptyMessage: history ? '还没有播放记录' : '还没有收藏任何影片',
-          emptyIcon: history ? Icons.history : Icons.star_border,
-          onTap: history ? _play : _openDetail,
-          onLongPress: history ? _removeHistory : _removeStar,
-        ),
-      );
-    }
-    final stars = context.select((AppState s) => s.stars);
-    final histories = context.select((AppState s) => s.histories);
+    final app = context.watch<AppState>();
     return Scaffold(
       appBar: AppBar(
         title: const Text('收藏与历史'),
         bottom: TabBar(
           controller: _tabController,
           tabs: [
-            Tab(text: '收藏 ${stars.length}'),
-            Tab(text: '历史记录 ${histories.length}'),
+            Tab(text: '收藏 ${app.stars.length}'),
+            Tab(text: '历史记录 ${app.histories.length}'),
           ],
         ),
       ),
@@ -182,7 +145,7 @@ class _StarPageState extends State<StarPage>
         controller: _tabController,
         children: [
           _buildPane(
-            items: stars,
+            items: app.stars,
             isHistory: false,
             emptyMessage: '还没有收藏任何影片',
             emptyIcon: Icons.star_border,
@@ -190,7 +153,7 @@ class _StarPageState extends State<StarPage>
             onLongPress: _removeStar,
           ),
           _buildPane(
-            items: histories,
+            items: app.histories,
             isHistory: true,
             emptyMessage: '还没有播放记录',
             emptyIcon: Icons.history,
