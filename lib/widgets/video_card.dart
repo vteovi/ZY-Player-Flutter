@@ -41,16 +41,10 @@ class PosterCover extends StatelessWidget {
         // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
         // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
         memCacheWidth: memCacheWidth,
-        placeholder: (_, __) => ColoredBox(
-          color: bgColor,
-          child: Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-        ),
+        // 占位不用 CircularProgressIndicator：它是 indeterminate 动画，
+        // 一张卡一个 Ticker，列表里十几张同时在转，滑动时帧预算会被它吃掉。
+        // 静态色块既省开销，观感也更接近骨架屏（不闪灰、不转圈）。
+        placeholder: (_, __) => ColoredBox(color: bgColor),
         errorWidget: (_, __, ___) => ColoredBox(
           color: bgColor,
           child: Center(child: Icon(Icons.broken_image, color: iconColor)),

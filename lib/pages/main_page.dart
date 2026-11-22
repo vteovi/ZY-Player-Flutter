@@ -21,12 +21,21 @@ class _MainPageState extends State<MainPage> {
   int _index = 0;
   final _filmKey = GlobalKey<FilmPageState>();
 
-  /// 收藏 / 历史 / 设置三页的横向容器。首页不参与滑动（它内部已有分类
-  /// TabBarView，再套横向手势会互相抢）。
+  /// 收藏 / 历史两页的横向容器。首页与设置页都不参与滑动 ——
+  /// 首页内部已有分类 TabBarView（会抢横向手势），设置页是一屏纵向列表，
+  /// 跟着滑过去既没有意义、又多一份拖动时的绘制开销。
   final _pageController = PageController();
 
-  /// 首页在导航里的下标；非 0 的项对应 PageView 的 index - 1
+  /// 首页在导航里的下标；收藏/历史对应 PageView 的 index + 1。
   static const int _homeIndex = 0;
+  static const int _starsIndex = 1;
+  static const int _historyIndex = 2;
+  static const int _settingsIndex = 3;
+
+  /// 设置页是否已经建过。IndexedStack 会把所有子节点一次性建出来，
+  /// 设置页有近千行、还带文件选择器等重组件，没必要开机就付这份钱，
+  /// 首次点进设置时才构建，之后常驻保活。
+  bool _settingsBuilt = false;
 
   /// 首页「连按两次返回」的上一次时间点，null = 还没按过。
   /// 一旦离开首页就清空，避免在别的页按过之后回首页立刻被判定成第二次。
@@ -44,7 +53,10 @@ class _MainPageState extends State<MainPage> {
   void _onTap(int index) {
     _lastBackAt = null;
     if (index == _index) return;
-    setState(() => _index = index);
+    setState(() {
+      _index = index;
+      if (index == _settingsIndex) _settingsBuilt = true;
+    });
     if (index == _homeIndex) {
       // 视频源可能被改动过，按需刷新首页
       _filmKey.currentState?.reloadIfNeeded();
@@ -59,9 +71,11 @@ class _MainPageState extends State<MainPage> {
 
   /// 点导航切到某一页时把 PageView 拨过去。
   ///
+  /// 只有收藏 / 历史在 PageView 里，首页与设置直接由 IndexedStack 切换。
   /// PageView 挂在 IndexedStack 里，从首页切过来时它这一帧才刚被布局，
   /// 直接 jump 可能还没有 viewport，所以放到下一帧再做。
   void _syncPageTo(int index) {
+    if (index != _starsIndex && index != _historyIndex) return;
     final target = index - 1;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_pageController.hasClients) return;
@@ -75,7 +89,7 @@ class _MainPageState extends State<MainPage> {
   ///
   /// 只改选中项，不做数据刷新 —— 理由同 `_onTap`：翻页动画期间重载数据会掉帧。
   void _onPageChanged(int page) {
-    final index = page + 1;
+    final index = _starsIndex + page;
     if (index == _index) return;
     _lastBackAt = null;
     setState(() => _index = index);
@@ -186,11 +200,18 @@ class _MainPageState extends State<MainPage> {
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 首页 / 收藏·历史·设置 两套内容：后者放进 PageView 支持左右滑动。
-    // IndexedStack 只按「是不是首页」切换，两个分支的子树状态都不会丢，
-    // 从设置页切回首页再切回来，PageView 仍停在原来的那一页。
+    // 三块内容：首页 / 收藏·历史（唯一可横滑的容器）/ 设置。
+    // 用下标常量映射，别直接用导航下标 —— 导航有 4 项，IndexedStack 只有 3 块。
+    final int stackIndex;
+    if (_index == _homeIndex) {
+      stackIndex = 0;
+    } else if (_index == _settingsIndex) {
+      stackIndex = 2;
+    } else {
+      stackIndex = 1;
+    }
     final body = IndexedStack(
-      index: _index == _homeIndex ? 0 : 1,
+      index: stackIndex,
       children: [
         // IndexedStack 只是「不绘制」未选中的子树，里面的 Ticker 照样在跑。
         // 首页的骨架屏是 repeat(reverse) 的呼吸动画、加载条是 indeterminate，
@@ -200,17 +221,20 @@ class _MainPageState extends State<MainPage> {
           enabled: _index == _homeIndex,
           child: RepaintBoundary(child: FilmPage(key: _filmKey)),
         ),
-        // 每页各自一层 RepaintBoundary：翻页时只重绘发生位移的两页，
-        // 不会把整块 body 连同导航栏一起重建重绘。
+        // 只有收藏 / 历史两页参与横滑。设置页是纵向长列表，跟着滑过去没有意义，
+        // 而且拖动时多一页全屏绘制，低端机上那点余量就没了。
         PageView(
           controller: _pageController,
           onPageChanged: _onPageChanged,
           children: const [
             RepaintBoundary(child: _KeepAlive(child: StarPage(only: 0))),
             RepaintBoundary(child: _KeepAlive(child: StarPage(only: 1))),
-            RepaintBoundary(child: _KeepAlive(child: MePage())),
           ],
         ),
+        // 首次点进设置页才构建
+        _settingsBuilt
+            ? const RepaintBoundary(child: MePage())
+            : const SizedBox.shrink(),
       ],
     );
     return PopScope(
