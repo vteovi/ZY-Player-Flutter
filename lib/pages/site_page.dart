@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/site.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
+import '../services/site_export.dart';
 import '../utils/app_colors.dart';
 import '../utils/site_dup.dart';
 import '../utils/toast.dart';
@@ -91,6 +92,180 @@ class _SitePageState extends State<SitePage> {
       _urlController.clear();
       _showImport = !_showImport;
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // 导出
+  // ---------------------------------------------------------------------------
+
+  /// 导出所有源：先选格式与范围，再走系统「另存为」落盘。
+  ///
+  /// 格式只做两种，且都是**外部客户端真的能读**的：
+  /// - TVBox / 影视仓的 `{"sites":[...]}`（兼容面最广，本应用也能再导入）
+  /// - ZYFun 的 `{"tbl_site":[...]}`（与它自己的配置导出同构，保留启用状态）
+  ///
+  /// 不导出「本应用私有备份」那种格式（`DataBackup` 里的 `data.site`），
+  /// 因为别的客户端认不出来 —— 那是数据迁移用的，不是分享配置用的。
+  Future<void> _exportSites() async {
+    // 接口地址为空的源导出去也跑不起来（TVBox 会直接当坏源），先剔掉
+    final all = context
+        .read<AppState>()
+        .sites
+        .where((s) => s.api.trim().isNotEmpty)
+        .toList();
+    if (all.isEmpty) {
+      showToast(context, '没有可导出的视频源（接口地址为空）', success: false);
+      return;
+    }
+    final activeCount = all.where((s) => s.isActive).length;
+
+    var format = SiteExportFormat.tvbox;
+    var onlyActive = false;
+
+    final choice = await showDialog<_ExportChoice>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) {
+          final isDark = Theme.of(ctx).brightness == Brightness.dark;
+          final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+          final count = onlyActive ? activeCount : all.length;
+          return AlertDialog(
+            title: const Text('导出视频源'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '共 ${all.length} 个源。导出的文件可直接作为 TVBox、影视仓、'
+                    'ZYFun 的订阅配置使用。',
+                    style: TextStyle(fontSize: 12.5, height: 1.5, color: sub),
+                  ),
+                  const SizedBox(height: 12),
+                  _formatOption(
+                    ctx,
+                    title: 'TVBox / 影视仓',
+                    subtitle: '标准 sites 数组配置，兼容面最广',
+                    selected: format == SiteExportFormat.tvbox,
+                    onTap: () => setSt(() => format = SiteExportFormat.tvbox),
+                  ),
+                  const SizedBox(height: 8),
+                  _formatOption(
+                    ctx,
+                    title: 'ZYFun / ZY-Player 桌面版',
+                    subtitle: 'tbl_site 配置，额外保留启用状态',
+                    selected: format == SiteExportFormat.zyfun,
+                    onTap: () => setSt(() => format = SiteExportFormat.zyfun),
+                  ),
+                  const SizedBox(height: 6),
+                  CheckboxListTile(
+                    value: onlyActive,
+                    onChanged: activeCount == 0
+                        ? null
+                        : (v) => setSt(() => onlyActive = v ?? false),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(
+                      '只导出已启用的源（$activeCount 个）',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: count == 0
+                    ? null
+                    : () => Navigator.of(ctx)
+                        .pop(_ExportChoice(format, onlyActive)),
+                child: Text('导出 $count 个'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (choice == null) return;
+
+    final list =
+        choice.onlyActive ? all.where((s) => s.isActive).toList() : all;
+    if (list.isEmpty) {
+      if (!mounted) return;
+      showToast(context, '没有已启用的源可导出', success: false);
+      return;
+    }
+    final result = await SiteExport.save(list, choice.format);
+    if (!mounted) return;
+    showToast(
+      context,
+      result.message,
+      success: result.ok,
+      duration: const Duration(seconds: 4),
+    );
+  }
+
+  /// 导出对话框里的格式选项（自绘，不用 Radio —— 各版本 Flutter 对
+  /// RadioListTile 的 groupValue/onChanged 有弃用迁移，自绘省得跟着版本改）
+  Widget _formatOption(
+    BuildContext ctx, {
+    required String title,
+    required String subtitle,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
+    final accent = Theme.of(ctx).colorScheme.primary;
+    final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: selected ? accent.withValues(alpha: isDark ? 0.16 : 0.08) : null,
+          border: Border.all(
+            color: selected
+                ? accent
+                : (isDark ? AppColors.darkOutline : AppColors.lightOutline),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              size: 18,
+              color: selected ? accent : sub,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: TextStyle(fontSize: 11.5, color: sub)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -404,6 +579,11 @@ class _SitePageState extends State<SitePage> {
       appBar: AppBar(
         title: const Text('源管理'),
         actions: [
+          IconButton(
+            onPressed: sites.isEmpty ? null : _exportSites,
+            icon: const Icon(Icons.file_upload_outlined),
+            tooltip: '导出所有源',
+          ),
           // 「清空所有源」是破坏性操作，放在溢出菜单里，不给它和常用按钮抢位置
           PopupMenuButton<String>(
             tooltip: '更多',
@@ -870,6 +1050,14 @@ class _SitePageState extends State<SitePage> {
         return isDark ? AppColors.failDark : AppColors.failLight;
     }
   }
+}
+
+/// 导出对话框的选择结果：格式 + 是否只导启用的源。
+class _ExportChoice {
+  final SiteExportFormat format;
+  final bool onlyActive;
+
+  const _ExportChoice(this.format, this.onlyActive);
 }
 
 class _EmptySites extends StatelessWidget {
