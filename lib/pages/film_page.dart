@@ -265,24 +265,22 @@ class FilmPageState extends State<FilmPage>
                 child: Row(
                   children: [
                     ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 260),
+                      constraints: const BoxConstraints(maxWidth: 300),
                       child: _buildSiteButton(isDark),
                     ),
-                    // 站点按钮贴左、操作区贴右，中间留白吃掉多余宽度
-                    const Spacer(),
-                    _buildRecordCount(isDark),
-                    const SizedBox(width: 6),
+                    // 资源数已在站点按钮里，搜索 / 视图就紧挨着它排，不再推到最右 ——
+                    // 三者是一组「当前站点 + 操作」，推远了反而看不出从属关系
+                    const SizedBox(width: 8),
                     _buildSearchButton(isDark),
                     _buildViewButton(isDark, landscape),
+                    const Spacer(),
                   ],
                 ),
               )
             : Row(
                 children: [
                   Expanded(child: _buildSiteButton(isDark)),
-                  const SizedBox(width: 8),
-                  _buildRecordCount(isDark),
-                  const SizedBox(width: 2),
+                  const SizedBox(width: 4),
                   _buildSearchButton(isDark),
                   _buildViewButton(isDark, landscape),
                   const SizedBox(width: 4),
@@ -301,14 +299,43 @@ class FilmPageState extends State<FilmPage>
   }
 
   /// 站点切换按钮（AppBar 首行最左）
+  ///
+  /// 当前分类的资源数直接并进按钮里（`网站: 某站 · 128 资源`），
+  /// 首行因此只用「站点 / 搜索 / 视图」三个元素，手机上也能把搜索和切视图
+  /// 一起收进第一排，不必再单占一行。
   Widget _buildSiteButton(bool isDark) {
+    // 资源数用弱化的色号，和站点名拉开层级：一眼分清「是什么源」和「有多少片」
+    final muted = isDark ? Colors.white54 : const Color(0xFF909399);
     return OutlinedButton.icon(
       onPressed: _pickSite,
       icon: const Icon(Icons.language, size: 16),
-      label: Text(
-        _site == null ? '未选择视频源' : '网站: ${_site!.name}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 站点名可被压缩（超长省略号），资源数固定不参与收缩 ——
+          // 否则名字一长，被裁掉的正好是刚并进来的资源数。
+          Flexible(
+            child: Text(
+              _site == null ? '未选择视频源' : '网站: ${_site!.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // 未选源时不显示「0 资源」，那句提示本来就够看，再跟个 0 反而像「源是空的」
+          if (_site != null) ...[
+            const SizedBox(width: 8),
+            Text(
+              '· $_activeRecordCount 资源',
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: muted,
+              ),
+            ),
+          ],
+        ],
       ),
       style: OutlinedButton.styleFrom(
         foregroundColor: isDark ? Colors.white70 : const Color(0xFF303133),
@@ -324,22 +351,10 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 资源统计（紧贴右侧的搜索 / 视图按钮）
-  Widget _buildRecordCount(bool isDark) {
-    return Text(
-      '共: $_activeRecordCount 资源',
-      style: TextStyle(
-        fontSize: 12,
-        color: isDark ? Colors.white70 : const Color(0xFF909399),
-        fontWeight: FontWeight.w500,
-      ),
-    );
-  }
-
   /// AppBar 首行的图标按钮（搜索、卡片形态切换共用）。
   ///
   /// 用 [IconButton] 而不是自绘 InkWell，白送水波纹、焦点框与无障碍语义；
-  /// 约束压到 36×36 才能和「共 N 资源」挤在同一行（手机工具栏只有 56 高）。
+  /// 约束压到 36×36，手机 56 高的工具栏里才不会把站点按钮挤没。
   Widget _buildBarIcon({
     required bool isDark,
     required IconData icon,
