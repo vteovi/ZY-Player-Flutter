@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/site.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
+import '../services/boot_snapshot.dart';
 import '../services/http_service.dart';
 import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
@@ -57,6 +58,23 @@ class FilmPageState extends State<FilmPage>
   /// 站点 / 分类还在拉取时，整体先转圈（此时分栏还没出来）
   bool _loading = false;
 
+  /// 首屏内容来自 [BootSnapshot]（而不是异步加载完成）。
+  ///
+  /// 这种状态下 `_site` / `_classes` 已经有值，但 `AppState` 还没 ready ——
+  /// bootstrap 完成后要走 [_adoptRealSites] 交接，**不能**走 [reload]
+  /// （那会把刚显示出来的内容先换成骨架屏，等于白等一次）。
+  bool _usingSnapshot = false;
+
+  /// 快照自带的第一页片单，只喂给「快照里那个分类」用一次。
+  ///
+  /// 必须连站点 key 一起记：换到别的源之后，同一个 tid 也会命中这份数据，
+  /// 那就把 A 站的片单画到 B 站上了。
+  Map<String, List<Video>> _bootVideos = <String, List<Video>>{};
+  String? _bootSiteKey;
+
+  /// 快照恢复后要选中第几个分类
+  int _initialIndex = 0;
+
   /// 当前选中的分类（跟随 TabBar 的 index）
   VideoClass get _activeClass {
     if (_classes.isEmpty) return _latestClass;
@@ -73,12 +91,64 @@ class FilmPageState extends State<FilmPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _tabController = TabController(length: _classes.length, vsync: this);
+    // 先吃启动快照：有的话第一帧就有站点、分类栏、片单（封面按索引同步读本地
+    // 文件出图），不必先空白一两秒等 bootstrap + 网络往返。
+    _applyBootSnapshot();
+    _tabController = TabController(
+      length: _classes.length,
+      vsync: this,
+      initialIndex: _initialIndex,
+    );
     _tabController.addListener(_onTabChanged);
+    _lastTabIndex = _tabController.index;
     // 直接进主页时 sites 可能还没加载完（bootstrap 是异步的），先挂监听：
-    // 等源列表就绪（空 → 非空）后自动 reload，避免卡在「暂无可用视频源」。
-    context.read<AppState>().addListener(_onAppStateChanged);
-    reload();
+    // 等源列表就绪（空 → 非空）后自动接手，避免卡在「暂无可用视频源」。
+    final state = context.read<AppState>();
+    state.addListener(_onAppStateChanged);
+    if (_usingSnapshot) {
+      // 快照只是「先给你看」，分类栏仍要和源站对一次 —— 静默做，不铺骨架屏
+      if (state.activeSites.isEmpty) {
+        unawaited(_refreshClassesSilently());
+      } else {
+        // bootstrap 恰好已经跑完（启动很快时会发生）：直接交接，
+        // 别干等一个不会再来的 notify，否则分类栏永远停在快照那一份
+        _usingSnapshot = false;
+        unawaited(_adoptRealSites(state));
+      }
+    } else {
+      reload();
+    }
+  }
+
+  /// 从启动快照恢复首屏（站点 / 分类 / 上次停留的位置 + 那一页片单）。
+  ///
+  /// 只在 [BootSnapshot] 拿到完整结构时生效；否则什么都不做，走原来的加载路径。
+  void _applyBootSnapshot() {
+    final s = BootSnapshot.site;
+    if (s == null || BootSnapshot.classes.isEmpty) return;
+    final visible = BootSnapshot.classes
+        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
+        .where((c) => c.tid != _latestClass.tid)
+        .toList();
+    if (visible.isEmpty) return;
+    _usingSnapshot = true;
+    _site = s;
+    _bootSiteKey = s.key;
+    _classes = <VideoClass>[_latestClass, ...visible];
+    final tid = BootSnapshot.activeTid;
+    final i = _classes.indexWhere((c) => c.tid == tid);
+    _initialIndex = i < 0 ? 0 : i;
+    if (tid.isNotEmpty) {
+      // 快照里没记到资源数（缓存没有元信息）就留空，别在顶栏显示「· 0 资源」
+      if (BootSnapshot.recordCount > 0) {
+        _recordCounts[tid] = BootSnapshot.recordCount;
+      }
+      if (BootSnapshot.videos.isNotEmpty) {
+        _bootVideos = <String, List<Video>>{tid: BootSnapshot.videos};
+      }
+    }
+    // 有内容了，不要再挂骨架屏
+    _loading = false;
   }
 
   @override
@@ -111,7 +181,44 @@ class FilmPageState extends State<FilmPage>
   /// AppState 任意变化（含 sites 加载完成）时尝试按需重载。
   /// [reloadIfNeeded] 内部按源签名比对，签名不变（如只加载了收藏/历史）不会重复拉取。
   void _onAppStateChanged() {
-    if (mounted) unawaited(reloadIfNeeded());
+    if (!mounted) return;
+    if (_usingSnapshot) {
+      // 快照 → 真实源列表的交接：只换站点对象，不铺骨架屏
+      final state = context.read<AppState>();
+      if (state.activeSites.isEmpty) return;
+      _usingSnapshot = false;
+      unawaited(_adoptRealSites(state));
+      return;
+    }
+    unawaited(reloadIfNeeded());
+  }
+
+  /// bootstrap 完成后接手真实源列表。
+  ///
+  /// 和 [reload] 的区别：不置 `_loading`（否则刚显示出来的快照内容会先被换成
+  /// 骨架屏），也不重建分类栏，只把站点对象换成库里那份（收藏 / 历史要用它的
+  /// key），然后静默对一次分类。
+  Future<void> _adoptRealSites(AppState state) async {
+    final sites = state.activeSites;
+    if (sites.isEmpty) return;
+    _signature = sites.map((s) => s.key).join(',');
+    _lastRefreshAt = DateTime.now();
+    final key = _site?.key;
+    final keep = key == null
+        ? sites.first
+        : sites.firstWhere((s) => s.key == key, orElse: () => sites.first);
+    if (keep.key != key) {
+      // 上次那个源被删掉 / 停用了：只能整页重来（这一次铺骨架屏，没办法）。
+      // 先换站点再 reload，顺序不能反 —— 反了会先按新站点渲染一帧旧分类。
+      if (mounted) setState(() => _site = keep);
+      await reload();
+      return;
+    }
+    if (mounted && !identical(keep, _site)) {
+      setState(() => _site = keep);
+    }
+    await _refreshClassesSilently();
+    _saveBootSnapshot();
   }
 
   void _onTabChanged() {
@@ -119,18 +226,27 @@ class FilmPageState extends State<FilmPage>
       _lastTabIndex = _tabController.index;
       // 切换分类后，顶部的「共 X 资源」要跟着当前分类刷新
       if (mounted) setState(() {});
+      // 记住停在哪一栏，下次冷启动直接回到这里
+      _saveBootSnapshot();
     }
   }
 
   /// 站点或分类数量变化后，重建 TabController（长度必须和分类数一致）
   ///
-  /// [force] = true 时即使长度没变也重建，并把选中分栏重置回「最新」——
-  /// 换源后新旧站点分类数恰好相同的情况必须靠它兜住，否则会停在原来那一栏。
-  void _initTabs(int length, {bool force = false}) {
+  /// [force] = true 时即使长度没变也重建，并把选中分栏重置回 [initialIndex]
+  /// （默认 0，即「最新」）—— 换源后新旧站点分类数恰好相同的情况必须靠它兜住，
+  /// 否则会停在原来那一栏。
+  void _initTabs(int length, {bool force = false, int initialIndex = 0}) {
     if (!force && _tabController.length == length) return;
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
-    _tabController = TabController(length: length, vsync: this);
+    // length 可能是 0（分类被清空），clamp 的上下界会反掉，这里先挡一层
+    final index = length <= 0 ? 0 : initialIndex.clamp(0, length - 1);
+    _tabController = TabController(
+      length: length,
+      vsync: this,
+      initialIndex: index,
+    );
     _tabController.addListener(_onTabChanged);
     _lastTabIndex = _tabController.index;
   }
@@ -193,6 +309,54 @@ class FilmPageState extends State<FilmPage>
       _classes = <VideoClass>[_latestClass, ...visible];
     });
     _initTabs(_classes.length, force: true);
+    _saveBootSnapshot();
+  }
+
+  /// 静默向源站对一次分类栏。
+  ///
+  /// 冷启动先用快照把分类栏画出来，再走这里更新：失败就保持现状（快照里的分类
+  /// 是能用的，不该因为一次网络抖动就清空），成功且确实有变化才替换 —— 期间
+  /// 不置 `_loading`，所以网格不会闪成骨架屏。
+  Future<void> _refreshClassesSilently() async {
+    final site = _site;
+    if (site == null) return;
+    List<VideoClass> list;
+    try {
+      list = await HttpService.instance.fetchClasses(site);
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final visible = list
+        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
+        .toList();
+    final next = <VideoClass>[_latestClass, ...visible];
+    if (_sameClasses(next, _classes)) {
+      _saveBootSnapshot();
+      return;
+    }
+    final keepTid = _activeClass.tid;
+    final idx = next.indexWhere((c) => c.tid == keepTid);
+    setState(() => _classes = next);
+    _initTabs(next.length, force: true, initialIndex: idx < 0 ? 0 : idx);
+    _saveBootSnapshot();
+  }
+
+  bool _sameClasses(List<VideoClass> a, List<VideoClass> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].tid != b[i].tid || a[i].name != b[i].name) return false;
+    }
+    return true;
+  }
+
+  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏）记下来，供下次冷启动秒开。
+  void _saveBootSnapshot() {
+    final site = _site;
+    if (site == null || _classes.length <= 1) return;
+    final cls = _classes.where((c) => c.tid != _latestClass.tid).toList();
+    if (cls.isEmpty) return;
+    BootSnapshot.save(site, cls, _activeClass.tid);
   }
 
   /// 子分类页面加载完某一分类的资源数后，回写到顶部的统计
@@ -324,8 +488,9 @@ class FilmPageState extends State<FilmPage>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          // 未选源时不显示「0 资源」，那句提示本来就够看，再跟个 0 反而像「源是空的」
-          if (_site != null) ...[
+          // 未选源 / 还不知道数量时不显示，那句 0 反而像「源是空的」。
+          // 冷启动走快照时数量来自缓存元信息，读不到就是 0，这里一并挡掉。
+          if (_site != null && _activeRecordCount > 0) ...[
             const SizedBox(width: 8),
             Text(
               '· $_activeRecordCount 资源',
@@ -490,6 +655,11 @@ class FilmPageState extends State<FilmPage>
               onRecordCount: _onRecordCount,
               onTapVideo: _openDetail,
               refreshTick: _refreshTicks[c.tid] ?? 0,
+              // 快照来的那一页片单只在「同一个源」上注入一次，
+              // 否则换源后同一个 tid 会把旧站的片子画到新站上
+              initialVideos: _site!.key == _bootSiteKey
+                  ? _bootVideos[c.tid]
+                  : null,
             ),
           )
           .toList(),
@@ -510,6 +680,10 @@ class CategoryTab extends StatefulWidget {
   /// `AutomaticKeepAlive` 里常驻，GlobalKey 还要跟着换源重建、清理，容易出错。
   final int refreshTick;
 
+  /// 冷启动快照自带的第一页片单：有值就**直接当首帧内容**画出来，
+  /// 跳过「先读缓存再显示」那一步异步等待（两者本来就是同一份数据）。
+  final List<Video>? initialVideos;
+
   const CategoryTab({
     super.key,
     required this.site,
@@ -517,6 +691,7 @@ class CategoryTab extends StatefulWidget {
     required this.onRecordCount,
     required this.onTapVideo,
     this.refreshTick = 0,
+    this.initialVideos,
   });
 
   @override
@@ -559,6 +734,10 @@ class CategoryTabState extends State<CategoryTab>
   /// 加载的后续页面，并让「加载更多」接着已加载的最后一页继续往后翻（不重复取页）。
   final Set<int> _loadedPages = <int>{};
 
+  /// 首帧内容是否来自冷启动快照。是的话 [_load] 里跳过读缓存那一步 ——
+  /// 快照本身就是从同一份 [ListCache] 读出来的，再读一遍只会重复劳动。
+  bool _seededFromSnapshot = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -567,6 +746,14 @@ class CategoryTabState extends State<CategoryTab>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
+    final boot = widget.initialVideos;
+    if (boot != null && boot.isNotEmpty) {
+      _videos.addAll(boot);
+      _loadedPages.add(1);
+      _seededFromSnapshot = true;
+      // 首帧就要出图，先把这批封面的磁盘缓存排上（命中索引的直接本地读）
+      unawaited(ImagePrefetch.prefetch(boot.map((v) => v.pic).toList()));
+    }
     _load();
   }
 
@@ -619,6 +806,23 @@ class CategoryTabState extends State<CategoryTab>
     if (!mounted) return;
     final siteKey = widget.site.key;
     final tid = widget.videoClass.tid;
+
+    if (_seededFromSnapshot) {
+      // 首帧内容已经由启动快照铺好，直接进 ② 向源站静默刷新：
+      // 再读一遍缓存只是把同一批数据搬一次，白等几个异步往返。
+      _seededFromSnapshot = false;
+      try {
+        await _refresh();
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _loadFailed = _videos.isEmpty;
+          });
+        }
+      }
+      return;
+    }
 
     // ① 本地缓存优先：恢复元信息与「第 1、2 页」（与网络取数顺序一致）
     // ⚠️ 读缓存任何一环出问题都只当「没有缓存」处理，绝不能让异常跳出 _load ——

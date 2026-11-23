@@ -7,6 +7,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'pages/main_page.dart';
 import 'providers/app_state.dart';
+import 'services/boot_snapshot.dart';
 import 'utils/app_colors.dart';
 import 'utils/constants.dart';
 import 'utils/cover_cache.dart';
@@ -22,9 +23,11 @@ Future<void> main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  // 封面路径索引：一小份 json，几十毫秒；有了它首页第一帧就能把已缓存的海报
-  // 直接画出来，而不是先铺一片转圈等异步缓存查询。
-  await CoverCache.load();
+  // 这两份都是几十 KB 的小 json，合起来通常是几十毫秒，但换来的是**首帧就有
+  // 内容**：封面路径索引让海报直接读本地文件，首屏快照让站点 / 分类 / 片单
+  // 在第一帧就铺得出来，不必先空白一两秒等异步链路走完。
+  // 并行读，别串行等两次。
+  await Future.wait([CoverCache.load(), BootSnapshot.load()]);
   runApp(const ZyPlayerApp());
 }
 
