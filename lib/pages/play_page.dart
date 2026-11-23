@@ -202,6 +202,32 @@ class _PlayPageState extends State<PlayPage> {
     3.0,
   ];
 
+  // ---- 双指上下滑调倍速（仅全屏） ----
+
+  /// 双指每滑过这么远换一档（逻辑像素）。
+  ///
+  /// 换算成档位时取的是 `round`，所以实际每 40 像素左右就跳一档 ——
+  /// 一个拇指宽的距离差不多够从原速滑到 2.0×，短屏上也滑得满全程。
+  static const double _kSpeedGestureStep = 80.0;
+
+  /// 当前按在屏幕上的手指：pointer id → 局部坐标。
+  ///
+  /// 两个用途：数手指数（≥2 才算双指手势）、算双指的平均纵向位置 ——
+  /// 两根手指不可能完全同步，取平均比只盯第一根稳得多。
+  final Map<int, Offset> _pointers = <int, Offset>{};
+
+  /// 双指手势起始时的平均 Y（null = 手势未开始）
+  double? _speedGestureStartY;
+
+  /// 双指手势起始时的倍速档位下标
+  int _speedGestureStartIndex = 2;
+
+  /// 双指手势期间停留的档位下标，避免停在同档时反复 setState
+  int _speedGestureIndex = 2;
+
+  /// 双指手势是否进行中（控制倍速 HUD 显隐）
+  bool _speedGestureActive = false;
+
   // ---- 全屏控制层自动隐藏 ----
 
   /// 控制层（进度条 + 按钮行）是否可见
@@ -290,6 +316,7 @@ class _PlayPageState extends State<PlayPage> {
     }
     _controller.removeListener(_onControllerUpdate);
     _controller.dispose();
+    _pointers.clear();
     // ⚠️ 退出播放页必须把方向偏好**清空**（空列表 = 交还系统决定），
     // 而不是锁死 portraitUp——否则在平板上（系统横屏但 App 被锁竖屏）整个 App
     // 会被两侧黑边夹住、中间内容又矮又窄，离开播放页也回不来。
@@ -686,6 +713,10 @@ class _PlayPageState extends State<PlayPage> {
       // 新控制器默认速度 1.0，长按加速标记复位，避免卡在加速态
       _longPressActive = false;
       _seekActive = false;
+      // 双指手势也一并复位：换集时若手指还没松，档位基准会错位
+      _speedGestureActive = false;
+      _speedGestureStartY = null;
+      _pointers.clear();
     });
     await _controller.pause();
     _controller.removeListener(_onControllerUpdate);
@@ -878,10 +909,14 @@ class _PlayPageState extends State<PlayPage> {
         _speedPanelOpen = false;
         // 进全屏先把控制层亮出来，几秒后再自动收
         _controlsVisible = true;
-        // 手势状态复位（长按 / 滑动 seek 只在全屏内有效）
+        // 手势状态复位（长按 / 滑动 seek / 双指倍速只在全屏内有效）
         _longPressActive = false;
         _seekActive = false;
         _gestureActive = false;
+        _speedGestureActive = false;
+        _speedGestureStartY = null;
+        // 手指可能还按着就切了屏，残留的指针会让下一轮手势算错基准
+        _pointers.clear();
       });
       _hideTimer?.cancel();
       if (_fullscreen) _scheduleHideControls();
@@ -1795,6 +1830,11 @@ class _PlayPageState extends State<PlayPage> {
               Positioned.fill(
                 child: IgnorePointer(child: _buildGestureHud()),
               ),
+            // 双指上下滑调倍速的居中提示，松手即消失，不跟控制层联动
+            if (_speedGestureActive)
+              Positioned.fill(
+                child: IgnorePointer(child: _buildSpeedGestureHud()),
+              ),
             // 左右滑动快进 / 快退的居中提示
             if (_seekActive)
               Positioned.fill(
@@ -1939,6 +1979,153 @@ class _PlayPageState extends State<PlayPage> {
     setState(() => _longPressActive = false);
   }
 
+  // --------------------------------------------------------------------------
+  // 全屏双指上下滑调倍速
+  // --------------------------------------------------------------------------
+
+  /// 双指平均纵向位置；没有手指时返回 0（调用前都会先确认非空）。
+  double get _pointersAvgY {
+    if (_pointers.isEmpty) return 0;
+    var sum = 0.0;
+    for (final p in _pointers.values) {
+      sum += p.dy;
+    }
+    return sum / _pointers.length;
+  }
+
+  /// 找 [speed] 落在 [_kSpeedOptions] 的哪一档；不是档位值就取最接近的。
+  ///
+  /// 正常路径下 _speed 只会是档位值，但兜一下比 indexOf 返回 -1 安全。
+  int _speedIndexOf(double speed) {
+    final exact = _kSpeedOptions.indexOf(speed);
+    if (exact >= 0) return exact;
+    var best = 0;
+    var bestDiff = double.infinity;
+    for (var i = 0; i < _kSpeedOptions.length; i++) {
+      final diff = (_kSpeedOptions[i] - speed).abs();
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  // 只搬运 id 和坐标，不接事件对象类型：Listener 的回调签名会把类型推断好，
+  // 本文件就不必额外 import gestures。
+
+  void _handlePointerDown(int pointer, Offset position) {
+    _pointers[pointer] = position;
+    if (_pointers.length == 2) _beginSpeedGesture();
+  }
+
+  void _handlePointerMove(int pointer, Offset position) {
+    if (!_pointers.containsKey(pointer)) return;
+    _pointers[pointer] = position;
+    if (_speedGestureActive) _updateSpeedGesture();
+  }
+
+  void _handlePointerUp(int pointer) {
+    _pointers.remove(pointer);
+    if (_speedGestureActive && _pointers.length < 2) _endSpeedGesture();
+  }
+
+  /// 第二根手指落下：转入倍速手势。
+  ///
+  /// 同时把单指那套手势全部作废 —— 亮度/音量停在当前值不回滚（回滚会变成
+  /// 「滑到一半自己弹回去」），长按加速直接收回，否则两个速度会互相覆盖。
+  void _beginSpeedGesture() {
+    if (!_fullscreen) return;
+    if (!_controller.value.isInitialized) return;
+    if (_gestureActive) setState(() => _gestureActive = false);
+    if (_seekActive) _onSeekEnd();
+    if (_longPressActive) _onLongPressEnd();
+    final index = _speedIndexOf(_speed);
+    setState(() {
+      _speedGestureActive = true;
+      _speedGestureStartY = _pointersAvgY;
+      _speedGestureStartIndex = index;
+      _speedGestureIndex = index;
+    });
+  }
+
+  /// 双指上下滑：实时换算档位，上滑加速、下滑减速。
+  ///
+  /// 用「相对起点」而不是「每次增量累加」：滑过头能往回滑修正，
+  /// 也不会因为手指抖动一路漂到底。
+  void _updateSpeedGesture() {
+    final startY = _speedGestureStartY;
+    if (startY == null) return;
+    // 上滑时平均 Y 变小 → 差值为正 → 档位递增
+    final steps = ((startY - _pointersAvgY) / _kSpeedGestureStep).round();
+    // num.clamp 返回 num，直接拿去索引会编译不过，得显式转 int
+    final next = (_speedGestureStartIndex + steps)
+        .clamp(0, _kSpeedOptions.length - 1)
+        .toInt();
+    if (next == _speedGestureIndex) return;
+    _speedGestureIndex = next;
+    _selectSpeed(_kSpeedOptions[next]);
+  }
+
+  void _endSpeedGesture() {
+    if (!_speedGestureActive) return;
+    setState(() {
+      _speedGestureActive = false;
+      _speedGestureStartY = null;
+    });
+  }
+
+  /// 双指调倍速时的居中提示：当前倍速 + 操作方向，到顶/到底给个明确反馈。
+  Widget _buildSpeedGestureHud() {
+    final atMax = _speed >= _kSpeedOptions.last;
+    final atMin = _speed <= _kSpeedOptions.first;
+    final hint = atMax
+        ? '已是最快'
+        : atMin
+            ? '已是最慢'
+            : '双指上滑加速 · 下滑减速';
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0xD9000000),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  atMax
+                      ? Icons.keyboard_double_arrow_up_rounded
+                      : Icons.speed_rounded,
+                  color: Colors.white,
+                  size: 24,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${_fmtSpeed(_speed)}×',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              hint,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 左右滑动 seek 时的居中提示：目标时间 + 快进 / 快退秒数。
   Widget _buildSeekHud() {
     final duration = _controller.value.duration;
@@ -2001,7 +2188,7 @@ class _PlayPageState extends State<PlayPage> {
           final width = constraints.maxWidth;
           final span =
               constraints.maxHeight * 0.7 > 0 ? constraints.maxHeight * 0.7 : 400.0;
-          return GestureDetector(
+          final gesture = GestureDetector(
             behavior: HitTestBehavior.opaque,
             // 单击：全屏是「显示 / 收起控制层」，竖屏是「进全屏」
             onTap: onTap,
@@ -2009,6 +2196,8 @@ class _PlayPageState extends State<PlayPage> {
             onDoubleTap: _togglePlay,
             // 左半屏上下滑调亮度、右半屏调音量，向上滑为增大
             onVerticalDragStart: (details) {
+              // 双指已在屏幕上时这一层让给倍速手势，别顺手把亮度/音量改了
+              if (_pointers.length >= 2) return;
               final isBrightness = details.localPosition.dx < halfWidth;
               setState(() {
                 _gestureActive = true;
@@ -2018,6 +2207,7 @@ class _PlayPageState extends State<PlayPage> {
               });
             },
             onVerticalDragUpdate: (details) {
+              if (_pointers.length >= 2) return;
               if (!_gestureActive) return;
               // dy 为负（向上滑）时增大
               final next =
@@ -2035,14 +2225,37 @@ class _PlayPageState extends State<PlayPage> {
             onVerticalDragCancel: () => setState(() => _gestureActive = false),
             // 全屏左右滑动快进 / 快退（横竖手势由 Flutter 竞技场自动按主方向分流，
             // 不需要手动判断）。只在全屏启用，竖屏无此手势。
-            onHorizontalDragStart:
-                _fullscreen ? (d) => _onSeekStart(d, width) : null,
-            onHorizontalDragUpdate: _fullscreen ? _onSeekUpdate : null,
+            onHorizontalDragStart: _fullscreen
+                ? (d) {
+                    if (_pointers.length >= 2) return;
+                    _onSeekStart(d, width);
+                  }
+                : null,
+            onHorizontalDragUpdate: _fullscreen
+                ? (d) {
+                    if (_pointers.length >= 2) return;
+                    _onSeekUpdate(d);
+                  }
+                : null,
             onHorizontalDragEnd: _fullscreen ? (_) => _onSeekEnd() : null,
             onHorizontalDragCancel: _fullscreen ? () => _onSeekEnd() : null,
             // 全屏长按加速：按下提到倍率速度，松手恢复 1.0
             onLongPressStart: _fullscreen ? (_) => _onLongPressStart() : null,
             onLongPressEnd: _fullscreen ? (_) => _onLongPressEnd() : null,
+          );
+          // 双指手势只能靠原始指针事件去数：GestureDetector 的 scale 与
+          // vertical / horizontal drag 在同一层互斥（scale 是它们的超集），
+          // 挂上去会直接断言失败。所以用 Listener 在旁边旁听 —— 它不参与
+          // 手势竞技场，单指那套识别器一点不受影响，只是多拿到一份指针流水。
+          // 竖屏不挂（双指调倍速只做全屏）。
+          if (!_fullscreen) return gesture;
+          return Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (e) => _handlePointerDown(e.pointer, e.localPosition),
+            onPointerMove: (e) => _handlePointerMove(e.pointer, e.localPosition),
+            onPointerUp: (e) => _handlePointerUp(e.pointer),
+            onPointerCancel: (e) => _handlePointerUp(e.pointer),
+            child: gesture,
           );
         },
       ),
