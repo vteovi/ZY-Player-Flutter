@@ -256,7 +256,7 @@ class FilmPageState extends State<FilmPage>
         context.select<AppState, bool>((s) => s.config.landscapeCard);
     return Scaffold(
       appBar: AppBar(
-        // 「首页」文字已去掉，原位改放网站切换 + 资源统计 + 搜索 / 视图切换
+        // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索 + 视图切换
         titleSpacing: isWide ? 12 : 8,
         toolbarHeight: isWide ? 60 : kToolbarHeight,
         title: isWide
@@ -268,12 +268,12 @@ class FilmPageState extends State<FilmPage>
                       constraints: const BoxConstraints(maxWidth: 300),
                       child: _buildSiteButton(isDark),
                     ),
-                    // 资源数已在站点按钮里，搜索 / 视图就紧挨着它排，不再推到最右 ——
-                    // 三者是一组「当前站点 + 操作」，推远了反而看不出从属关系
-                    const SizedBox(width: 8),
-                    _buildSearchButton(isDark),
+                    const SizedBox(width: 10),
+                    // 宽屏（平板 / 桌面）空间够：搜索做成输入框样式的入口，
+                    // Expanded 吃掉站点按钮与视图按钮之间的全部剩余宽度
+                    Expanded(child: _buildSearchBox(isDark, height: 40)),
+                    const SizedBox(width: 6),
                     _buildViewButton(isDark, landscape),
-                    const Spacer(),
                   ],
                 ),
               )
@@ -281,6 +281,7 @@ class FilmPageState extends State<FilmPage>
                 children: [
                   Expanded(child: _buildSiteButton(isDark)),
                   const SizedBox(width: 4),
+                  // 手机宽度不够铺开搜索框，仍用一个图标按钮，点开进搜索页
                   _buildSearchButton(isDark),
                   _buildViewButton(isDark, landscape),
                   const SizedBox(width: 4),
@@ -372,13 +373,53 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 搜索入口：点开独立搜索页（历史记录 + 搜索结果）。
+  /// 搜索入口（手机）：点开独立搜索页（历史记录 + 搜索结果）。
   Widget _buildSearchButton(bool isDark) {
     return _buildBarIcon(
       isDark: isDark,
       icon: Icons.search_rounded,
       tooltip: '搜索影片',
       onTap: _openSearch,
+    );
+  }
+
+  /// 搜索框（宽屏）：做成输入框的样子，但点一下是进独立搜索页，不是就地输入。
+  ///
+  /// 高度由调用方给（宽屏工具栏 60，取 40 与之对齐图标按钮）；
+  /// 宽度交给外层 `Expanded` 按剩余空间自动拉伸，不写死。
+  ///
+  /// 浅色主题下 AppBar 本身就是白底，白色填充会「看不见」，所以用浅灰；
+  /// 深色主题用极暗面 + 描边，不靠提亮底色区分层级。
+  Widget _buildSearchBox(bool isDark, {double height = 40}) {
+    return InkWell(
+      onTap: _openSearch,
+      borderRadius: BorderRadius.circular(height / 2),
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkSurface : AppColors.lightBg,
+          borderRadius: BorderRadius.circular(height / 2),
+          border: isDark ? Border.all(color: AppColors.darkOutline) : null,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.search_rounded,
+              size: 20,
+              color: isDark ? Colors.white54 : Colors.black54,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '搜索影片',
+              style: TextStyle(
+                color: isDark ? Colors.white54 : Colors.black54,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
