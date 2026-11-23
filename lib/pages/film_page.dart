@@ -317,7 +317,9 @@ class FilmPageState extends State<FilmPage>
           // 否则名字一长，被裁掉的正好是刚并进来的资源数。
           Flexible(
             child: Text(
-              _site == null ? '未选择视频源' : '网站: ${_site!.name}',
+              // 不加「网站: 」前缀 —— 左边的地球图标已经说明了这是站点，
+              // 省下的宽度留给站名本身（窄屏尤其紧张）
+              _site == null ? '未选择视频源' : _site!.name,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
