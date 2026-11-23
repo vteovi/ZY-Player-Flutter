@@ -247,11 +247,16 @@ class FilmPageState extends State<FilmPage>
   Widget build(BuildContext context) {
     super.build(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 宽屏（平板 / 桌面）：首行够宽，把搜索框并进 AppBar，省出一整行
+    // 宽屏（平板 / 桌面）：首行够宽，站点切换与右侧操作同排
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
+    // 卡片形态：横向（16:10 图上文下）/ 竖向（竖版海报网格）。
+    // 设置页也能改，这里 select 只订阅这一个字段 —— 用 watch 会让任何设置变更
+    // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
+    final landscape =
+        context.select<AppState, bool>((s) => s.config.landscapeCard);
     return Scaffold(
       appBar: AppBar(
-        // 「首页」文字已去掉，原位改放网站切换 + 资源统计（宽屏再加搜索框）
+        // 「首页」文字已去掉，原位改放网站切换 + 资源统计 + 搜索 / 视图切换
         titleSpacing: isWide ? 12 : 8,
         toolbarHeight: isWide ? 60 : kToolbarHeight,
         title: isWide
@@ -263,31 +268,29 @@ class FilmPageState extends State<FilmPage>
                       constraints: const BoxConstraints(maxWidth: 260),
                       child: _buildSiteButton(isDark),
                     ),
-                    const SizedBox(width: 14),
-                    // 搜索框吃掉剩余宽度
-                    Expanded(
-                      child: _buildSearchBox(
-                        isDark,
-                        height: 40,
-                        inAppBar: true,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
+                    // 站点按钮贴左、操作区贴右，中间留白吃掉多余宽度
+                    const Spacer(),
                     _buildRecordCount(isDark),
+                    const SizedBox(width: 6),
+                    _buildSearchButton(isDark),
+                    _buildViewButton(isDark, landscape),
                   ],
                 ),
               )
             : Row(
                 children: [
                   Expanded(child: _buildSiteButton(isDark)),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   _buildRecordCount(isDark),
+                  const SizedBox(width: 2),
+                  _buildSearchButton(isDark),
+                  _buildViewButton(isDark, landscape),
+                  const SizedBox(width: 4),
                 ],
               ),
       ),
       body: Column(
         children: [
-          if (!isWide) _buildSearchEntry(),
           if (_site != null) _buildCategoryTabBar(),
           Expanded(
             child: _buildCategoryTabs(),
@@ -321,7 +324,7 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 资源统计（AppBar 首行最右，宽屏时与搜索框同一行）
+  /// 资源统计（紧贴右侧的搜索 / 视图按钮）
   Widget _buildRecordCount(bool isDark) {
     return Text(
       '共: $_activeRecordCount 资源',
@@ -333,55 +336,47 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 搜索入口（手机）：独占一行，上下留白
-  Widget _buildSearchEntry() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: _buildSearchBox(Theme.of(context).brightness == Brightness.dark),
+  /// AppBar 首行的图标按钮（搜索、卡片形态切换共用）。
+  ///
+  /// 用 [IconButton] 而不是自绘 InkWell，白送水波纹、焦点框与无障碍语义；
+  /// 约束压到 36×36 才能和「共 N 资源」挤在同一行（手机工具栏只有 56 高）。
+  Widget _buildBarIcon({
+    required bool isDark,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(icon, size: 20),
+      tooltip: tooltip,
+      color: isDark ? Colors.white70 : const Color(0xFF303133),
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
     );
   }
 
-  /// 搜索框本体：点击进入独立搜索页（展示历史记录 + 搜索结果）。
-  ///
-  /// [inAppBar] 为 true 时用于 AppBar 首行：浅色主题的 AppBar 本身就是纯白，
-  /// 白色填充会“看不见”，这里改用浅灰填充；深色主题沿用极暗面 + 描边。
-  Widget _buildSearchBox(
-    bool isDark, {
-    double height = 42,
-    bool inAppBar = false,
-  }) {
-    return InkWell(
+  /// 搜索入口：点开独立搜索页（历史记录 + 搜索结果）。
+  Widget _buildSearchButton(bool isDark) {
+    return _buildBarIcon(
+      isDark: isDark,
+      icon: Icons.search_rounded,
+      tooltip: '搜索影片',
       onTap: _openSearch,
-      borderRadius: BorderRadius.circular(height / 2),
-      child: Container(
-        height: height,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          // 深色下用极暗面 + 描边，而不是把底色提亮（提亮整屏就发灰了）
-          color: isDark
-              ? AppColors.darkSurface
-              : (inAppBar ? AppColors.lightBg : Colors.white),
-          borderRadius: BorderRadius.circular(height / 2),
-          border: isDark ? Border.all(color: AppColors.darkOutline) : null,
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.search,
-              size: 20,
-              color: isDark ? Colors.white54 : Colors.black54,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              '搜索影片',
-              style: TextStyle(
-                color: isDark ? Colors.white54 : Colors.black54,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
+    );
+  }
+
+  /// 卡片形态切换：横向卡片（16:10 图上文下）⇄ 竖向卡片（竖版海报网格）。
+  ///
+  /// 图标显示的是**点下去会变成什么**，配 tooltip 说清方向，一眼能看出作用；
+  /// 当前形态本身在屏幕上就看得见，不需要再用图标重复一遍。
+  Widget _buildViewButton(bool isDark, bool landscape) {
+    return _buildBarIcon(
+      isDark: isDark,
+      icon: landscape ? Icons.grid_view_rounded : Icons.view_agenda_rounded,
+      tooltip: landscape ? '切换为竖向卡片' : '切换为横向卡片',
+      onTap: () => context.read<AppState>().setLandscapeCard(!landscape),
     );
   }
 
