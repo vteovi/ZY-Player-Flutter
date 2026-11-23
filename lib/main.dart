@@ -9,6 +9,7 @@ import 'pages/main_page.dart';
 import 'providers/app_state.dart';
 import 'utils/app_colors.dart';
 import 'utils/constants.dart';
+import 'utils/cover_cache.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,9 @@ Future<void> main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  // 封面路径索引：一小份 json，几十毫秒；有了它首页第一帧就能把已缓存的海报
+  // 直接画出来，而不是先铺一片转圈等异步缓存查询。
+  await CoverCache.load();
   runApp(const ZyPlayerApp());
 }
 

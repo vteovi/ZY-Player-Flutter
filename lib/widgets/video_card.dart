@@ -1,8 +1,11 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../models/video.dart';
 import '../utils/app_colors.dart';
+import '../utils/cover_cache.dart';
 import '../utils/image_cache.dart';
 
 /// 海报封面：纯图（CachedNetworkImage），支持来源角标与占位/错误态。
@@ -33,29 +36,27 @@ class PosterCover extends StatelessWidget {
         child: Center(child: Icon(Icons.movie, color: iconColor)),
       );
     } else {
-      image = CachedNetworkImage(
-        imageUrl: pic,
-        cacheManager: AppImageCache.instance,
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.low,
-        // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
-        // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
-        memCacheWidth: memCacheWidth,
-        placeholder: (_, __) => ColoredBox(
-          color: bgColor,
-          child: Center(
-            child: SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-        ),
-        errorWidget: (_, __, ___) => ColoredBox(
-          color: bgColor,
-          child: Center(child: Icon(Icons.broken_image, color: iconColor)),
-        ),
-      );
+      // ① 先问「这张图本地有没有文件」。命中就用 Image.file **同步**画出来 ——
+      //    冷启动第一帧直接是海报，不再先转一圈再变图。
+      // ② 没命中（首次浏览 / 刚清了缓存）才走 CachedNetworkImage，它异步下载后
+      //    由 ImagePrefetch 把真实路径写进 CoverCache，下次启动就归到 ①。
+      final localPath = CoverCache.pathOf(pic);
+      if (localPath == null) {
+        image = _buildNetwork(bgColor, iconColor);
+      } else {
+        image = Image.file(
+          File(localPath),
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
+          cacheWidth: memCacheWidth,
+          errorBuilder: (_, __, ___) {
+            // 索引里的文件被外部删掉或写坏了：丢掉这条，就地退回网络加载，
+            // 用户不会看到破图，下次也不会再 stat 这个坏路径。
+            CoverCache.forget(pic);
+            return _buildNetwork(bgColor, iconColor);
+          },
+        );
+      }
     }
     final label = sourceLabel;
     if (label == null || label.isEmpty) return image;
@@ -83,6 +84,33 @@ class PosterCover extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+
+  /// 网络加载兜底（本地没有缓存文件时）
+  Widget _buildNetwork(Color bgColor, Color iconColor) {
+    return CachedNetworkImage(
+      imageUrl: pic,
+      cacheManager: AppImageCache.instance,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.low,
+      // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
+      // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
+      memCacheWidth: memCacheWidth,
+      placeholder: (_, __) => ColoredBox(
+        color: bgColor,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      ),
+      errorWidget: (_, __, ___) => ColoredBox(
+        color: bgColor,
+        child: Center(child: Icon(Icons.broken_image, color: iconColor)),
+      ),
     );
   }
 }
