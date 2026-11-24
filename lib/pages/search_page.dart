@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -64,19 +63,9 @@ class _SearchPageState extends State<SearchPage> {
   final List<_Hit> _results = <_Hit>[];
   List<String> _history = <String>[];
 
-  /// 「边打边搜」的防抖计时器：停止输入一小会儿才真正发请求
-  Timer? _debounce;
-
-  /// 上一次真正发起搜索的关键词，用于跳过「内容没变」的重复触发
-  /// （比如只是移动光标、或者清空后又输入同样的字）
-  String _lastKeyword = '';
-
-  /// 防抖间隔。太短会每敲一个字都去轮一遍所有源；太长会顿。
-  /// 中文走输入法时 composing 期间本来就不触发，这里主要兜英文 / 数字。
-  static const Duration _debounceDelay = Duration(milliseconds: 450);
-
-  /// 同时请求的源数量
-  static const int _batchSize = 12;
+  /// 同时在跑的搜索请求上限。每个源各自独立跑，谁先回来就先展示谁，
+  /// 这里只限制总并发，避免 20 多个源一起把网络打满。
+  static const int _concurrency = 12;
 
   @override
   void initState() {
@@ -91,7 +80,6 @@ class _SearchPageState extends State<SearchPage> {
 
   @override
   void dispose() {
-    _debounce?.cancel();
     _searchGen++; // 让还在路上的旧搜索结果失效
     _controller.removeListener(_onTextChanged);
     _controller.dispose();
@@ -101,29 +89,8 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   void _onTextChanged() {
-    // 切换清除按钮显隐 + 触发边打边搜
+    // 仅用于切换清除按钮显隐
     setState(() {});
-    _scheduleSearch();
-  }
-
-  /// 输入变化后安排一次「边打边搜」。
-  ///
-  /// 三种情况不搜：输入法还在拼（composing 未落字）、内容没变、已清空。
-  void _scheduleSearch() {
-    _debounce?.cancel();
-    // 中文输入法拼写到一半时 text 是半截拼音 / 候选字，搜出来毫无意义，
-    // 等 composing 结束（真正落字）监听会再触发一次
-    if (_controller.value.composing.isValid) return;
-    final kw = _controller.text.trim();
-    if (kw.isEmpty) {
-      if (_searched) _backToHistory();
-      return;
-    }
-    if (kw == _lastKeyword) return;
-    _debounce = Timer(
-      _debounceDelay,
-      () => _doSearch(kw, typeahead: true),
-    );
   }
 
   Future<void> _loadHistory() async {
@@ -145,30 +112,18 @@ class _SearchPageState extends State<SearchPage> {
     if (scope == _scope) return;
     setState(() => _scope = scope);
     final kw = _controller.text.trim();
-    // 走 typeahead 分支：结果等新范围的第一批回来再整体替换，不清空闪一下，
-    // 也不重复写搜索历史
-    if (_searched && kw.isNotEmpty) _doSearch(kw, typeahead: true);
+    if (_searched && kw.isNotEmpty) _doSearch(kw);
   }
 
-  /// 执行搜索。
-  ///
-  /// [typeahead] = true 表示由「边打边搜」触发：不记搜索历史（否则每敲一个
-  /// 字就塞一条半截关键词）、不动输入焦点（否则键盘一收就没法继续打）。
-  /// 两种触发方式都沿用同一套「旧结果留到第一批新结果到达才替换」的策略，
-  /// 避免列表闪空白。
-  Future<void> _doSearch(String rawKeyword, {bool typeahead = false}) async {
-    _debounce?.cancel();
+  Future<void> _doSearch(String rawKeyword) async {
     final kw = rawKeyword.trim();
     if (kw.isEmpty) return;
     // 彻底取消搜索框焦点（而非只上移一级），否则从详情页返回时
     // Flutter 会恢复"最后聚焦节点"又把键盘弹出来
-    if (!typeahead) _focusNode.unfocus();
-    _lastKeyword = kw;
+    _focusNode.unfocus();
     final app = Provider.of<AppState>(context, listen: false);
-    if (!typeahead) {
-      await app.addSearchKeyword(kw);
-      await _loadHistory();
-    }
+    await app.addSearchKeyword(kw);
+    await _loadHistory();
 
     final gen = ++_searchGen;
     final scope = _scope;
@@ -224,6 +179,8 @@ class _SearchPageState extends State<SearchPage> {
         _loading = true;
         _done = 0;
         _total = sites.length;
+        // 新关键词：旧结果立刻清掉，下面来一个源显示一个源
+        _results.clear();
       });
     }
     if (sites.isEmpty) {
@@ -231,65 +188,52 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
-    // 旧结果一直留到第一批新结果到达的那一刻再整体换掉。
-    // 边打边搜时这样不会每敲一个字就闪一下空白；明确点搜索时也是
-    // 「先看着旧结果、新结果到了再换」，比瞬间清空舒服。
-    var replaced = false;
-
-    // 分批并发：每批完成后立刻合并刷新，结果陆续出现
-    for (var i = 0; i < sites.length; i += _batchSize) {
-      final end = math.min(i + _batchSize, sites.length);
-      final chunk = sites.sublist(i, end);
-      final batches = await Future.wait(
-        chunk.map((site) async {
-          try {
-            final list = await HttpService.instance.search(site, kw);
-            return list
-                .map((v) => _Hit(
-                      siteKey: site.key,
-                      siteName: site.name,
-                      video: v,
-                    ))
-                .toList();
-          } catch (_) {
-            return <_Hit>[];
+    // 每个源各自独立跑，**谁先回来就立刻把它的结果追加进列表**。
+    // 以前是「一批 12 个源 Future.wait 完再统一刷新」，于是第一个源
+    // 300ms 就回来了也得等这批里最慢的那个，看起来就像"搜一阵子再一起出"。
+    // 现在只用一个游标 + 固定数量的 worker 轮流领站点：完成一个、显示一个、
+    // 游标再往前挪一个，总并发仍受 [_concurrency] 限制。
+    var cursor = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = cursor++;
+        if (index >= sites.length) return;
+        final site = sites[index];
+        final hits = <_Hit>[];
+        try {
+          final list = await HttpService.instance.search(site, kw);
+          for (final v in list) {
+            hits.add(_Hit(siteKey: site.key, siteName: site.name, video: v));
           }
-        }),
-      );
-      if (!mounted || gen != _searchGen) return;
-      setState(() {
-        if (!replaced) {
-          _results.clear();
-          replaced = true;
+        } catch (_) {
+          // 单个源失败（超时 / 404 / 解析失败）不该影响其他源的结果
         }
-        _results
-          ..addAll(batches.expand((x) => x));
-        _done = end;
-      });
+        // 换了关键词或退出页面了，这个源的结果直接丢掉
+        if (!mounted || gen != _searchGen) return;
+        setState(() {
+          if (hits.isNotEmpty) _results.addAll(hits);
+          _done++;
+        });
+      }
     }
+
+    await Future.wait(
+      List<Future<void>>.generate(
+        math.min(_concurrency, sites.length),
+        (_) => worker(),
+      ),
+    );
     if (mounted && gen == _searchGen) {
       setState(() => _loading = false);
     }
   }
 
-  /// 清空输入框并回到历史视图（输入框右侧的 ×）
+  /// 清空输入框并回到历史视图
   void _resetToHistory() {
-    // clear() 会触发监听 → 见空文本自动回历史视图，这里只管清焦点
+    _searchGen++; // 作废进行中的搜索
     _controller.clear();
     _focusNode.unfocus();
-    _backToHistory();
-  }
-
-  /// 只把结果区切回历史视图，**不碰输入框**。
-  ///
-  /// 边打边搜把字删光时走这里：如果在这里再调 `_controller.clear()`，
-  /// 会同步触发文本监听 → 又回到这里，形成递归。
-  void _backToHistory() {
-    _debounce?.cancel();
-    _searchGen++; // 作废进行中的搜索
-    _lastKeyword = '';
-    if (!mounted) return;
-    setState(() {
+    if (mounted) setState(() {
       _searched = false;
       _results.clear();
       _loading = false;
