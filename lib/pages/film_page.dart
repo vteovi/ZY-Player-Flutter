@@ -17,6 +17,23 @@ import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 import 'search_page.dart';
 
+/// 首页右下角悬浮搜索按钮的直径，以及它需要的额外底部留白。
+///
+/// 只在小屏（竖屏手机）出现：那里顶栏只剩一个小图标，拇指够不着，
+/// 悬浮按钮随手可点；宽屏顶栏本来就有一条完整搜索框，不需要再来一个。
+const double _kSearchFabSize = 56;
+
+/// 「回到顶部」小 FAB 的直径（FloatingActionButton.small 固定 40）
+const double _kBackTopFabSize = 40;
+
+/// 悬浮搜索按钮相对 Scaffold 默认位置（距底 16）再抬高的距离：
+/// 正好让出「回到顶部」那一位，搜索在上、回到顶部在下，两者上下叠着不打架。
+const double _kSearchFabLift = _kBackTopFabSize + 12;
+
+/// 网格底部额外留白：从底往上依次是 回到顶部(40) + 间距 + 搜索按钮(56)，
+/// 让最后一排（含右下角那张卡）能完整滚到按钮上方，不被压住。
+const double _kSearchFabInset = _kSearchFabSize + _kSearchFabLift;
+
 /// 首页：搜索 + 站点切换（顶部）+ 分类左右滑动分栏 + 资源瀑布流
 class FilmPage extends StatefulWidget {
   const FilmPage({super.key});
@@ -465,6 +482,56 @@ class FilmPageState extends State<FilmPage>
             child: _buildCategoryTabs(),
           ),
         ],
+      ),
+      // 小屏专属：右下角悬浮搜索，单手握持时拇指一伸就到。
+      // 往上抬一层，把最贴近拇指的位置留给「回到顶部」——它只在滚动后出现，
+      // 用固定偏移而不是跟着它显隐，避免按钮上下跳动。
+      floatingActionButton: isWide
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(bottom: _kSearchFabLift),
+              child: _buildSearchFab(isDark),
+            ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+    );
+  }
+
+  /// 悬浮搜索按钮：实心蓝 + 白色放大镜。
+  ///
+  /// 之前用的是「同色系暗面 + 描边」那套 OLED 分层手法，结果在首页一片
+  /// 黑底（深色）或白底（浅色）里跟背景糊成一块，几乎看不见 —— 悬浮操作
+  /// 按钮本来就该是页面上最跳的一块颜色，所以改成一整块高饱和品牌蓝。
+  ///
+  /// 深色模式额外补一圈同色辉光：FAB 自带的 elevation 阴影是黑色的，
+  /// 投在纯黑页面上等于没有，靠辉光才浮得起来。
+  Widget _buildSearchFab(bool isDark) {
+    final fill = isDark ? AppColors.brandFillDark : AppColors.brandFill;
+    return Container(
+      width: _kSearchFabSize,
+      height: _kSearchFabSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: fill.withValues(alpha: isDark ? 0.55 : 0.34),
+            blurRadius: isDark ? 20 : 14,
+            spreadRadius: isDark ? 2 : 0,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: FloatingActionButton(
+        // 同一页里还有「回到顶部」小 FAB，默认 heroTag 会撞车，这里关掉 Hero
+        heroTag: null,
+        onPressed: _openSearch,
+        tooltip: '搜索影片',
+        // 阴影交给外层 Container：纯黑底上 Material 的黑阴影是看不见的
+        elevation: 0,
+        highlightElevation: 0,
+        backgroundColor: fill,
+        foregroundColor: Colors.white,
+        shape: const CircleBorder(),
+        child: const Icon(Icons.search_rounded, size: 26),
       ),
     );
   }
@@ -1182,6 +1249,11 @@ class CategoryTabState extends State<CategoryTab>
                     scrollController: _scrollController,
                     loadingMore: _loadingMore,
                     onTap: widget.onTapVideo,
+                    // 窄屏右下角有悬浮搜索按钮，给最后一排留出能滚过去的空间
+                    bottomInset:
+                        MediaQuery.sizeOf(context).width < FilmPageState._wideThreshold
+                            ? _kSearchFabInset
+                            : 0,
                   );
     return Stack(
       children: [
@@ -1196,6 +1268,7 @@ class CategoryTabState extends State<CategoryTab>
         if (_showBackTop)
           Positioned(
             right: 16,
+            // 贴底那一格归「回到顶部」，窄屏的悬浮搜索按钮固定在它上方
             bottom: 16,
             child: FloatingActionButton.small(
               heroTag: 'catBackTop-${widget.videoClass.tid}',
