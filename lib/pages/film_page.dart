@@ -23,8 +23,16 @@ import 'search_page.dart';
 /// 悬浮按钮随手可点；宽屏顶栏本来就有一条完整搜索框，不需要再来一个。
 const double _kSearchFabSize = 56;
 
-/// 网格底部额外留白：按钮 56 + Scaffold endFloat 外边距 16 − 网格原有 16
-const double _kSearchFabInset = _kSearchFabSize;
+/// 「回到顶部」小 FAB 的直径（FloatingActionButton.small 固定 40）
+const double _kBackTopFabSize = 40;
+
+/// 悬浮搜索按钮相对 Scaffold 默认位置（距底 16）再抬高的距离：
+/// 正好让出「回到顶部」那一位，搜索在上、回到顶部在下，两者上下叠着不打架。
+const double _kSearchFabLift = _kBackTopFabSize + 12;
+
+/// 网格底部额外留白：从底往上依次是 回到顶部(40) + 间距 + 搜索按钮(56)，
+/// 让最后一排（含右下角那张卡）能完整滚到按钮上方，不被压住。
+const double _kSearchFabInset = _kSearchFabSize + _kSearchFabLift;
 
 /// 首页：搜索 + 站点切换（顶部）+ 分类左右滑动分栏 + 资源瀑布流
 class FilmPage extends StatefulWidget {
@@ -475,8 +483,15 @@ class FilmPageState extends State<FilmPage>
           ),
         ],
       ),
-      // 小屏专属：右下角悬浮搜索，单手握持时拇指一伸就到
-      floatingActionButton: isWide ? null : _buildSearchFab(isDark),
+      // 小屏专属：右下角悬浮搜索，单手握持时拇指一伸就到。
+      // 往上抬一层，把最贴近拇指的位置留给「回到顶部」——它只在滚动后出现，
+      // 用固定偏移而不是跟着它显隐，避免按钮上下跳动。
+      floatingActionButton: isWide
+          ? null
+          : Padding(
+              padding: const EdgeInsets.only(bottom: _kSearchFabLift),
+              child: _buildSearchFab(isDark),
+            ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
     );
   }
@@ -1238,10 +1253,8 @@ class CategoryTabState extends State<CategoryTab>
         if (_showBackTop)
           Positioned(
             right: 16,
-            // 窄屏右下角蹲着悬浮搜索按钮，回到顶部要往上让一层，别叠在一起
-            bottom: MediaQuery.sizeOf(context).width < FilmPageState._wideThreshold
-                ? 16 + _kSearchFabSize + 12
-                : 16,
+            // 贴底那一格归「回到顶部」，窄屏的悬浮搜索按钮固定在它上方
+            bottom: 16,
             child: FloatingActionButton.small(
               heroTag: 'catBackTop-${widget.videoClass.tid}',
               onPressed: () => _scrollController.animateTo(
