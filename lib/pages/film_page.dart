@@ -496,26 +496,41 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 悬浮搜索按钮：浅色白底 + 淡描边，深色沿用 OLED 的「极暗面 + 1px 描边」，
-  /// 不靠提亮底色分层（提亮整块就发灰了）。
+  /// 悬浮搜索按钮：实心蓝 + 白色放大镜。
+  ///
+  /// 之前用的是「同色系暗面 + 描边」那套 OLED 分层手法，结果在首页一片
+  /// 黑底（深色）或白底（浅色）里跟背景糊成一块，几乎看不见 —— 悬浮操作
+  /// 按钮本来就该是页面上最跳的一块颜色，所以改成一整块高饱和品牌蓝。
+  ///
+  /// 深色模式额外补一圈同色辉光：FAB 自带的 elevation 阴影是黑色的，
+  /// 投在纯黑页面上等于没有，靠辉光才浮得起来。
   Widget _buildSearchFab(bool isDark) {
-    return SizedBox(
+    final fill = isDark ? AppColors.brandFillDark : AppColors.brandFill;
+    return Container(
       width: _kSearchFabSize,
       height: _kSearchFabSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: fill.withValues(alpha: isDark ? 0.55 : 0.34),
+            blurRadius: isDark ? 20 : 14,
+            spreadRadius: isDark ? 2 : 0,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
       child: FloatingActionButton(
         // 同一页里还有「回到顶部」小 FAB，默认 heroTag 会撞车，这里关掉 Hero
         heroTag: null,
         onPressed: _openSearch,
         tooltip: '搜索影片',
-        elevation: 4,
-        highlightElevation: 8,
-        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
-        foregroundColor: isDark ? Colors.white70 : const Color(0xFF303133),
-        shape: CircleBorder(
-          side: BorderSide(
-            color: isDark ? AppColors.darkOutline : const Color(0xFFE4E7ED),
-          ),
-        ),
+        // 阴影交给外层 Container：纯黑底上 Material 的黑阴影是看不见的
+        elevation: 0,
+        highlightElevation: 0,
+        backgroundColor: fill,
+        foregroundColor: Colors.white,
+        shape: const CircleBorder(),
         child: const Icon(Icons.search_rounded, size: 26),
       ),
     );
