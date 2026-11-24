@@ -74,6 +74,10 @@ class VideoGridView extends StatelessWidget {
   /// 可选：结果来源角标（全站搜索时显示站点名），返回 null 则不显示
   final String? Function(Video)? labelOf;
 
+  /// 底部额外留白。首页右下角有悬浮按钮时会挡住最后一排的右下角，
+  /// 传一个按钮高度让内容能滚过去（默认 0，搜索结果等场景不需要）。
+  final double bottomInset;
+
   const VideoGridView({
     super.key,
     required this.videos,
@@ -81,6 +85,7 @@ class VideoGridView extends StatelessWidget {
     this.loadingMore = false,
     required this.onTap,
     this.labelOf,
+    this.bottomInset = 0,
   });
 
   @override
@@ -115,7 +120,7 @@ class VideoGridView extends StatelessWidget {
           // 膨胀元素树（平板 8 列时膨胀速度是手机的 8 倍），导致滑动越远越卡甚至滑不动。
           // 单元格是无状态、重建极轻的，关掉它反而更顺；滚回去会按 id 从本地缓存秒重建。
           addAutomaticKeepAlives: false,
-          padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
+          padding: EdgeInsets.fromLTRB(6, 4, 6, 16 + bottomInset),
           itemCount: videos.length + (loadingMore ? 1 : 0),
           gridDelegate: delegate,
           itemBuilder: (context, index) {
@@ -148,6 +153,7 @@ Widget buildVideoGrid({
   bool loadingMore = false,
   required void Function(Video) onTap,
   String? Function(Video)? labelOf,
+  double bottomInset = 0,
 }) =>
     VideoGridView(
       videos: videos,
@@ -155,6 +161,7 @@ Widget buildVideoGrid({
       loadingMore: loadingMore,
       onTap: onTap,
       labelOf: labelOf,
+      bottomInset: bottomInset,
     );
 
 /// 网格骨架屏：加载中用与真实卡片同形的占位块，形状跟着

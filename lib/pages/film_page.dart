@@ -17,6 +17,15 @@ import '../widgets/video_grid.dart';
 import 'detail_page.dart';
 import 'search_page.dart';
 
+/// 首页右下角悬浮搜索按钮的直径，以及它需要的额外底部留白。
+///
+/// 只在小屏（竖屏手机）出现：那里顶栏只剩一个小图标，拇指够不着，
+/// 悬浮按钮随手可点；宽屏顶栏本来就有一条完整搜索框，不需要再来一个。
+const double _kSearchFabSize = 56;
+
+/// 网格底部额外留白：按钮 56 + Scaffold endFloat 外边距 16 − 网格原有 16
+const double _kSearchFabInset = _kSearchFabSize;
+
 /// 首页：搜索 + 站点切换（顶部）+ 分类左右滑动分栏 + 资源瀑布流
 class FilmPage extends StatefulWidget {
   const FilmPage({super.key});
@@ -465,6 +474,34 @@ class FilmPageState extends State<FilmPage>
             child: _buildCategoryTabs(),
           ),
         ],
+      ),
+      // 小屏专属：右下角悬浮搜索，单手握持时拇指一伸就到
+      floatingActionButton: isWide ? null : _buildSearchFab(isDark),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+    );
+  }
+
+  /// 悬浮搜索按钮：浅色白底 + 淡描边，深色沿用 OLED 的「极暗面 + 1px 描边」，
+  /// 不靠提亮底色分层（提亮整块就发灰了）。
+  Widget _buildSearchFab(bool isDark) {
+    return SizedBox(
+      width: _kSearchFabSize,
+      height: _kSearchFabSize,
+      child: FloatingActionButton(
+        // 同一页里还有「回到顶部」小 FAB，默认 heroTag 会撞车，这里关掉 Hero
+        heroTag: null,
+        onPressed: _openSearch,
+        tooltip: '搜索影片',
+        elevation: 4,
+        highlightElevation: 8,
+        backgroundColor: isDark ? AppColors.darkSurface : Colors.white,
+        foregroundColor: isDark ? Colors.white70 : const Color(0xFF303133),
+        shape: CircleBorder(
+          side: BorderSide(
+            color: isDark ? AppColors.darkOutline : const Color(0xFFE4E7ED),
+          ),
+        ),
+        child: const Icon(Icons.search_rounded, size: 26),
       ),
     );
   }
@@ -1182,6 +1219,11 @@ class CategoryTabState extends State<CategoryTab>
                     scrollController: _scrollController,
                     loadingMore: _loadingMore,
                     onTap: widget.onTapVideo,
+                    // 窄屏右下角有悬浮搜索按钮，给最后一排留出能滚过去的空间
+                    bottomInset:
+                        MediaQuery.sizeOf(context).width < FilmPageState._wideThreshold
+                            ? _kSearchFabInset
+                            : 0,
                   );
     return Stack(
       children: [
@@ -1196,7 +1238,10 @@ class CategoryTabState extends State<CategoryTab>
         if (_showBackTop)
           Positioned(
             right: 16,
-            bottom: 16,
+            // 窄屏右下角蹲着悬浮搜索按钮，回到顶部要往上让一层，别叠在一起
+            bottom: MediaQuery.sizeOf(context).width < FilmPageState._wideThreshold
+                ? 16 + _kSearchFabSize + 12
+                : 16,
             child: FloatingActionButton.small(
               heroTag: 'catBackTop-${widget.videoClass.tid}',
               onPressed: () => _scrollController.animateTo(
