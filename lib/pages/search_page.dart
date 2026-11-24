@@ -63,8 +63,9 @@ class _SearchPageState extends State<SearchPage> {
   final List<_Hit> _results = <_Hit>[];
   List<String> _history = <String>[];
 
-  /// 同时请求的源数量
-  static const int _batchSize = 12;
+  /// 同时在跑的搜索请求上限。每个源各自独立跑，谁先回来就先展示谁，
+  /// 这里只限制总并发，避免 20 多个源一起把网络打满。
+  static const int _concurrency = 12;
 
   @override
   void initState() {
@@ -178,6 +179,7 @@ class _SearchPageState extends State<SearchPage> {
         _loading = true;
         _done = 0;
         _total = sites.length;
+        // 新关键词：旧结果立刻清掉，下面来一个源显示一个源
         _results.clear();
       });
     }
@@ -186,32 +188,41 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
 
-    // 分批并发：每批完成后立刻合并刷新，结果陆续出现
-    for (var i = 0; i < sites.length; i += _batchSize) {
-      final end = math.min(i + _batchSize, sites.length);
-      final chunk = sites.sublist(i, end);
-      final batches = await Future.wait(
-        chunk.map((site) async {
-          try {
-            final list = await HttpService.instance.search(site, kw);
-            return list
-                .map((v) => _Hit(
-                      siteKey: site.key,
-                      siteName: site.name,
-                      video: v,
-                    ))
-                .toList();
-          } catch (_) {
-            return <_Hit>[];
+    // 每个源各自独立跑，**谁先回来就立刻把它的结果追加进列表**。
+    // 以前是「一批 12 个源 Future.wait 完再统一刷新」，于是第一个源
+    // 300ms 就回来了也得等这批里最慢的那个，看起来就像"搜一阵子再一起出"。
+    // 现在只用一个游标 + 固定数量的 worker 轮流领站点：完成一个、显示一个、
+    // 游标再往前挪一个，总并发仍受 [_concurrency] 限制。
+    var cursor = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = cursor++;
+        if (index >= sites.length) return;
+        final site = sites[index];
+        final hits = <_Hit>[];
+        try {
+          final list = await HttpService.instance.search(site, kw);
+          for (final v in list) {
+            hits.add(_Hit(siteKey: site.key, siteName: site.name, video: v));
           }
-        }),
-      );
-      if (!mounted || gen != _searchGen) return;
-      setState(() {
-        _results.addAll(batches.expand((x) => x));
-        _done = end;
-      });
+        } catch (_) {
+          // 单个源失败（超时 / 404 / 解析失败）不该影响其他源的结果
+        }
+        // 换了关键词或退出页面了，这个源的结果直接丢掉
+        if (!mounted || gen != _searchGen) return;
+        setState(() {
+          if (hits.isNotEmpty) _results.addAll(hits);
+          _done++;
+        });
+      }
     }
+
+    await Future.wait(
+      List<Future<void>>.generate(
+        math.min(_concurrency, sites.length),
+        (_) => worker(),
+      ),
+    );
     if (mounted && gen == _searchGen) {
       setState(() => _loading = false);
     }
