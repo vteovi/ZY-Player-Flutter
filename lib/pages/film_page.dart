@@ -418,9 +418,13 @@ class FilmPageState extends State<FilmPage>
     // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
     final landscape =
         context.select<AppState, bool>((s) => s.config.landscapeCard);
+    // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段
+    final showViewToggle =
+        context.select<AppState, bool>((s) => s.config.showViewToggle);
     return Scaffold(
       appBar: AppBar(
-        // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索 + 视图切换
+        // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索，
+        // 视图切换按钮是否出现由设置页的「显示视图切换按钮」决定（默认关）
         titleSpacing: isWide ? 12 : 8,
         toolbarHeight: isWide ? 60 : kToolbarHeight,
         title: isWide
@@ -436,8 +440,10 @@ class FilmPageState extends State<FilmPage>
                     // 宽屏（平板 / 桌面）空间够：搜索做成输入框样式的入口，
                     // Expanded 吃掉站点按钮与视图按钮之间的全部剩余宽度
                     Expanded(child: _buildSearchBox(isDark, height: 40)),
-                    const SizedBox(width: 6),
-                    _buildViewButton(isDark, landscape),
+                    if (showViewToggle) ...[
+                      const SizedBox(width: 6),
+                      _buildViewButton(isDark, landscape),
+                    ],
                   ],
                 ),
               )
@@ -447,7 +453,7 @@ class FilmPageState extends State<FilmPage>
                   const SizedBox(width: 4),
                   // 手机宽度不够铺开搜索框，仍用一个图标按钮，点开进搜索页
                   _buildSearchButton(isDark),
-                  _buildViewButton(isDark, landscape),
+                  if (showViewToggle) _buildViewButton(isDark, landscape),
                   const SizedBox(width: 4),
                 ],
               ),
