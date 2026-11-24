@@ -333,6 +333,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 首页顶栏是否显示「视图切换」按钮，默认关闭（顶栏更简洁）
+  Future<void> setShowViewToggle(bool value) async {
+    if (_config.showViewToggle == value) return;
+    _config = _config.copyWith(showViewToggle: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   /// 全屏长按加速倍率（2.0 / 4.0 / 8.0），默认 2.0
   Future<void> setPlayerLongPressRate(double value) async {
     if (_config.playerLongPressRate == value) return;

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/site.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
+import '../services/boot_snapshot.dart';
 import '../services/http_service.dart';
 import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
@@ -57,6 +58,23 @@ class FilmPageState extends State<FilmPage>
   /// 站点 / 分类还在拉取时，整体先转圈（此时分栏还没出来）
   bool _loading = false;
 
+  /// 首屏内容来自 [BootSnapshot]（而不是异步加载完成）。
+  ///
+  /// 这种状态下 `_site` / `_classes` 已经有值，但 `AppState` 还没 ready ——
+  /// bootstrap 完成后要走 [_adoptRealSites] 交接，**不能**走 [reload]
+  /// （那会把刚显示出来的内容先换成骨架屏，等于白等一次）。
+  bool _usingSnapshot = false;
+
+  /// 快照自带的第一页片单，只喂给「快照里那个分类」用一次。
+  ///
+  /// 必须连站点 key 一起记：换到别的源之后，同一个 tid 也会命中这份数据，
+  /// 那就把 A 站的片单画到 B 站上了。
+  Map<String, List<Video>> _bootVideos = <String, List<Video>>{};
+  String? _bootSiteKey;
+
+  /// 快照恢复后要选中第几个分类
+  int _initialIndex = 0;
+
   /// 当前选中的分类（跟随 TabBar 的 index）
   VideoClass get _activeClass {
     if (_classes.isEmpty) return _latestClass;
@@ -73,12 +91,64 @@ class FilmPageState extends State<FilmPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _tabController = TabController(length: _classes.length, vsync: this);
+    // 先吃启动快照：有的话第一帧就有站点、分类栏、片单（封面按索引同步读本地
+    // 文件出图），不必先空白一两秒等 bootstrap + 网络往返。
+    _applyBootSnapshot();
+    _tabController = TabController(
+      length: _classes.length,
+      vsync: this,
+      initialIndex: _initialIndex,
+    );
     _tabController.addListener(_onTabChanged);
+    _lastTabIndex = _tabController.index;
     // 直接进主页时 sites 可能还没加载完（bootstrap 是异步的），先挂监听：
-    // 等源列表就绪（空 → 非空）后自动 reload，避免卡在「暂无可用视频源」。
-    context.read<AppState>().addListener(_onAppStateChanged);
-    reload();
+    // 等源列表就绪（空 → 非空）后自动接手，避免卡在「暂无可用视频源」。
+    final state = context.read<AppState>();
+    state.addListener(_onAppStateChanged);
+    if (_usingSnapshot) {
+      // 快照只是「先给你看」，分类栏仍要和源站对一次 —— 静默做，不铺骨架屏
+      if (state.activeSites.isEmpty) {
+        unawaited(_refreshClassesSilently());
+      } else {
+        // bootstrap 恰好已经跑完（启动很快时会发生）：直接交接，
+        // 别干等一个不会再来的 notify，否则分类栏永远停在快照那一份
+        _usingSnapshot = false;
+        unawaited(_adoptRealSites(state));
+      }
+    } else {
+      reload();
+    }
+  }
+
+  /// 从启动快照恢复首屏（站点 / 分类 / 上次停留的位置 + 那一页片单）。
+  ///
+  /// 只在 [BootSnapshot] 拿到完整结构时生效；否则什么都不做，走原来的加载路径。
+  void _applyBootSnapshot() {
+    final s = BootSnapshot.site;
+    if (s == null || BootSnapshot.classes.isEmpty) return;
+    final visible = BootSnapshot.classes
+        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
+        .where((c) => c.tid != _latestClass.tid)
+        .toList();
+    if (visible.isEmpty) return;
+    _usingSnapshot = true;
+    _site = s;
+    _bootSiteKey = s.key;
+    _classes = <VideoClass>[_latestClass, ...visible];
+    final tid = BootSnapshot.activeTid;
+    final i = _classes.indexWhere((c) => c.tid == tid);
+    _initialIndex = i < 0 ? 0 : i;
+    if (tid.isNotEmpty) {
+      // 快照里没记到资源数（缓存没有元信息）就留空，别在顶栏显示「· 0 资源」
+      if (BootSnapshot.recordCount > 0) {
+        _recordCounts[tid] = BootSnapshot.recordCount;
+      }
+      if (BootSnapshot.videos.isNotEmpty) {
+        _bootVideos = <String, List<Video>>{tid: BootSnapshot.videos};
+      }
+    }
+    // 有内容了，不要再挂骨架屏
+    _loading = false;
   }
 
   @override
@@ -111,7 +181,44 @@ class FilmPageState extends State<FilmPage>
   /// AppState 任意变化（含 sites 加载完成）时尝试按需重载。
   /// [reloadIfNeeded] 内部按源签名比对，签名不变（如只加载了收藏/历史）不会重复拉取。
   void _onAppStateChanged() {
-    if (mounted) unawaited(reloadIfNeeded());
+    if (!mounted) return;
+    if (_usingSnapshot) {
+      // 快照 → 真实源列表的交接：只换站点对象，不铺骨架屏
+      final state = context.read<AppState>();
+      if (state.activeSites.isEmpty) return;
+      _usingSnapshot = false;
+      unawaited(_adoptRealSites(state));
+      return;
+    }
+    unawaited(reloadIfNeeded());
+  }
+
+  /// bootstrap 完成后接手真实源列表。
+  ///
+  /// 和 [reload] 的区别：不置 `_loading`（否则刚显示出来的快照内容会先被换成
+  /// 骨架屏），也不重建分类栏，只把站点对象换成库里那份（收藏 / 历史要用它的
+  /// key），然后静默对一次分类。
+  Future<void> _adoptRealSites(AppState state) async {
+    final sites = state.activeSites;
+    if (sites.isEmpty) return;
+    _signature = sites.map((s) => s.key).join(',');
+    _lastRefreshAt = DateTime.now();
+    final key = _site?.key;
+    final keep = key == null
+        ? sites.first
+        : sites.firstWhere((s) => s.key == key, orElse: () => sites.first);
+    if (keep.key != key) {
+      // 上次那个源被删掉 / 停用了：只能整页重来（这一次铺骨架屏，没办法）。
+      // 先换站点再 reload，顺序不能反 —— 反了会先按新站点渲染一帧旧分类。
+      if (mounted) setState(() => _site = keep);
+      await reload();
+      return;
+    }
+    if (mounted && !identical(keep, _site)) {
+      setState(() => _site = keep);
+    }
+    await _refreshClassesSilently();
+    _saveBootSnapshot();
   }
 
   void _onTabChanged() {
@@ -119,18 +226,27 @@ class FilmPageState extends State<FilmPage>
       _lastTabIndex = _tabController.index;
       // 切换分类后，顶部的「共 X 资源」要跟着当前分类刷新
       if (mounted) setState(() {});
+      // 记住停在哪一栏，下次冷启动直接回到这里
+      _saveBootSnapshot();
     }
   }
 
   /// 站点或分类数量变化后，重建 TabController（长度必须和分类数一致）
   ///
-  /// [force] = true 时即使长度没变也重建，并把选中分栏重置回「最新」——
-  /// 换源后新旧站点分类数恰好相同的情况必须靠它兜住，否则会停在原来那一栏。
-  void _initTabs(int length, {bool force = false}) {
+  /// [force] = true 时即使长度没变也重建，并把选中分栏重置回 [initialIndex]
+  /// （默认 0，即「最新」）—— 换源后新旧站点分类数恰好相同的情况必须靠它兜住，
+  /// 否则会停在原来那一栏。
+  void _initTabs(int length, {bool force = false, int initialIndex = 0}) {
     if (!force && _tabController.length == length) return;
     _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
-    _tabController = TabController(length: length, vsync: this);
+    // length 可能是 0（分类被清空），clamp 的上下界会反掉，这里先挡一层
+    final index = length <= 0 ? 0 : initialIndex.clamp(0, length - 1);
+    _tabController = TabController(
+      length: length,
+      vsync: this,
+      initialIndex: index,
+    );
     _tabController.addListener(_onTabChanged);
     _lastTabIndex = _tabController.index;
   }
@@ -193,6 +309,54 @@ class FilmPageState extends State<FilmPage>
       _classes = <VideoClass>[_latestClass, ...visible];
     });
     _initTabs(_classes.length, force: true);
+    _saveBootSnapshot();
+  }
+
+  /// 静默向源站对一次分类栏。
+  ///
+  /// 冷启动先用快照把分类栏画出来，再走这里更新：失败就保持现状（快照里的分类
+  /// 是能用的，不该因为一次网络抖动就清空），成功且确实有变化才替换 —— 期间
+  /// 不置 `_loading`，所以网格不会闪成骨架屏。
+  Future<void> _refreshClassesSilently() async {
+    final site = _site;
+    if (site == null) return;
+    List<VideoClass> list;
+    try {
+      list = await HttpService.instance.fetchClasses(site);
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    final visible = list
+        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
+        .toList();
+    final next = <VideoClass>[_latestClass, ...visible];
+    if (_sameClasses(next, _classes)) {
+      _saveBootSnapshot();
+      return;
+    }
+    final keepTid = _activeClass.tid;
+    final idx = next.indexWhere((c) => c.tid == keepTid);
+    setState(() => _classes = next);
+    _initTabs(next.length, force: true, initialIndex: idx < 0 ? 0 : idx);
+    _saveBootSnapshot();
+  }
+
+  bool _sameClasses(List<VideoClass> a, List<VideoClass> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].tid != b[i].tid || a[i].name != b[i].name) return false;
+    }
+    return true;
+  }
+
+  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏）记下来，供下次冷启动秒开。
+  void _saveBootSnapshot() {
+    final site = _site;
+    if (site == null || _classes.length <= 1) return;
+    final cls = _classes.where((c) => c.tid != _latestClass.tid).toList();
+    if (cls.isEmpty) return;
+    BootSnapshot.save(site, cls, _activeClass.tid);
   }
 
   /// 子分类页面加载完某一分类的资源数后，回写到顶部的统计
@@ -247,11 +411,20 @@ class FilmPageState extends State<FilmPage>
   Widget build(BuildContext context) {
     super.build(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // 宽屏（平板 / 桌面）：首行够宽，把搜索框并进 AppBar，省出一整行
+    // 宽屏（平板 / 桌面）：首行够宽，站点切换与右侧操作同排
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
+    // 卡片形态：横向（16:10 图上文下）/ 竖向（竖版海报网格）。
+    // 设置页也能改，这里 select 只订阅这一个字段 —— 用 watch 会让任何设置变更
+    // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
+    final landscape =
+        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段
+    final showViewToggle =
+        context.select<AppState, bool>((s) => s.config.showViewToggle);
     return Scaffold(
       appBar: AppBar(
-        // 「首页」文字已去掉，原位改放网站切换 + 资源统计（宽屏再加搜索框）
+        // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索，
+        // 视图切换按钮是否出现由设置页的「显示视图切换按钮」决定（默认关）
         titleSpacing: isWide ? 12 : 8,
         toolbarHeight: isWide ? 60 : kToolbarHeight,
         title: isWide
@@ -260,34 +433,33 @@ class FilmPageState extends State<FilmPage>
                 child: Row(
                   children: [
                     ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 260),
+                      constraints: const BoxConstraints(maxWidth: 300),
                       child: _buildSiteButton(isDark),
                     ),
-                    const SizedBox(width: 14),
-                    // 搜索框吃掉剩余宽度
-                    Expanded(
-                      child: _buildSearchBox(
-                        isDark,
-                        height: 40,
-                        inAppBar: true,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    _buildRecordCount(isDark),
+                    const SizedBox(width: 10),
+                    // 宽屏（平板 / 桌面）空间够：搜索做成输入框样式的入口，
+                    // Expanded 吃掉站点按钮与视图按钮之间的全部剩余宽度
+                    Expanded(child: _buildSearchBox(isDark, height: 40)),
+                    if (showViewToggle) ...[
+                      const SizedBox(width: 6),
+                      _buildViewButton(isDark, landscape),
+                    ],
                   ],
                 ),
               )
             : Row(
                 children: [
                   Expanded(child: _buildSiteButton(isDark)),
-                  const SizedBox(width: 10),
-                  _buildRecordCount(isDark),
+                  const SizedBox(width: 4),
+                  // 手机宽度不够铺开搜索框，仍用一个图标按钮，点开进搜索页
+                  _buildSearchButton(isDark),
+                  if (showViewToggle) _buildViewButton(isDark, landscape),
+                  const SizedBox(width: 4),
                 ],
               ),
       ),
       body: Column(
         children: [
-          if (!isWide) _buildSearchEntry(),
           if (_site != null) _buildCategoryTabBar(),
           Expanded(
             child: _buildCategoryTabs(),
@@ -298,14 +470,46 @@ class FilmPageState extends State<FilmPage>
   }
 
   /// 站点切换按钮（AppBar 首行最左）
+  ///
+  /// 当前分类的资源数直接并进按钮里（`网站: 某站 · 128 资源`），
+  /// 首行因此只用「站点 / 搜索 / 视图」三个元素，手机上也能把搜索和切视图
+  /// 一起收进第一排，不必再单占一行。
   Widget _buildSiteButton(bool isDark) {
+    // 资源数用弱化的色号，和站点名拉开层级：一眼分清「是什么源」和「有多少片」
+    final muted = isDark ? Colors.white54 : const Color(0xFF909399);
     return OutlinedButton.icon(
       onPressed: _pickSite,
       icon: const Icon(Icons.language, size: 16),
-      label: Text(
-        _site == null ? '未选择视频源' : '网站: ${_site!.name}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 站点名可被压缩（超长省略号），资源数固定不参与收缩 ——
+          // 否则名字一长，被裁掉的正好是刚并进来的资源数。
+          Flexible(
+            child: Text(
+              // 不加「网站: 」前缀 —— 左边的地球图标已经说明了这是站点，
+              // 省下的宽度留给站名本身（窄屏尤其紧张）
+              _site == null ? '未选择视频源' : _site!.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // 未选源 / 还不知道数量时不显示，那句 0 反而像「源是空的」。
+          // 冷启动走快照时数量来自缓存元信息，读不到就是 0，这里一并挡掉。
+          if (_site != null && _activeRecordCount > 0) ...[
+            const SizedBox(width: 8),
+            Text(
+              '· $_activeRecordCount 资源',
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: muted,
+              ),
+            ),
+          ],
+        ],
       ),
       style: OutlinedButton.styleFrom(
         foregroundColor: isDark ? Colors.white70 : const Color(0xFF303133),
@@ -321,35 +525,45 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 资源统计（AppBar 首行最右，宽屏时与搜索框同一行）
-  Widget _buildRecordCount(bool isDark) {
-    return Text(
-      '共: $_activeRecordCount 资源',
-      style: TextStyle(
-        fontSize: 12,
-        color: isDark ? Colors.white70 : const Color(0xFF909399),
-        fontWeight: FontWeight.w500,
-      ),
-    );
-  }
-
-  /// 搜索入口（手机）：独占一行，上下留白
-  Widget _buildSearchEntry() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: _buildSearchBox(Theme.of(context).brightness == Brightness.dark),
-    );
-  }
-
-  /// 搜索框本体：点击进入独立搜索页（展示历史记录 + 搜索结果）。
+  /// AppBar 首行的图标按钮（搜索、卡片形态切换共用）。
   ///
-  /// [inAppBar] 为 true 时用于 AppBar 首行：浅色主题的 AppBar 本身就是纯白，
-  /// 白色填充会“看不见”，这里改用浅灰填充；深色主题沿用极暗面 + 描边。
-  Widget _buildSearchBox(
-    bool isDark, {
-    double height = 42,
-    bool inAppBar = false,
+  /// 用 [IconButton] 而不是自绘 InkWell，白送水波纹、焦点框与无障碍语义；
+  /// 约束压到 36×36，手机 56 高的工具栏里才不会把站点按钮挤没。
+  Widget _buildBarIcon({
+    required bool isDark,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
   }) {
+    return IconButton(
+      onPressed: onTap,
+      icon: Icon(icon, size: 20),
+      tooltip: tooltip,
+      color: isDark ? Colors.white70 : const Color(0xFF303133),
+      padding: EdgeInsets.zero,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+    );
+  }
+
+  /// 搜索入口（手机）：点开独立搜索页（历史记录 + 搜索结果）。
+  Widget _buildSearchButton(bool isDark) {
+    return _buildBarIcon(
+      isDark: isDark,
+      icon: Icons.search_rounded,
+      tooltip: '搜索影片',
+      onTap: _openSearch,
+    );
+  }
+
+  /// 搜索框（宽屏）：做成输入框的样子，但点一下是进独立搜索页，不是就地输入。
+  ///
+  /// 高度由调用方给（宽屏工具栏 60，取 40 与之对齐图标按钮）；
+  /// 宽度交给外层 `Expanded` 按剩余空间自动拉伸，不写死。
+  ///
+  /// 浅色主题下 AppBar 本身就是白底，白色填充会「看不见」，所以用浅灰；
+  /// 深色主题用极暗面 + 描边，不靠提亮底色区分层级。
+  Widget _buildSearchBox(bool isDark, {double height = 40}) {
     return InkWell(
       onTap: _openSearch,
       borderRadius: BorderRadius.circular(height / 2),
@@ -357,17 +571,14 @@ class FilmPageState extends State<FilmPage>
         height: height,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         decoration: BoxDecoration(
-          // 深色下用极暗面 + 描边，而不是把底色提亮（提亮整屏就发灰了）
-          color: isDark
-              ? AppColors.darkSurface
-              : (inAppBar ? AppColors.lightBg : Colors.white),
+          color: isDark ? AppColors.darkSurface : AppColors.lightBg,
           borderRadius: BorderRadius.circular(height / 2),
           border: isDark ? Border.all(color: AppColors.darkOutline) : null,
         ),
         child: Row(
           children: [
             Icon(
-              Icons.search,
+              Icons.search_rounded,
               size: 20,
               color: isDark ? Colors.white54 : Colors.black54,
             ),
@@ -382,6 +593,19 @@ class FilmPageState extends State<FilmPage>
           ],
         ),
       ),
+    );
+  }
+
+  /// 卡片形态切换：横向卡片（16:10 图上文下）⇄ 竖向卡片（竖版海报网格）。
+  ///
+  /// 图标显示的是**点下去会变成什么**，配 tooltip 说清方向，一眼能看出作用；
+  /// 当前形态本身在屏幕上就看得见，不需要再用图标重复一遍。
+  Widget _buildViewButton(bool isDark, bool landscape) {
+    return _buildBarIcon(
+      isDark: isDark,
+      icon: landscape ? Icons.grid_view_rounded : Icons.view_agenda_rounded,
+      tooltip: landscape ? '切换为竖向卡片' : '切换为横向卡片',
+      onTap: () => context.read<AppState>().setLandscapeCard(!landscape),
     );
   }
 
@@ -437,6 +661,11 @@ class FilmPageState extends State<FilmPage>
               onRecordCount: _onRecordCount,
               onTapVideo: _openDetail,
               refreshTick: _refreshTicks[c.tid] ?? 0,
+              // 快照来的那一页片单只在「同一个源」上注入一次，
+              // 否则换源后同一个 tid 会把旧站的片子画到新站上
+              initialVideos: _site!.key == _bootSiteKey
+                  ? _bootVideos[c.tid]
+                  : null,
             ),
           )
           .toList(),
@@ -457,6 +686,10 @@ class CategoryTab extends StatefulWidget {
   /// `AutomaticKeepAlive` 里常驻，GlobalKey 还要跟着换源重建、清理，容易出错。
   final int refreshTick;
 
+  /// 冷启动快照自带的第一页片单：有值就**直接当首帧内容**画出来，
+  /// 跳过「先读缓存再显示」那一步异步等待（两者本来就是同一份数据）。
+  final List<Video>? initialVideos;
+
   const CategoryTab({
     super.key,
     required this.site,
@@ -464,6 +697,7 @@ class CategoryTab extends StatefulWidget {
     required this.onRecordCount,
     required this.onTapVideo,
     this.refreshTick = 0,
+    this.initialVideos,
   });
 
   @override
@@ -506,6 +740,10 @@ class CategoryTabState extends State<CategoryTab>
   /// 加载的后续页面，并让「加载更多」接着已加载的最后一页继续往后翻（不重复取页）。
   final Set<int> _loadedPages = <int>{};
 
+  /// 首帧内容是否来自冷启动快照。是的话 [_load] 里跳过读缓存那一步 ——
+  /// 快照本身就是从同一份 [ListCache] 读出来的，再读一遍只会重复劳动。
+  bool _seededFromSnapshot = false;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -514,6 +752,14 @@ class CategoryTabState extends State<CategoryTab>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_onScroll);
+    final boot = widget.initialVideos;
+    if (boot != null && boot.isNotEmpty) {
+      _videos.addAll(boot);
+      _loadedPages.add(1);
+      _seededFromSnapshot = true;
+      // 首帧就要出图，先把这批封面的磁盘缓存排上（命中索引的直接本地读）
+      unawaited(ImagePrefetch.prefetch(boot.map((v) => v.pic).toList()));
+    }
     _load();
   }
 
@@ -566,6 +812,23 @@ class CategoryTabState extends State<CategoryTab>
     if (!mounted) return;
     final siteKey = widget.site.key;
     final tid = widget.videoClass.tid;
+
+    if (_seededFromSnapshot) {
+      // 首帧内容已经由启动快照铺好，直接进 ② 向源站静默刷新：
+      // 再读一遍缓存只是把同一批数据搬一次，白等几个异步往返。
+      _seededFromSnapshot = false;
+      try {
+        await _refresh();
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _loadFailed = _videos.isEmpty;
+          });
+        }
+      }
+      return;
+    }
 
     // ① 本地缓存优先：恢复元信息与「第 1、2 页」（与网络取数顺序一致）
     // ⚠️ 读缓存任何一环出问题都只当「没有缓存」处理，绝不能让异常跳出 _load ——

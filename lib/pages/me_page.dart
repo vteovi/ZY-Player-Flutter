@@ -402,6 +402,15 @@ class MePage extends StatelessWidget {
                 context.read<AppState>().setLandscapeCard(value),
           ),
           SwitchListTile(
+            title: const Text('显示视图切换按钮'),
+            subtitle: const Text(
+                '首页顶栏右侧的「横版 / 竖版卡片」切换按钮；关闭后顶栏更简洁，'
+                '卡片形态仍可用上一项切换'),
+            value: appState.config.showViewToggle,
+            onChanged: (value) =>
+                context.read<AppState>().setShowViewToggle(value),
+          ),
+          SwitchListTile(
             title: const Text('显示实时下载速度'),
             subtitle: const Text('全屏播放时在右上角显示实时网速'),
             value: appState.config.showSpeed,

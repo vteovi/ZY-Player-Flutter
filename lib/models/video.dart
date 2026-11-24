@@ -347,6 +347,11 @@ class AppConfig {
   /// 手机竖屏每行一个，平板大屏自适应多列；关闭为竖向海报（默认）。
   final bool landscapeCard;
 
+  /// 首页顶栏是否显示「视图切换」按钮（横版 / 竖版卡片一键互换）。
+  /// 默认关闭：顶栏只留站点与搜索，界面更干净；关闭时仍可在设置页
+  /// 的「横向卡片模式」里切换卡片形态。
+  final bool showViewToggle;
+
   /// 自定义播放器的可执行文件路径（Windows 专属）。
   /// 设置后，「外部播放」会直接启动该 exe 并带上播放地址，
   /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
@@ -369,6 +374,7 @@ class AppConfig {
     this.playerLongPressRate = 2.0,
     this.themeMode = 'system',
     this.landscapeCard = false,
+    this.showViewToggle = false,
     this.externalPlayerPath = '',
     this.updateUrl = '',
   });
@@ -393,6 +399,8 @@ class AppConfig {
       themeMode: mode == 'light' || mode == 'dark' ? mode : 'system',
       landscapeCard:
           json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
+      showViewToggle:
+          json['showViewToggle'] == true || json['showViewToggle'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
       updateUrl: (json['updateUrl'] ?? '').toString(),
     );
@@ -410,6 +418,7 @@ class AppConfig {
         'playerLongPressRate': playerLongPressRate,
         'themeMode': themeMode,
         'landscapeCard': landscapeCard,
+        'showViewToggle': showViewToggle,
         'externalPlayerPath': externalPlayerPath,
         'updateUrl': updateUrl,
       };
@@ -424,6 +433,7 @@ class AppConfig {
     double? playerLongPressRate,
     String? themeMode,
     bool? landscapeCard,
+    bool? showViewToggle,
     String? externalPlayerPath,
     String? updateUrl,
   }) =>
@@ -439,6 +449,7 @@ class AppConfig {
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
         themeMode: themeMode ?? this.themeMode,
         landscapeCard: landscapeCard ?? this.landscapeCard,
+        showViewToggle: showViewToggle ?? this.showViewToggle,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
         updateUrl: updateUrl ?? this.updateUrl,
       );
