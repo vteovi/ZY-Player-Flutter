@@ -78,6 +78,9 @@ class SiteExport {
         'quickSearch': s.isActive ? 1 : 0,
         'filterable': 1,
         'group': _group(s),
+        // 只在配了的时候写：TVBox 系客户端会忽略不认识的字段，但空串
+        // 铺满整个配置也没必要。
+        if (s.parseApi.trim().isNotEmpty) 'parseApi': s.parseApi,
       });
     }
     return list;
@@ -98,6 +101,7 @@ class SiteExport {
         'isActive': s.isActive,
         'status': s.status,
         'download': s.download,
+        if (s.parseApi.trim().isNotEmpty) 'parseApi': s.parseApi,
       });
     }
     return list;

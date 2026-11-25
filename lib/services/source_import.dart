@@ -245,6 +245,11 @@ class SourceImport {
       name: name.isNotEmpty ? name : key,
       api: api,
       type: type,
+      // 少数配置会顺带写上播放解析接口（各家叫法不一），有就一并带进来
+      parseApi: _str(raw['parseApi']) ??
+          _str(raw['parse_url']) ??
+          _str(raw['parseUrl']) ??
+          '',
       download: _str(raw['download']) ?? '',
       group: group,
       isActive: isActive,

@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/http_service.dart';
+import '../services/parse_service.dart';
 import '../services/system_control.dart';
 import '../services/video_network_stats.dart';
 import '../services/zy_database.dart';
@@ -260,8 +261,25 @@ class _PlayPageState extends State<PlayPage> {
   List<PlayItem> _playList = <PlayItem>[];
   String _title = '';
 
-  /// 当前正在播放的地址（切集后会变化，用于写入历史）
+  /// 当前正在播放的地址（切集后会变化，用于写入历史）。
+  ///
+  /// 这里存的一直是**源站给的原始地址**，不是解析后的一次性地址 ——
+  /// 历史记录、选集匹配都靠它，存解析结果会导致下次从历史进来又拿旧链接。
   String _currentUrl = '';
+
+  /// 真正交给播放器的地址。配了「播放解析接口」且当前集不是直链时，
+  /// 它是过完解析接口换出来的 m3u8 / mp4；其余情况与 [_currentUrl] 相同。
+  String _playUrl = '';
+
+  /// 这一集的源站地址已配了解析接口，正在取播放地址
+  bool _resolving = false;
+
+  /// 最近一次失败是「解析接口没能给出地址」，不是视频本身播不了。
+  /// 错误页据此换文案，并给出「跳过解析直接播放」的出口。
+  bool _parseFailed = false;
+
+  /// 本源的播放解析接口（空串 = 不需要解析），进页面时读一次
+  late final String _parseApi;
 
   /// 当前是否已通知系统保持常亮，避免重复调用 setKeepScreenOn
   bool _awake = false;
@@ -284,12 +302,20 @@ class _PlayPageState extends State<PlayPage> {
 
     _title = widget.title;
     _currentUrl = widget.url;
+    _playUrl = widget.url;
+    _parseApi = context.read<AppState>().siteOf(widget.siteKey)?.parseApi ?? '';
     _controller = VideoPlayerController.networkUrl(
       Uri.parse(widget.url),
       httpHeaders: _kPlayerHeaders,
     );
     _controller.addListener(_onControllerUpdate);
-    _initPlayer(seekTo: widget.initialTime);
+    // 需要解析时不能先 initialize：那个地址是网页，必然失败。走 _attach
+    // 先换出直链再建控制器；不需要解析的常规路径保持同步，不多绕一次 await。
+    if (ParseService.shouldParse(widget.url, _parseApi)) {
+      _attach(widget.url, seekTo: widget.initialTime);
+    } else {
+      _initPlayer(seekTo: widget.initialTime);
+    }
     _loadDetail();
     _loadSystemLevels();
     _pipChannel.setMethodCallHandler(_onPipCall);
@@ -323,6 +349,79 @@ class _PlayPageState extends State<PlayPage> {
     SystemChrome.setPreferredOrientations([]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  /// 换一个播放地址：需要解析时先过解析接口，再重建控制器并初始化。
+  ///
+  /// 把「解析 → 建控制器 → initialize」这三步收在一处，首播与切集共用同一条
+  /// 路径，免得切集漏了解析、变成「第一集能播、后面几集全黑」。
+  Future<void> _attach(String rawUrl, {double seekTo = 0}) async {
+    var target = rawUrl;
+    if (ParseService.shouldParse(rawUrl, _parseApi)) {
+      setState(() => _resolving = true);
+      try {
+        target = await ParseService.instance.resolve(
+          parseApi: _parseApi,
+          rawUrl: rawUrl,
+        );
+      } catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _resolving = false;
+          _hasError = true;
+          _parseFailed = true;
+          _lastError = e is ParseException ? e.reason : '$e';
+        });
+        return;
+      }
+      if (!mounted) return;
+      setState(() => _resolving = false);
+    }
+
+    _playUrl = target;
+    _controller.removeListener(_onControllerUpdate);
+    await _controller.dispose();
+    if (!mounted) return;
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(target),
+      httpHeaders: _kPlayerHeaders,
+    );
+    _controller.addListener(_onControllerUpdate);
+    await _initPlayer(seekTo: seekTo);
+  }
+
+  /// 解析失败后的兜底：不管解析接口，把源站给的地址直接交给播放器。
+  ///
+  /// 少数源其实两种地址混着给（点进去才发现这一集本来就是 m3u8），
+  /// 有这条出口就不至于被一个配错的解析接口彻底卡死。
+  Future<void> _playWithoutParse() async {
+    setState(() {
+      _hasError = false;
+      _parseFailed = false;
+      _initialized = false;
+      _lastError = null;
+    });
+    _playUrl = _currentUrl;
+    _controller.removeListener(_onControllerUpdate);
+    await _controller.dispose();
+    if (!mounted) return;
+    _controller = VideoPlayerController.networkUrl(
+      Uri.parse(_currentUrl),
+      httpHeaders: _kPlayerHeaders,
+    );
+    _controller.addListener(_onControllerUpdate);
+    await _initPlayer();
+  }
+
+  /// 解析失败后重来一次（接口偶发抽风时不用退出重进）
+  Future<void> _retryParse() async {
+    setState(() {
+      _hasError = false;
+      _parseFailed = false;
+      _initialized = false;
+      _lastError = null;
+    });
+    await _attach(_currentUrl);
   }
 
   Future<void> _initPlayer({double seekTo = 0}) async {
@@ -708,6 +807,9 @@ class _PlayPageState extends State<PlayPage> {
     setState(() {
       _initialized = false;
       _hasError = false;
+      _parseFailed = false;
+      _resolving = false;
+      _lastError = null;
       _title = item.label;
       _currentUrl = item.value;
       // 新控制器默认速度 1.0，长按加速标记复位，避免卡在加速态
@@ -719,22 +821,18 @@ class _PlayPageState extends State<PlayPage> {
       _pointers.clear();
     });
     await _controller.pause();
-    _controller.removeListener(_onControllerUpdate);
-    await _controller.dispose();
-    if (!mounted) return;
-    _controller = VideoPlayerController.networkUrl(
-      Uri.parse(item.value),
-      httpHeaders: _kPlayerHeaders,
-    );
-    _controller.addListener(_onControllerUpdate);
-    await _initPlayer();
+    // 逐集过解析接口：同一个源里各集的地址形态可能不一样（直链 / 网页混排）
+    await _attach(item.value);
     await _updateHistory();
   }
 
   /// 内置播放失败时的一键兜底：把当前地址交给外部播放器（与外部播放入口同一逻辑）。
+  ///
+  /// 优先给**解析后**的地址：解析成功却播放失败时，外部播放器拿直链还有救；
+  /// 拿原始网页地址出去则必然放不了。
   Future<void> _openExternalFromError() async {
     final status = await SystemControl.openWithExternalPlayer(
-      url: _currentUrl,
+      url: _playUrl.isNotEmpty ? _playUrl : _currentUrl,
       title: _title.isNotEmpty ? _title : (_detail?.name ?? ''),
       customPath: context.read<AppState>().config.externalPlayerPath,
     );
@@ -2367,8 +2465,11 @@ class _PlayPageState extends State<PlayPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('播放失败，请更换视频源或线路',
-                    style: TextStyle(color: Colors.white70)),
+                Text(
+                  _parseFailed ? '解析接口没能取到播放地址' : '播放失败，请更换视频源或线路',
+                  style: const TextStyle(color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
                 if (_lastError != null) ...[
                   const SizedBox(height: 12),
                   Text(_lastError!,
@@ -2378,13 +2479,54 @@ class _PlayPageState extends State<PlayPage> {
                       overflow: TextOverflow.ellipsis),
                 ],
                 const SizedBox(height: 16),
-                ElevatedButton.icon(
-                  onPressed: _openExternalFromError,
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('用外部播放器打开'),
-                ),
+                if (_parseFailed)
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _retryParse,
+                        icon: const Icon(Icons.refresh, size: 18),
+                        label: const Text('重试'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: _playWithoutParse,
+                        icon: const Icon(Icons.link_off, size: 18),
+                        label: const Text('跳过解析直接播放'),
+                      ),
+                    ],
+                  )
+                else
+                  ElevatedButton.icon(
+                    onPressed: _openExternalFromError,
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('用外部播放器打开'),
+                  ),
               ],
             ),
+          ),
+        ),
+      );
+    }
+    if (_resolving) {
+      return const ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(height: 14),
+              Text(
+                '正在通过解析接口取播放地址…',
+                style: TextStyle(color: Colors.white70, fontSize: 12.5),
+              ),
+            ],
           ),
         ),
       );

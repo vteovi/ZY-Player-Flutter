@@ -28,6 +28,7 @@ class _SiteEditPageState extends State<SiteEditPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _apiController;
   late final TextEditingController _nameController;
+  late final TextEditingController _parseController;
 
   late bool _enabled;
   bool _testing = false;
@@ -42,6 +43,7 @@ class _SiteEditPageState extends State<SiteEditPage> {
     super.initState();
     _apiController = TextEditingController(text: widget.site?.api ?? '');
     _nameController = TextEditingController(text: widget.site?.name ?? '');
+    _parseController = TextEditingController(text: widget.site?.parseApi ?? '');
     _enabled = widget.site?.isActive ?? true;
   }
 
@@ -49,6 +51,7 @@ class _SiteEditPageState extends State<SiteEditPage> {
   void dispose() {
     _apiController.dispose();
     _nameController.dispose();
+    _parseController.dispose();
     super.dispose();
   }
 
@@ -64,11 +67,20 @@ class _SiteEditPageState extends State<SiteEditPage> {
   String? _validateApi(String? value) {
     final raw = (value ?? '').trim();
     if (raw.isEmpty) return '请填写采集接口地址';
+    return _validateUrl(raw, '地址不完整，需要形如 https://域名/api.php/provide/vod/');
+  }
+
+  /// 解析接口是选填项：留空 = 这个源不需要解析，不能拦保存。
+  String? _validateParse(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+    return _validateUrl(raw, '地址不完整，需要形如 https://解析站/?url=');
+  }
+
+  String? _validateUrl(String raw, String incompleteHint) {
     final url = normalizeConfigUrl(raw);
     final uri = Uri.tryParse(url);
-    if (uri == null || uri.host.isEmpty) {
-      return '地址不完整，需要形如 https://域名/api.php/provide/vod/';
-    }
+    if (uri == null || uri.host.isEmpty) return incompleteHint;
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       return '只支持 http / https 地址';
     }
@@ -151,6 +163,7 @@ class _SiteEditPageState extends State<SiteEditPage> {
       api: api,
       // 手动添加没有 type 字段可填，按地址猜；编辑时保留原值
       type: initial?.type ?? SourceImport.inferType(api),
+      parseApi: normalizeConfigUrl(_parseController.text),
       download: initial?.download ?? '',
       group: initial?.group ?? '手动',
       isActive: _enabled,
@@ -161,11 +174,7 @@ class _SiteEditPageState extends State<SiteEditPage> {
     final added = await state.saveSite(site);
     if (!mounted) return;
     setState(() => _saving = false);
-    showToast(
-      context,
-      added ? '已添加「$name」' : '已更新「$name」',
-      success: true,
-    );
+    showToast(context, added ? '已添加「$name」' : '已更新「$name」', success: true);
     Navigator.of(context).pop(true);
   }
 
@@ -239,6 +248,24 @@ class _SiteEditPageState extends State<SiteEditPage> {
                   validator: _validateApi,
                 ),
                 const SizedBox(height: 14),
+                // 与上面同一个理由：**不要改成 TextInputType.url**，否则会被
+                // 国产输入法判成敏感输入、切到安全键盘。
+                TextFormField(
+                  controller: _parseController,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: '解析接口（可选）',
+                    hintText: 'https://jx.example.com/?url=',
+                    helperText:
+                        '有的源给的播放地址是网页，要过解析接口才换出直链；'
+                        '直链（m3u8/mp4）会自动跳过。不需要就留空。',
+                    helperMaxLines: 3,
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: _validateParse,
+                ),
+                const SizedBox(height: 14),
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(
@@ -271,8 +298,9 @@ class _SiteEditPageState extends State<SiteEditPage> {
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.wifi_tethering, size: 18),
                         label: Text(_testing ? '正在测试…' : '测试连接'),
