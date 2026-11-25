@@ -26,6 +26,31 @@ class _Hit {
   const _Hit({required this.siteKey, this.siteName, required this.video});
 }
 
+/// 一个源的分页进度：滑到底时据此决定还能不能拉下一页。
+///
+/// maccms 的搜索接口每页固定 20 条（站点默认值），只请求第一页就是
+/// 「每个源最多 20 条」的原因，所以要一页页往下续。
+class _SourcePaging {
+  /// 已经加载到第几页（1 = 只加载了第一页）
+  int loadedPage = 1;
+
+  /// 站点声明的每页条数
+  int pageSize;
+
+  /// 站点声明的总页数，0 = 未知
+  int pagecount;
+
+  /// 正在请求下一页（同一源不重复发请求）
+  bool loading = false;
+
+  /// 已经确认没有更多了
+  bool exhausted = false;
+
+  _SourcePaging({required this.pageSize, required this.pagecount});
+
+  bool get canLoadMore => !loading && !exhausted;
+}
+
 /// 搜索页：顶部输入框 + 搜索范围切换 + 搜索历史 + 结果网格。
 ///
 /// - 全部站点 / 当前站点：走网络聚合搜索（分批并发），结果带来源角标。
@@ -72,6 +97,20 @@ class _SearchPageState extends State<SearchPage> {
   int _total = 0;
   final List<_Hit> _results = <_Hit>[];
   List<String> _history = <String>[];
+
+  /// 当前搜索词。加载下一页时要用它，不能现读输入框 ——
+  /// 用户搜完可能又改了输入框但没提交。
+  String _keyword = '';
+
+  /// 各来源的分页进度，key = siteKey。
+  final Map<String, _SourcePaging> _paging = <String, _SourcePaging>{};
+
+  /// 「全部」页滑到底时轮流给各源加载下一页，这个游标记住轮到谁。
+  int _allCursor = 0;
+
+  /// 单个源最多自动加载到第几页（每页 20 条，约 400 条封顶）。
+  /// 站点若忽视页码参数会被「整页重复」判到底，这里是第二道保险。
+  static const int _maxPagePerSource = 20;
 
   /// 同时在跑的搜索请求上限。每个源各自独立跑，谁先回来就先展示谁，
   /// 这里只限制总并发，避免 20 多个源一起把网络打满。
@@ -140,6 +179,7 @@ class _SearchPageState extends State<SearchPage> {
 
     final gen = ++_searchGen;
     final scope = _scope;
+    _keyword = kw;
 
     // ---- 收藏 / 历史：本地记录过滤，不走网络 ----
     if (scope == _SearchScope.favorites || scope == _SearchScope.history) {
@@ -177,6 +217,8 @@ class _SearchPageState extends State<SearchPage> {
         _done = 0;
         _total = 0;
         _filterKey = null;
+        // 本地记录过滤没有「下一页」，分页进度一并清掉，免得残留上一轮的状态
+        _paging.clear();
         _results
           ..clear()
           ..addAll(hits);
@@ -197,6 +239,9 @@ class _SearchPageState extends State<SearchPage> {
         _total = sites.length;
         // 新关键词：旧结果立刻清掉，下面来一个源显示一个源
         _results.clear();
+        // 每个源的分页进度也归零，否则新关键词会沿上一轮的页码继续翻
+        _paging.clear();
+        _allCursor = 0;
         // 上一轮的来源筛选也一并复位：新结果的来源集合和上一轮对不上，
         // 停在某个源上会「空白一页」。
         _filterKey = null;
@@ -220,9 +265,11 @@ class _SearchPageState extends State<SearchPage> {
         if (index >= sites.length) return;
         final site = sites[index];
         final hits = <_Hit>[];
+        SearchPageResult? res;
         try {
-          final list = await HttpService.instance.search(site, kw);
-          for (final v in list) {
+          // 只拿第一页（maccms 默认 20 条），后面的页由用户滑到底时按需加载
+          res = await HttpService.instance.searchPaged(site, kw);
+          for (final v in res.videos) {
             hits.add(_Hit(siteKey: site.key, siteName: site.name, video: v));
           }
         } catch (_) {
@@ -230,8 +277,15 @@ class _SearchPageState extends State<SearchPage> {
         }
         // 换了关键词或退出页面了，这个源的结果直接丢掉
         if (!mounted || gen != _searchGen) return;
+        final result = res;
         setState(() {
-          if (hits.isNotEmpty) _results.addAll(hits);
+          if (hits.isNotEmpty) {
+            _appendSourceHits(site.key, hits);
+            _paging[site.key] = _SourcePaging(
+              pageSize: result?.pageSize ?? 20,
+              pagecount: result?.pagecount ?? 0,
+            )..exhausted = !(result?.hasMore ?? false);
+          }
           _done++;
         });
       }
@@ -245,6 +299,103 @@ class _SearchPageState extends State<SearchPage> {
     );
     if (mounted && gen == _searchGen) {
       setState(() => _loading = false);
+    }
+  }
+
+  /// 把某个源的这批结果插到**该源已有结果的末尾**，而不是整个列表末尾。
+  ///
+  /// 首次搜索时每个源只有一批，插哪儿都一样；但加载第二页时若直接 addAll，
+  /// 「全部」页里同一个源会被拆成前后两段，滑起来很乱。
+  void _appendSourceHits(String siteKey, List<_Hit> hits) {
+    if (hits.isEmpty) return;
+    var at = _results.length;
+    for (var i = _results.length - 1; i >= 0; i--) {
+      if (_results[i].siteKey == siteKey) {
+        at = i + 1;
+        break;
+      }
+    }
+    _results.insertAll(at, hits);
+  }
+
+  /// 按 key 找源。结果里可能还留着刚被停用/删除的源，所以先查启用列表再查全集。
+  Site? _siteOf(String key) {
+    final app = Provider.of<AppState>(context, listen: false);
+    for (final s in app.activeSites) {
+      if (s.key == key) return s;
+    }
+    for (final s in app.sites) {
+      if (s.key == key) return s;
+    }
+    return null;
+  }
+
+  /// 给某个源加载下一页并追加到结果里。
+  Future<void> _loadMore(String siteKey) async {
+    final state = _paging[siteKey];
+    if (state == null || !state.canLoadMore) return;
+    if (state.loadedPage >= _maxPagePerSource) {
+      setState(() => state.exhausted = true);
+      return;
+    }
+    final site = _siteOf(siteKey);
+    if (site == null) return;
+    final gen = _searchGen;
+    setState(() => state.loading = true);
+
+    SearchPageResult? res;
+    try {
+      res = await HttpService.instance.searchPaged(
+        site,
+        _keyword,
+        pg: state.loadedPage + 1,
+      );
+    } catch (_) {
+      res = null;
+    }
+    if (!mounted || gen != _searchGen) return;
+    setState(() {
+      state.loading = false;
+      // 请求失败不标记到底：用户下次滑到底还会再试一次
+      if (res == null) return;
+      // 去重：有些站对 pg 视而不见，第二页还是第一页的内容
+      final known = <String>{};
+      for (final h in _results) {
+        if (h.siteKey == siteKey) known.add(h.video.id);
+      }
+      final fresh = <_Hit>[];
+      for (final v in res.videos) {
+        if (known.add(v.id)) {
+          fresh.add(_Hit(siteKey: siteKey, siteName: site.name, video: v));
+        }
+      }
+      if (fresh.isEmpty) {
+        // 整页都是已有的 → 这个站翻不动了，别再请求
+        state.exhausted = true;
+        return;
+      }
+      _appendSourceHits(siteKey, fresh);
+      state.loadedPage++;
+      state.pageSize = res.pageSize;
+      state.pagecount = res.pagecount;
+      if (!res.hasMore) state.exhausted = true;
+    });
+  }
+
+  /// 「全部」页滑到底：按来源顺序轮流给一个还有下一页的源加载。
+  ///
+  /// 一次只拉一个源。二十多个源同时翻页会把网络打满，而用户此刻只是
+  /// 想再多看一点，不需要每个源都补齐。
+  Future<void> _loadMoreForAll() async {
+    final order = _sourceOrder;
+    if (order.isEmpty) return;
+    for (var step = 0; step < order.length; step++) {
+      final i = (_allCursor + step) % order.length;
+      final state = _paging[order[i]];
+      if (state == null || !state.canLoadMore) continue;
+      _allCursor = (i + 1) % order.length;
+      await _loadMore(order[i]);
+      return;
     }
   }
 
@@ -624,6 +775,14 @@ class _SearchPageState extends State<SearchPage> {
         final visible = key == null
             ? _results
             : _results.where((h) => h.siteKey == key).toList(growable: false);
+        // 「全部」页只要还有任意一个源能续页就有下一页；单源页只看自己。
+        // 收藏 / 历史是本地过滤出来的，没有下一页（_paging 为空）。
+        final canMore = key == null
+            ? _paging.values.any((s) => s.canLoadMore)
+            : (_paging[key]?.canLoadMore ?? false);
+        final loadingMore = key == null
+            ? _paging.values.any((s) => s.loading)
+            : (_paging[key]?.loading ?? false);
         return _SourceResultGrid(
           // key 里带上搜索代次：同一个来源在新一轮搜索里也要是全新的一页。
           // 只带来源的话 State（连同 ScrollController）会被复用，换关键词后
@@ -633,6 +792,9 @@ class _SearchPageState extends State<SearchPage> {
           // 单源页里每张卡都标同一个来源是重复信息，只在「全部」页标
           labelOf: key == null ? _siteNameOfVideo : null,
           onTap: _openDetail,
+          loadingMore: loadingMore,
+          canLoadMore: canMore,
+          onLoadMore: key == null ? _loadMoreForAll : () => _loadMore(key),
         );
       },
     );
@@ -699,11 +861,23 @@ class _SourceResultGrid extends StatefulWidget {
     required this.videos,
     required this.onTap,
     this.labelOf,
+    this.loadingMore = false,
+    this.canLoadMore = false,
+    this.onLoadMore,
   });
 
   final List<Video> videos;
   final String? Function(Video)? labelOf;
   final void Function(Video) onTap;
+
+  /// 正在请求下一页（列表末尾显示转圈）
+  final bool loadingMore;
+
+  /// 还有下一页可拉
+  final bool canLoadMore;
+
+  /// 滑到接近底部时回调，由外层去发请求
+  final VoidCallback? onLoadMore;
 
   @override
   State<_SourceResultGrid> createState() => _SourceResultGridState();
@@ -717,9 +891,31 @@ class _SourceResultGridState extends State<_SourceResultGrid>
   bool get wantKeepAlive => true;
 
   @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_maybeLoadMore);
+  }
+
+  @override
   void dispose() {
+    _scroll.removeListener(_maybeLoadMore);
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// 离底部还有约两屏就开始拉下一页，滑到底时内容已经接上了。
+  ///
+  /// 只靠滚动事件触发，**不做「不满一屏就自动续拉」**：万一某个站对页码
+  /// 视而不见，「全部」页会一路把二十多个源全翻一遍，几百个请求直接打满网络。
+  void _maybeLoadMore() {
+    if (!widget.canLoadMore || widget.loadingMore) return;
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    if (pos.axis != Axis.vertical) return;
+    if (pos.maxScrollExtent <= 0) return;
+    if (pos.pixels >= pos.maxScrollExtent - 600) {
+      widget.onLoadMore?.call();
+    }
   }
 
   @override
@@ -729,6 +925,7 @@ class _SourceResultGridState extends State<_SourceResultGrid>
       context: context,
       videos: widget.videos,
       scrollController: _scroll,
+      loadingMore: widget.loadingMore,
       labelOf: widget.labelOf,
       onTap: widget.onTap,
     );
