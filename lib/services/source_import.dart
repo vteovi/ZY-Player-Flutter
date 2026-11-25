@@ -222,7 +222,7 @@ class SourceImport {
 
     // type 能识别就用它；类型标成 spider 但 api 是真实地址时，按地址推断
     // （maccms 的 xml 接口路径通常带 `at/xml`，其余当 json）。
-    final type = _mapType(raw['type']) ?? _inferType(api);
+    final type = _mapType(raw['type']) ?? inferType(api);
 
     var key = _str(raw['key']) ?? '';
     final name = _str(raw['name']) ?? '';
@@ -350,8 +350,10 @@ class SourceImport {
     return v.startsWith('http://') || v.startsWith('https://');
   }
 
-  /// 类型字段不可用时，按接口地址猜：maccms 的 xml 接口路径通常带 `at/xml`。
-  static String _inferType(String api) {
+  /// 按接口地址猜返回类型：maccms 的 xml 接口路径通常带 `at/xml`。
+  ///
+  /// 手动添加源时也会调用（那边没有 type 字段可填），所以是公开方法。
+  static String inferType(String api) {
     final lower = api.toLowerCase();
     if (lower.contains('at/xml') || lower.contains('/xml')) return 'xml';
     return 'json';

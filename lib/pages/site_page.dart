@@ -15,6 +15,7 @@ import '../utils/file_pick.dart';
 import '../utils/site_dup.dart';
 import '../utils/toast.dart';
 import 'duplicate_page.dart';
+import 'site_edit_page.dart';
 
 /// 视频源管理：导入源、可用性检测、启用/停用、清除死站、置顶
 class SitePage extends StatefulWidget {
@@ -651,6 +652,9 @@ class _SitePageState extends State<SitePage> {
             constraints: const BoxConstraints(minWidth: 236, maxWidth: 300),
             onSelected: (value) {
               switch (value) {
+                case 'addManual':
+                  _openSiteEditor();
+                  break;
                 case 'importFile':
                   _importFromFile();
                   break;
@@ -663,6 +667,13 @@ class _SitePageState extends State<SitePage> {
               }
             },
             itemBuilder: (ctx) => <PopupMenuEntry<String>>[
+              _menuItem(
+                ctx,
+                value: 'addManual',
+                icon: Icons.add_link,
+                title: '手动添加接口',
+                subtitle: '自己填接口地址和名称，适合单个 CMS 采集站',
+              ),
               _menuItem(
                 ctx,
                 value: 'importFile',
@@ -1010,6 +1021,127 @@ class _SitePageState extends State<SitePage> {
     showToast(context, '已复制接口地址');
   }
 
+  /// 打开「添加 / 编辑采集接口」表单；传 [site] 表示编辑。
+  ///
+  /// 编辑后接口地址可能变了，把这条源的检测结论丢掉 —— 旧结论对应的
+  /// 已经不是现在这个地址了。
+  Future<void> _openSiteEditor([Site? site]) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SiteEditPage(site: site)),
+    );
+    if (!mounted || site == null) return;
+    setState(() => _results.remove(site.key));
+  }
+
+  /// 长按卡片弹出的操作：编辑 / 复制地址 / 删除。
+  ///
+  /// 以前长按只复制地址，编辑与单条删除都没有入口（删除只能「清空所有源」
+  /// 或「清除死站」），改名称更是无路可走 —— 现在都收进这个菜单。
+  Future<void> _showSiteActions(Site site) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+    final danger = isDark ? AppColors.failDark : AppColors.failLight;
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    site.name.isEmpty ? '未命名' : site.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    site.api,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11.5, color: sub),
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('编辑名称与接口'),
+              onTap: () => Navigator.of(ctx).pop('edit'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy_all_outlined),
+              title: const Text('复制接口地址'),
+              onTap: () => Navigator.of(ctx).pop('copy'),
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: danger),
+              title: Text('删除这个源', style: TextStyle(color: danger)),
+              onTap: () => Navigator.of(ctx).pop('delete'),
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'edit':
+        await _openSiteEditor(site);
+        break;
+      case 'copy':
+        await _copyApi(site);
+        break;
+      case 'delete':
+        await _deleteOne(site);
+        break;
+    }
+  }
+
+  /// 删除单个源。收藏与播放记录**不跟着删** —— 它们按 key 关联，
+  /// 用户以后重新加回同一个域名时还能接上。
+  Future<void> _deleteOne(Site site) async {
+    final name = site.name.isEmpty ? '未命名' : site.name;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除这个源'),
+        content: Text('确定删除「$name」吗？\n收藏和播放记录会保留，重新加回同一域名还能接上。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final removed = await context.read<AppState>().removeSites([site]);
+    if (!mounted) return;
+    setState(() {
+      _results.remove(site.key);
+      _busy.remove(site.key);
+    });
+    showToast(
+      context,
+      removed > 0 ? '已删除「$name」' : '删除失败',
+      success: removed > 0,
+    );
+  }
+
   Widget _buildItem(Site site, int index, AppState state) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final result = _results[site.key];
@@ -1017,10 +1149,11 @@ class _SitePageState extends State<SitePage> {
     final accent = _healthColor(result, isDark);
     final subText = isDark ? AppColors.darkSubText : AppColors.lightSubText;
 
-    // 长按整张卡片复制接口地址。包在外层而不是用 InkWell，是为了不动卡片内部
-    // 的开关和两个图标按钮 —— 它们的手势优先级更高于外层，点击不受影响。
+    // 长按整张卡片弹出操作菜单（编辑 / 复制地址 / 删除）。包在外层而不是用
+    // InkWell，是为了不动卡片内部的开关和两个图标按钮 —— 它们的手势优先级
+    // 更高于外层，点击不受影响。
     return GestureDetector(
-      onLongPress: () => _copyApi(site),
+      onLongPress: () => _showSiteActions(site),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
@@ -1218,7 +1351,7 @@ class _EmptySites extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '点上方「导入视频源」填地址，\n或点右上角菜单导入配置文件',
+            '点上方「导入视频源」填地址，\n或点右上角菜单手动添加接口 / 导入配置文件',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,

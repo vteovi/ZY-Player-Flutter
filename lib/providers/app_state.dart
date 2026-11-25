@@ -267,6 +267,21 @@ class AppState extends ChangeNotifier {
   // 配置
   // --------------------------------------------------------------------------
 
+  /// 保存单个源（手动添加 / 编辑接口用），key 相同则覆盖。
+  ///
+  /// 返回 true 表示这是**新增**，false 表示更新了已有条目 —— 界面据此提示
+  /// 「已添加」还是「已更新」。
+  ///
+  /// 走 `put`（upsert）而不是 remove + add：key 是收藏与播放记录的关联标识，
+  /// 中间态一旦被别的写操作撞上就会丢记录。
+  Future<bool> saveSite(Site site) async {
+    final existed =
+        await ZyDatabase.instance.containsKey(DbNames.site, site.key);
+    await ZyDatabase.instance.put(DbNames.site, site.toJson());
+    await loadSites();
+    return !existed;
+  }
+
   Future<void> loadSetting() async {
     final data = await ZyDatabase.instance.get(DbNames.setting, 'config');
     _config = data == null ? const AppConfig() : AppConfig.fromJson(data);
