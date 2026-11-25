@@ -81,6 +81,43 @@ class PageInfo {
   });
 }
 
+/// 一页搜索结果：片单 + 站点给的分页信息。
+///
+/// ⚠️ maccms 的搜索接口**默认每页只回 20 条**，不传 `pg` 就永远只拿第一页 ——
+/// 这正是「每个源最多只能搜到 20 条」的原因。想拿更多只能自己带页码翻页。
+class SearchPageResult {
+  final List<Video> videos;
+
+  /// 本次请求的页码（从 1 开始）
+  final int page;
+
+  /// 站点声明的每页条数。站点没给时按 maccms 的默认 20 算。
+  final int pageSize;
+
+  /// 站点声明的总页数；0 表示站点没给（未知）。
+  final int pagecount;
+
+  const SearchPageResult({
+    required this.videos,
+    required this.page,
+    this.pageSize = 20,
+    this.pagecount = 0,
+  });
+
+  /// 是否可能还有下一页。
+  ///
+  /// 三个条件缺一不可：
+  /// 1. 这一页还有数据；
+  /// 2. 没有越过站点声明的总页数（站点给了的话）；
+  /// 3. 这一页是**满页**。有些站对 `pg` 视而不见、永远回第一页，只信
+  ///    pagecount 会一直翻下去，所以「不满一页就到底」是必须的兜底。
+  bool get hasMore {
+    if (videos.isEmpty) return false;
+    if (pagecount > 1 && page >= pagecount) return false;
+    return videos.length >= (pageSize > 0 ? pageSize : 20);
+  }
+}
+
 /// 接口响应解析结果：JSON 与 XML 二选一。
 ///
 /// 由 [HttpService._parse] 按**响应内容**判定，不依赖源清单里的 `type` 字段。
@@ -210,7 +247,9 @@ class HttpService {
     var worthRetry = false;
     try {
       final res = await _client.get(uri, headers: _headers).timeout(limit);
-      if (res.statusCode >= 200 && res.statusCode < 300 && res.body.isNotEmpty) {
+      if (res.statusCode >= 200 &&
+          res.statusCode < 300 &&
+          res.body.isNotEmpty) {
         return _decode(res);
       }
       reason = _httpReason(res.statusCode);
@@ -262,13 +301,15 @@ class HttpService {
     String userAgent,
     Duration limit,
   ) async {
-    final res = await _client.get(
-      Uri.parse(url),
-      headers: <String, String>{
-        'User-Agent': userAgent,
-        'Accept': _configAccept,
-      },
-    ).timeout(limit);
+    final res = await _client
+        .get(
+          Uri.parse(url),
+          headers: <String, String>{
+            'User-Agent': userAgent,
+            'Accept': _configAccept,
+          },
+        )
+        .timeout(limit);
     if (res.statusCode >= 200 && res.statusCode < 300 && res.body.isNotEmpty) {
       return _decode(res);
     }
@@ -381,8 +422,10 @@ class HttpService {
   /// 不会更差）。要真支持得引入 `charset_converter` 之类的依赖。
   static String _decode(http.Response res) {
     final contentType = res.headers['content-type'] ?? '';
-    final match =
-        RegExp(r'charset=([\w-]+)', caseSensitive: false).firstMatch(contentType);
+    final match = RegExp(
+      r'charset=([\w-]+)',
+      caseSensitive: false,
+    ).firstMatch(contentType);
     final charset = match?.group(1)?.toLowerCase();
     if (charset != null && charset != 'utf-8' && charset != 'utf8') {
       final codec = Encoding.getByName(charset);
@@ -517,9 +560,9 @@ class HttpService {
     final groups = (v['vod_play_url'] ?? '').toString().split('\$\$\$');
     final nonEmpty = groups.where((x) => x.isNotEmpty).toList();
     final group = nonEmpty.firstWhere(
-          (x) => x.toLowerCase().contains('m3u8'),
-          orElse: () => nonEmpty.isNotEmpty ? nonEmpty.first : '',
-        );
+      (x) => x.toLowerCase().contains('m3u8'),
+      orElse: () => nonEmpty.isNotEmpty ? nonEmpty.first : '',
+    );
     if (group.isEmpty) return <String>[];
     return group.split('#').where((x) => x.isNotEmpty).toList();
   }
@@ -564,7 +607,10 @@ class HttpService {
   /// 先带 `?ac=list` 请求（maccms 的 json 接口只在这里带出分类），
   /// 拿不到再试裸接口（部分 xml 站在裸地址才输出 `<class>`）。
   Future<List<VideoClass>> fetchClasses(Site site) async {
-    for (final url in <String>[_apiUrl(site, {'ac': 'list'}), site.api]) {
+    for (final url in <String>[
+      _apiUrl(site, {'ac': 'list'}),
+      site.api,
+    ]) {
       final _Payload payload;
       try {
         payload = await _load(url);
@@ -610,10 +656,9 @@ class HttpService {
     final cls = _firstElement(doc, 'class');
     if (cls == null) return list;
     for (final ty in cls.findElements('ty')) {
-      list.add(VideoClass(
-        tid: ty.getAttribute('id') ?? '',
-        name: ty.innerText.trim(),
-      ));
+      list.add(
+        VideoClass(tid: ty.getAttribute('id') ?? '', name: ty.innerText.trim()),
+      );
     }
     return list;
   }
@@ -665,9 +710,7 @@ class HttpService {
     final extra = (await Future.wait(<Future<VideoClass?>>[
       for (var i = 1; i <= _classProbeExtra; i++)
         _probeClass(site, '${maxTid + i}'),
-    ]))
-        .whereType<VideoClass>()
-        .toList();
+    ])).whereType<VideoClass>().toList();
     if (extra.isEmpty) return base;
     final out = <VideoClass>[...base, ...extra]
       ..sort((a, b) {
@@ -727,8 +770,10 @@ class HttpService {
 
     final _Payload payload;
     try {
-      payload =
-          await _load(_apiUrl(site, {'ac': 'list'}), timeout: _checkTimeout);
+      payload = await _load(
+        _apiUrl(site, {'ac': 'list'}),
+        timeout: _checkTimeout,
+      );
     } catch (e) {
       sw.stop();
       // 连接层就失败，换裸地址也是同样的错，不必再等一次超时
@@ -802,11 +847,14 @@ class HttpService {
   /// 这种地址解析失败，只会显示成破图标。
   static List<Video> _videosFrom(_Payload payload, Site site) {
     final fromJson = _videosFromJson(payload.json);
-    final list = fromJson.isNotEmpty ? fromJson : _videosFromXml(payload.xmlDoc);
+    final list = fromJson.isNotEmpty
+        ? fromJson
+        : _videosFromXml(payload.xmlDoc);
     if (list.isEmpty) return list;
     return list
-        .map((v) =>
-            v.pic.isEmpty ? v : v.copyWith(pic: _absolutePic(v.pic, site)))
+        .map(
+          (v) => v.pic.isEmpty ? v : v.copyWith(pic: _absolutePic(v.pic, site)),
+        )
         .toList();
   }
 
@@ -832,9 +880,12 @@ class HttpService {
     // 省了协议：img.host.com/upload/a.jpg（首段像域名才补，避免把
     // `upload/a.jpg` 这种相对路径误拼成 http://upload/...）
     final firstSeg = p.split('/').first;
-    final looksLikeHost = firstSeg.contains('.') &&
-        !RegExp(r'\.(?:jpe?g|png|gif|webp|bmp|avif)$', caseSensitive: false)
-            .hasMatch(firstSeg);
+    final looksLikeHost =
+        firstSeg.contains('.') &&
+        !RegExp(
+          r'\.(?:jpe?g|png|gif|webp|bmp|avif)$',
+          caseSensitive: false,
+        ).hasMatch(firstSeg);
     if (looksLikeHost) return 'http://$p';
     return p;
   }
@@ -885,31 +936,90 @@ class HttpService {
     );
   }
 
-  /// 搜索资源。
+  /// 回包里到底有没有「采集数据」的形状。
+  ///
+  /// 只看 `json == null && xmlDoc == null` 不够：`<html><body>…</body></html>`
+  /// 这类网页能被 XML 解析器整段吃进去（xmlDoc 非空），于是「不认 videolist
+  /// 的站」永远走不到回退分支，搜索结果直接是空的。
+  static bool _looksLikeCollection(_Payload p) {
+    if (p.json != null) return true;
+    final doc = p.xmlDoc;
+    if (doc == null) return false;
+    return _firstElement(doc, 'list') != null ||
+        doc.findAllElements('video').isNotEmpty;
+  }
+
+  /// 搜索资源（只要第一页）。保留给不需要翻页的调用方。
+  Future<List<Video>> search(Site site, String keyword) async =>
+      (await searchPaged(site, keyword)).videos;
+
+  /// 搜索资源，可指定页码（从 1 开始）。
   ///
   /// ⚠️ 必须带 `ac=videolist`。采集站默认走 `ac=list`，只回精简字段
   /// （`vod_id` / `vod_name` / `vod_remarks`…），**不含 `vod_pic`**。首页列表一直
   /// 带着 videolist 所以有封面，搜索漏了这个参数，表现就是「搜索结果的卡片全没图，
   /// 点进详情（走的是另一支接口）却能看到海报，返回列表继续没图」。
   ///
+  /// ⚠️ `pg` / `page` 两个参数一起带（与 [_listParams] 同样的坑）：标准 maccms 认
+  /// `pg`，有一批网关只认 `page`，只带一个会出现「翻页翻不动、永远第一页」。
+  /// 第 1 页不带页码参数，尽量少改请求形状，兼容那些对多余参数敏感的老站。
+  ///
   /// 少数站不认 `videolist + wd`（返回网页或直接报错），这时退回老参数再试一次：
   /// 宁可没封面，也不能搜不到。
-  Future<List<Video>> search(Site site, String keyword) async {
+  Future<SearchPageResult> searchPaged(
+    Site site,
+    String keyword, {
+    int pg = 1,
+  }) async {
+    final page = pg < 1 ? 1 : pg;
+    final legacy = <String, String>{
+      'wd': keyword,
+      if (page > 1) 'pg': '$page',
+      if (page > 1) 'page': '$page',
+    };
     try {
-      final payload =
-          await _load(_apiUrl(site, {'ac': 'videolist', 'wd': keyword}));
-      // 返回的不是采集数据（网页 / 空正文）→ 这个站不认 videolist，退回老参数
-      if (payload.json == null && payload.xmlDoc == null) {
-        return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})), site);
+      final payload = await _load(
+        _apiUrl(site, {'ac': 'videolist', ...legacy}),
+      );
+      // 回包里没有采集数据的形状（网页 / 空正文）→ 这个站不认 videolist，
+      // 退回老参数再试一次
+      if (!_looksLikeCollection(payload)) {
+        return _searchResultFrom(
+          await _load(_apiUrl(site, legacy)),
+          site,
+          page,
+        );
       }
-      return _videosFrom(payload, site);
+      return _searchResultFrom(payload, site, page);
     } catch (_) {
       try {
-        return _videosFrom(await _load(_apiUrl(site, {'wd': keyword})), site);
+        return _searchResultFrom(
+          await _load(_apiUrl(site, legacy)),
+          site,
+          page,
+        );
       } catch (_) {
-        return <Video>[];
+        return SearchPageResult(videos: const <Video>[], page: page);
       }
     }
+  }
+
+  static SearchPageResult _searchResultFrom(
+    _Payload payload,
+    Site site,
+    int page,
+  ) {
+    final info = payload.json != null
+        ? _pageFromJson(payload.json!)
+        : _pageFromXml(payload.xmlDoc);
+    return SearchPageResult(
+      videos: _videosFrom(payload, site),
+      page: page,
+      pageSize: info.pagesize > 0 ? info.pagesize : 20,
+      // ok = false 表示没拿到分页信息（回了网页 / 空包），按「未知」处理，
+      // 交给「不满一页就到底」那条兜底，而不是当成只有一页。
+      pagecount: info.ok ? info.pagecount : 0,
+    );
   }
 
   /// 获取资源详情（含播放列表）。
@@ -986,8 +1096,10 @@ class HttpService {
   static const Duration _configSubTimeout = Duration(seconds: 8);
 
   /// 像是 maccms 接口地址（用户直接粘贴接口而不是配置时用）
-  static final RegExp _maccmsApiRe =
-      RegExp(r'api\.php|provide/vod', caseSensitive: false);
+  static final RegExp _maccmsApiRe = RegExp(
+    r'api\.php|provide/vod',
+    caseSensitive: false,
+  );
 
   /// 网页里提取链接用
   static final RegExp _attrRe = RegExp(
@@ -1036,8 +1148,7 @@ class HttpService {
     // 输入 http 时也试试 https（很多站点强制跳转），反之亦然
     for (final candidate in _schemeVariants(start)) {
       if (!tried.add(candidate)) continue;
-      final summary =
-          await _importFrom(candidate, tried, errors, depth: 0);
+      final summary = await _importFrom(candidate, tried, errors, depth: 0);
       if (summary != null && summary.sites.isNotEmpty) return summary;
     }
 
@@ -1153,8 +1264,7 @@ class HttpService {
     for (final repo in repos.take(5)) {
       final url = normalizeConfigUrl(repo);
       if (url.isEmpty || !tried.add(url)) continue;
-      final summary =
-          await _importFrom(url, tried, errors, depth: depth + 1);
+      final summary = await _importFrom(url, tried, errors, depth: depth + 1);
       if (summary == null || summary.sites.isEmpty) continue;
       skipped += summary.skipped;
       if (summary.format != 'unknown') format = summary.format;
@@ -1224,8 +1334,7 @@ class HttpService {
     void add(String raw) {
       var value = raw.trim().replaceAll('&amp;', '&');
       // 正文里的裸链接后面常跟着中文标点，去掉再解析
-      while (value.isNotEmpty &&
-          '.,;，。、:：'.contains(value[value.length - 1])) {
+      while (value.isNotEmpty && '.,;，。、:：'.contains(value[value.length - 1])) {
         value = value.substring(0, value.length - 1);
       }
       if (value.isEmpty) return;
