@@ -401,6 +401,16 @@ class MePage extends StatelessWidget {
             onTap: () => _push(context, const SyncPage()),
           ),
           SwitchListTile(
+            title: const Text('瀑布流模式'),
+            subtitle: const Text(
+                '卡片按海报原始比例展示，高的高、矮的矮，不裁切也不留白；'
+                '手机两列，平板按屏幕宽度自动排（每列约 190dp）。'
+                '开启后上一项的「横向卡片模式」不生效'),
+            value: appState.config.waterfall,
+            onChanged: (value) =>
+                context.read<AppState>().setWaterfall(value),
+          ),
+          SwitchListTile(
             title: const Text('横向卡片模式'),
             subtitle: const Text(
                 '开启后海报横版显示（图上文下），竖屏手机每行一个，平板自适应多列'),

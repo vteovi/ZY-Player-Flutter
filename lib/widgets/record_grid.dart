@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import 'common_widgets.dart';
 import 'record_card.dart';
 import 'video_grid.dart';
+import 'waterfall_grid.dart';
 
 /// 收藏 / 历史记录共用的记录网格。
 ///
@@ -46,6 +47,7 @@ class RecordGrid extends StatelessWidget {
     // 与首页共用同一套网格列数/卡片比例策略。横竖开关在 build 期读一次，
     // 布局阶段（LayoutBuilder 内）不能再读 InheritedWidget。
     final landscape = context.select<AppState, bool>((s) => s.config.landscapeCard);
+    final waterfall = context.select<AppState, bool>((s) => s.config.waterfall);
     final screenWidth = MediaQuery.of(context).size.width;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -53,6 +55,25 @@ class RecordGrid extends StatelessWidget {
             constraints.maxWidth.isFinite && constraints.maxWidth > 0
                 ? constraints.maxWidth - 12
                 : screenWidth - 12;
+        if (waterfall) {
+          final columns = waterfallColumnCount(available);
+          return WaterfallGrid(
+            columns: columns,
+            itemCount: items.length,
+            itemBuilder: (context, index) {
+              final item = items[index];
+              return RecordCard(
+                key: ValueKey(item.key),
+                item: item,
+                isHistory: isHistory,
+                sourceLabel: labels[item.key],
+                coverRatio: waterfallCoverRatio(item.pic),
+                onTap: () => onTap(item),
+                onLongPress: () => onLongPress(item),
+              );
+            },
+          );
+        }
         return GridView.builder(
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
           itemCount: items.length,

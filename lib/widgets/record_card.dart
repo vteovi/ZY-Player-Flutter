@@ -20,6 +20,10 @@ class RecordCard extends StatelessWidget {
   /// 为空表示该记录所属视频源已被删除，此时不显示角标。
   final String? sourceLabel;
 
+  /// 封面「宽 / 高」比例：null = 网格模式（撑满剩余高度），
+  /// 非 null = 瀑布流模式（按海报实测比例定高，不裁切）。
+  final double? coverRatio;
+
   const RecordCard({
     super.key,
     required this.item,
@@ -27,6 +31,7 @@ class RecordCard extends StatelessWidget {
     this.onLongPress,
     this.isHistory = false,
     this.sourceLabel,
+    this.coverRatio,
   });
 
   @override
@@ -46,16 +51,29 @@ class RecordCard extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: PosterCover(
-                      pic: item.pic,
-                      isDark: isDark,
-                      sourceLabel: sourceLabel,
+                if (coverRatio != null)
+                  AspectRatio(
+                    aspectRatio: coverRatio!,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: PosterCover(
+                        pic: item.pic,
+                        isDark: isDark,
+                        sourceLabel: sourceLabel,
+                      ),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: PosterCover(
+                        pic: item.pic,
+                        isDark: isDark,
+                        sourceLabel: sourceLabel,
+                      ),
                     ),
                   ),
-                ),
                 if (isHistory && progress > 0)
                   LinearProgressIndicator(
                     value: progress / 100,

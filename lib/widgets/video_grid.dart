@@ -6,6 +6,7 @@ import '../providers/app_state.dart';
 import '../utils/app_colors.dart';
 import 'common_widgets.dart';
 import 'video_card.dart';
+import 'waterfall_grid.dart';
 
 /// 横版封面的宽高比：16:10（比 16:9 略微高一点，横版海报上下不容易被裁）。
 const double _landscapeCoverRatio = 16 / 10;
@@ -100,6 +101,9 @@ class VideoGridView extends StatelessWidget {
     // InheritedWidget，否则会触发「依赖注册发生在 layout」的断言。
     final landscape =
         context.select<AppState, bool>((s) => s.config.landscapeCard);
+    // 瀑布流优先级最高：开了它就按海报原比例排，横版 / 竖版就都不管了
+    final waterfall =
+        context.select<AppState, bool>((s) => s.config.waterfall);
     final screenWidth = MediaQuery.of(context).size.width;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -108,6 +112,35 @@ class VideoGridView extends StatelessWidget {
         final available = constraints.maxWidth.isFinite && constraints.maxWidth > 0
             ? constraints.maxWidth - 12 // GridView 左右各 6
             : screenWidth - 12;
+        if (waterfall) {
+          final columns = waterfallColumnCount(available);
+          final colWidth = available / columns;
+          final memW = (colWidth * 2).round().clamp(300, 480);
+          return WaterfallGrid(
+            columns: columns,
+            itemCount: videos.length,
+            scrollController: scrollController,
+            bottomInset: bottomInset,
+            footer: loadingMore
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : null,
+            itemBuilder: (context, index) {
+              final video = videos[index];
+              return VideoCard(
+                key: ValueKey(video.id),
+                video: video,
+                sourceLabel: labelOf?.call(video),
+                memCacheWidth: memW,
+                // 按海报实测比例定高：比例准了 BoxFit.cover 就不裁切
+                coverRatio: waterfallCoverRatio(video.pic),
+                onTap: () => onTap(video),
+              );
+            },
+          );
+        }
         final delegate = landscape
             ? landscapeGridDelegate(available)
             : portraitGridDelegate(available);
@@ -205,6 +238,8 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
     // 里反复读 —— 布局阶段注册依赖会触发断言。
     final landscape =
         context.select<AppState, bool>((s) => s.config.landscapeCard);
+    final waterfall =
+        context.select<AppState, bool>((s) => s.config.waterfall);
     final screenWidth = MediaQuery.of(context).size.width;
 
     return LayoutBuilder(
@@ -221,6 +256,34 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
           builder: (context, _) {
             final t = Curves.easeInOut.transform(_controller.value);
             final color = Color.lerp(base, highlight, t)!;
+            if (waterfall) {
+              // 瀑布流骨架：占位块按默认海报比例排，切换模式时形状不会突然变
+              return WaterfallGrid(
+                columns: waterfallColumnCount(available),
+                itemCount: widget.itemCount,
+                itemBuilder: (context, _) => Card(
+                  clipBehavior: Clip.antiAlias,
+                  margin: const EdgeInsets.all(6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      AspectRatio(
+                        aspectRatio: 2 / 3,
+                        child: ColoredBox(color: color),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                        child: _bar(color, height: 12, widthFactor: 0.82),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                        child: _bar(color, height: 10, widthFactor: 0.5),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
             return GridView.builder(
               padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
               physics: const NeverScrollableScrollPhysics(),
