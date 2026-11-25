@@ -13,8 +13,8 @@ import '../services/system_control.dart';
 import '../services/update_service.dart';
 import '../utils/file_pick.dart';
 import '../utils/toast.dart';
+import 'history_page.dart';
 import 'site_page.dart';
-import 'star_page.dart';
 import 'sync_page.dart';
 
 /// 「设置」：播放相关开关 + 数据入口 + 清理/重置
@@ -366,7 +366,7 @@ class MePage extends StatelessWidget {
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
-            onTap: () => _push(context, const StarPage(initialTab: 1)),
+            onTap: () => _push(context, const HistoryPage()),
           ),
           _MenuItem(
             title: '视频源管理',

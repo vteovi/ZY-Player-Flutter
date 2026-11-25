@@ -5,12 +5,13 @@ import 'package:provider/provider.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
 import 'film_page.dart';
+import 'history_page.dart';
 import 'me_page.dart';
 import 'site_page.dart';
 import 'star_page.dart';
 import 'sync_page.dart';
 
-/// 底部导航：首页 / 收藏 / 设置
+/// 底部导航：首页 / 收藏 / 历史 / 设置
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
 
@@ -75,6 +76,11 @@ class _MainPageState extends State<MainPage> {
           label: Text('收藏'),
         ),
         NavigationRailDestination(
+          icon: Icon(Icons.history_outlined),
+          selectedIcon: Icon(Icons.history),
+          label: Text('历史'),
+        ),
+        NavigationRailDestination(
           icon: Icon(Icons.settings_outlined),
           selectedIcon: Icon(Icons.settings),
           label: Text('设置'),
@@ -85,6 +91,8 @@ class _MainPageState extends State<MainPage> {
         BottomNavigationBarItem(
             icon: Icon(Icons.home_outlined), label: '首页'),
         BottomNavigationBarItem(icon: Icon(Icons.star_border), label: '收藏'),
+        BottomNavigationBarItem(
+            icon: Icon(Icons.history_outlined), label: '历史'),
         BottomNavigationBarItem(
             icon: Icon(Icons.settings_outlined), label: '设置'),
       ];
@@ -130,6 +138,7 @@ class _MainPageState extends State<MainPage> {
       children: [
         FilmPage(key: _filmKey),
         const StarPage(),
+        const HistoryPage(),
         const MePage(),
       ],
     );
