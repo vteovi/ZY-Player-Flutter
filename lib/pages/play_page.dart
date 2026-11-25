@@ -510,7 +510,11 @@ class _PlayPageState extends State<PlayPage> {
     var num = 1;
     for (final raw in detail.m3u8List) {
       final parts = raw.split('\$');
-      final label = detail.m3u8List.length > 1 ? '第$num集' : detail.name;
+      // 与详情页同一套规则：优先用源站集名（综艺常是日期 / `第1期上`），
+      // 只有单片时才退回影片名。
+      final label = detail.m3u8List.length > 1
+          ? PlayItem.labelFrom(parts.length > 1 ? parts.first : '', num)
+          : detail.name;
       String pick;
       if (parts.length > 1) {
         final m3u8 =
@@ -850,6 +854,8 @@ class _PlayPageState extends State<PlayPage> {
   }
 
   void _showEpisodePicker() {
+    // 同详情页：只有综艺那种长集名才需要两行高度
+    final hasLongLabel = _playList.any((e) => e.label.runes.length > 5);
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -869,11 +875,11 @@ class _PlayPageState extends State<PlayPage> {
                 child: GridView.builder(
                   shrinkWrap: true,
                   padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 4,
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
-                    childAspectRatio: 2,
+                    childAspectRatio: hasLongLabel ? 1.7 : 2,
                   ),
                   itemCount: _playList.length,
                   itemBuilder: (context, index) {
@@ -883,11 +889,15 @@ class _PlayPageState extends State<PlayPage> {
                         Navigator.of(context).pop();
                         _switchEpisode(item);
                       },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                      ),
                       child: Text(
                         item.label,
-                        maxLines: 1,
+                        maxLines: hasLongLabel ? 2 : 1,
+                        textAlign: TextAlign.center,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
+                        style: const TextStyle(fontSize: 11.5, height: 1.2),
                       ),
                     );
                   },
@@ -1554,7 +1564,9 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
-  /// 右栏选集：只显示序号（源站给的 label 都是「第 N 集」），比一行行文字紧凑得多。
+  /// 右栏选集：序号型标签（「第01集」）显示数字，一行能多放几集；
+  /// 综艺那种「第1期上」「261021偏爱日记」显示原名，否则几十集全是数字，
+  /// 根本分不清哪期是哪天播的。
   Widget _buildEpisodeWrap() {
     return Wrap(
       spacing: 8,
@@ -1568,13 +1580,17 @@ class _PlayPageState extends State<PlayPage> {
 
   Widget _buildEpisodeChip({required int index, required PlayItem item}) {
     final selected = item.value == _currentUrl;
+    // 纯序号标签压缩成数字；其余（日期、上下期、加更…）原样显示
+    final compact = item.isPlainIndex;
     return InkWell(
       // 当前集不用再点（点了也是重开同一个地址，还会打断播放）
       onTap: selected ? null : () => _switchEpisode(item),
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        width: 44,
+        // 数字方块定宽 44 保持整齐；文字标签按内容撑开，过长的省略
+        constraints: const BoxConstraints(minWidth: 44, maxWidth: 140),
         height: 34,
+        padding: compact ? null : const EdgeInsets.symmetric(horizontal: 10),
         alignment: Alignment.center,
         decoration: BoxDecoration(
           color: selected ? _accent : Colors.transparent,
@@ -1582,7 +1598,9 @@ class _PlayPageState extends State<PlayPage> {
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
-          '${index + 1}',
+          compact ? '${index + 1}' : item.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 12.5,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
