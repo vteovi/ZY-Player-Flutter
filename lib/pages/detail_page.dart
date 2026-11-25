@@ -84,7 +84,12 @@ class _DetailPageState extends State<DetailPage> {
     var num = 1;
     for (final raw in detail.m3u8List) {
       final parts = raw.split('\$');
-      final label = detail.m3u8List.length > 1 ? '第$num集' : detail.name;
+      // 源站集名优先：综艺按日期 / 期数上下集分集时（`261021偏爱日记`
+      // `第1期上`），按序号重生成会把这类信息全抹掉。
+      // 单片（只有一项）不显示集名，直接用影片名。
+      final label = detail.m3u8List.length > 1
+          ? PlayItem.labelFrom(parts.length > 1 ? parts.first : '', num)
+          : detail.name;
       String pick;
       if (parts.length > 1) {
         // 优先取 m3u8 地址，没有则退而取任意 http 地址，
@@ -239,6 +244,9 @@ class _DetailPageState extends State<DetailPage> {
 
   /// [external] 为 true 时，选中的集数交给外部播放器而不是内置播放页
   void _showPlayPicker({bool external = false}) {
+    // 只有综艺那种长集名（`261021偏爱日记`）才需要留两行高度；
+    // 普通剧集全是「第01集」，保持原来的紧凑单行，别让所有人都变大。
+    final hasLongLabel = _playList.any((e) => e.label.runes.length > 5);
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
@@ -260,11 +268,11 @@ class _DetailPageState extends State<DetailPage> {
                 child: GridView.builder(
                   shrinkWrap: true,
                   padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 4,
                     crossAxisSpacing: 8,
                     mainAxisSpacing: 8,
-                    childAspectRatio: 2,
+                    childAspectRatio: hasLongLabel ? 1.7 : 2,
                   ),
                   itemCount: _playList.length,
                   itemBuilder: (context, index) {
@@ -278,11 +286,15 @@ class _DetailPageState extends State<DetailPage> {
                           _openPlay(item);
                         }
                       },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                      ),
                       child: Text(
                         item.label,
-                        maxLines: 1,
+                        maxLines: hasLongLabel ? 2 : 1,
+                        textAlign: TextAlign.center,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
+                        style: const TextStyle(fontSize: 11.5, height: 1.2),
                       ),
                     );
                   },

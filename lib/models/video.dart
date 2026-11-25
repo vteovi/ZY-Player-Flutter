@@ -158,7 +158,7 @@ class VideoDetail extends Video {
   }
 }
 
-/// 一集可播放项：value 为真实播放地址，label 为「第 n 集」或影片名
+/// 一集可播放项：value 为真实播放地址，label 为选集标签
 class PlayItem {
   final String index;
   final String value;
@@ -173,6 +173,38 @@ class PlayItem {
     required this.siteKey,
     required this.videoId,
   });
+
+  static final RegExp _plainIndexRe = RegExp(r'^第?\s*\d+\s*[集期话回篇]?$');
+  static final RegExp _bareNumberRe = RegExp(r'^\d+$');
+
+  /// 只表达序号的标签（`1` / `01` / `第1集` / `第12期`）。
+  ///
+  /// 这类标签在紧凑的序号方块里显示数字比显示文字更整齐，一行能多放几集。
+  /// 纯数字的日期（`20261021`）虽然也是数字，但位数远超剧集序号，要排除。
+  bool get isPlainIndex {
+    final s = label.trim();
+    if (s.runes.length > 5) return false; // 「第100集」5 字以内；日期 6~8 字
+    return _plainIndexRe.hasMatch(s);
+  }
+
+  /// 从源站给的集名生成选集标签。
+  ///
+  /// 大多数剧集源站给的就是「第01集」，直接用没问题。但**综艺 / 番外**常见的
+  /// 是日期或别的名字 —— 实测某些大陆综艺的原始集名是
+  /// `超前速递` / `第1期上` / `261021偏爱日记` / `加更` / `第2期上`。
+  ///
+  /// 早期实现一律按序号重生成「第 N 集」，这些信息全被抹掉：用户看不出哪天播的，
+  /// 也分不清正片、花絮和加更，几十集看起来一模一样。
+  ///
+  /// [rawName] 源站集名；[position] 第几项（1 起），仅在没有可用集名时兜底。
+  static String labelFrom(String rawName, int position) {
+    final name = rawName.trim();
+    if (name.isEmpty) return '第$position集';
+    // 短的裸数字（`1` / `01`）没有语境，用序号更清楚；但 5 位以上的纯数字
+    // 多半是日期（`20261021` / `261021`），剧集序号不可能到这个位数，要留着。
+    if (_bareNumberRe.hasMatch(name) && name.length <= 4) return '第$position集';
+    return name;
+  }
 }
 
 /// 收藏 / 历史记录条目：视频信息 + 播放位置
