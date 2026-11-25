@@ -219,11 +219,18 @@ class _SiteEditPageState extends State<SiteEditPage> {
                   style: TextStyle(fontSize: 12.5, height: 1.65, color: sub),
                 ),
                 const SizedBox(height: 18),
+                // 刻意用普通文本类型，**不要改成 TextInputType.url**：
+                // 安卓会把它映射成 TYPE_TEXT_VARIATION_URI；如果再顺手关掉
+                // autocorrect / enableSuggestions（会打上 NO_SUGGESTIONS 标记），
+                // 部分国产输入法（vivo / OPPO / 小米 / 华为自带、搜狗、讯飞）
+                // 就会判定成敏感输入 —— 网址栏常被用来填账号密码 —— 自动切到
+                // 「安全键盘」，用户连自己的常用输入法和粘贴板都调不出来。
+                // 这里按普通文本处理，接口地址照样能输入：只需要字母、数字、
+                // `/`、`.`、`:`、`-`。
                 TextFormField(
                   controller: _apiController,
-                  keyboardType: TextInputType.url,
-                  autocorrect: false,
-                  enableSuggestions: false,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: '接口地址',
                     hintText: 'https://example.com/api.php/provide/vod/',
