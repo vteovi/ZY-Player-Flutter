@@ -12,8 +12,6 @@ import '../services/update_service.dart';
 import '../utils/app_colors.dart';
 import '../utils/toast.dart';
 import '../widgets/view_mode_picker.dart';
-import 'history_page.dart';
-import 'records_page.dart';
 import 'site_page.dart';
 import 'sync_page.dart';
 
@@ -312,18 +310,6 @@ class MePage extends StatelessWidget {
               _SettingsSection(
                 title: '内容与数据',
                 children: [
-                  _SettingsTile(
-                    icon: Icons.history,
-                    title: '播放记录',
-                    subtitle: '继续上次的进度，或翻翻看过的',
-                    // 合并模式下历史在「我的」页的第二个分栏里，直接落过去
-                    onTap: () => _push(
-                      context,
-                      merged
-                          ? const RecordsPage(initialTab: 1)
-                          : const HistoryPage(),
-                    ),
-                  ),
                   _SettingsTile(
                     icon: Icons.dns_outlined,
                     title: '视频源管理',
