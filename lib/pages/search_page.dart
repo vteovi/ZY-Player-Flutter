@@ -795,6 +795,10 @@ class _SearchPageState extends State<SearchPage> {
           loadingMore: loadingMore,
           canLoadMore: canMore,
           onLoadMore: key == null ? _loadMoreForAll : () => _loadMore(key),
+          // 收藏 / 历史是本地过滤，没有下一页，不显示底栏
+          hasPaging: _paging.isNotEmpty,
+          // 单源页内容不满一屏时自动补几页；「全部」页只给按钮
+          autoFill: key != null,
         );
       },
     );
@@ -864,6 +868,8 @@ class _SourceResultGrid extends StatefulWidget {
     this.loadingMore = false,
     this.canLoadMore = false,
     this.onLoadMore,
+    this.hasPaging = false,
+    this.autoFill = false,
   });
 
   final List<Video> videos;
@@ -876,8 +882,17 @@ class _SourceResultGrid extends StatefulWidget {
   /// 还有下一页可拉
   final bool canLoadMore;
 
-  /// 滑到接近底部时回调，由外层去发请求
+  /// 滑到接近底部（或点底部按钮）时回调，由外层去发请求
   final VoidCallback? onLoadMore;
+
+  /// 这一页背后有分页能力（联网搜索）。收藏 / 历史是本地过滤，不显示底栏。
+  final bool hasPaging;
+
+  /// 内容不满一屏时是否自动续拉。
+  ///
+  /// 只对单源页开放：「全部」页会轮流给每个源补页，自动续拉会连锁出
+  /// 几百个请求。全部页靠底部的「加载更多」按钮由用户决定。
+  final bool autoFill;
 
   @override
   State<_SourceResultGrid> createState() => _SourceResultGridState();
@@ -894,6 +909,18 @@ class _SourceResultGridState extends State<_SourceResultGrid>
   void initState() {
     super.initState();
     _scroll.addListener(_maybeLoadMore);
+    // 首帧布局完主动查一次：内容不满一屏时根本滚不动，也就没有任何滚动
+    // 事件，不主动看一眼就会永远停在第一批（例如一页只有 10 条的站）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
+  }
+
+  @override
+  void didUpdateWidget(covariant _SourceResultGrid oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 追加内容后重新判断：仍然不满一屏就继续补，直到满屏或到底
+    if (widget.videos.length != oldWidget.videos.length) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
+    }
   }
 
   @override
@@ -904,18 +931,79 @@ class _SourceResultGridState extends State<_SourceResultGrid>
   }
 
   /// 离底部还有约两屏就开始拉下一页，滑到底时内容已经接上了。
-  ///
-  /// 只靠滚动事件触发，**不做「不满一屏就自动续拉」**：万一某个站对页码
-  /// 视而不见，「全部」页会一路把二十多个源全翻一遍，几百个请求直接打满网络。
   void _maybeLoadMore() {
+    if (!mounted) return;
     if (!widget.canLoadMore || widget.loadingMore) return;
     if (!_scroll.hasClients) return;
     final pos = _scroll.position;
     if (pos.axis != Axis.vertical) return;
-    if (pos.maxScrollExtent <= 0) return;
+    if (pos.maxScrollExtent <= 0) {
+      // 不满一屏、滑不动，没有滚动事件可等。单源页自动补，
+      // 「全部」页留给底部按钮，避免连锁把二十多个源全翻一遍。
+      if (widget.autoFill) widget.onLoadMore?.call();
+      return;
+    }
     if (pos.pixels >= pos.maxScrollExtent - 600) {
       widget.onLoadMore?.call();
     }
+  }
+
+  /// 底栏：加载中转圈 / 「加载更多」按钮 / 「已全部加载」提示。
+  Widget? _buildFooter(BuildContext context) {
+    if (!widget.hasPaging) return null;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (widget.loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 18),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (widget.canLoadMore) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 20),
+        child: Center(
+          child: OutlinedButton.icon(
+            onPressed: widget.onLoadMore,
+            icon: const Icon(Icons.expand_more, size: 18),
+            label: const Text('加载更多'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: isDark
+                  ? Colors.white70
+                  : const Color(0xFF303133),
+              side: BorderSide(
+                color: isDark
+                    ? const Color(0x24FFFFFF)
+                    : const Color(0xFFE0E0E0),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (widget.videos.isEmpty) return null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 22),
+      child: Center(
+        child: Text(
+          // 「全部」页是各源混排，条数说了也没意义，只给单源页报数
+          widget.autoFill ? '已全部加载 · ${widget.videos.length} 条' : '已全部加载',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? Colors.white38 : Colors.black38,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -925,9 +1013,9 @@ class _SourceResultGridState extends State<_SourceResultGrid>
       context: context,
       videos: widget.videos,
       scrollController: _scroll,
-      loadingMore: widget.loadingMore,
       labelOf: widget.labelOf,
       onTap: widget.onTap,
+      footer: _buildFooter(context),
     );
   }
 }
