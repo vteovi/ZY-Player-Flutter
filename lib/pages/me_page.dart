@@ -1,6 +1,4 @@
-import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -12,11 +10,8 @@ import '../services/list_cache.dart';
 import '../services/system_control.dart';
 import '../services/update_service.dart';
 import '../utils/app_colors.dart';
-import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import '../widgets/view_mode_picker.dart';
-import 'history_page.dart';
-import 'records_page.dart';
 import 'site_page.dart';
 import 'sync_page.dart';
 
@@ -143,60 +138,6 @@ class MePage extends StatelessWidget {
     }
     if (!context.mounted) return;
     showToast(context, result.message, success: result.ok);
-  }
-
-  /// 从本地 JSON 文件导入 TVBox / ZYFun 配置（合并导入，保留现有源）。
-  Future<void> _importConfigFile(BuildContext context) async {
-    FilePickerResult? result;
-    try {
-      // 扩展名过滤走 FilePick：老系统 MIME 表不认 json/conf 时自动退回不过滤的选择器。
-      result = await FilePick.pick(extensions: const ['json', 'txt', 'conf']);
-    } catch (e) {
-      if (!context.mounted) return;
-      showToast(context, '无法打开文件选择器：$e', success: false);
-      return;
-    }
-    if (result == null || result.files.isEmpty) return; // 用户取消
-
-    // 优先用选择器直接返回的字节，取不到再按路径读（老系统上更稳）。
-    Uint8List? raw = result.files.single.bytes;
-    if (raw == null) {
-      final path = result.files.single.path;
-      if (path == null) {
-        if (!context.mounted) return;
-        showToast(context, '文件无效', success: false);
-        return;
-      }
-      try {
-        raw = await File(path).readAsBytes();
-      } catch (e) {
-        if (!context.mounted) return;
-        showToast(context, '读取文件失败：$e', success: false);
-        return;
-      }
-    }
-    // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
-    final content = utf8.decode(raw, allowMalformed: true);
-
-    final summary =
-        await context.read<AppState>().importSitesFromContent(content);
-    if (!context.mounted) return;
-
-    if (!summary.ok) {
-      showToast(context, '导入失败：${summary.message}', success: false);
-      return;
-    }
-    final fmt = summary.format == 'zyfun'
-        ? 'ZYFun'
-        : summary.format == 'tvbox'
-            ? 'TVBox'
-            : '配置';
-    final parts = ['导入$fmt 成功：新增 ${summary.added} 个'];
-    if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
-    if (summary.skipped > 0) {
-      parts.add('跳过 ${summary.skipped} 个需插件的源');
-    }
-    showToast(context, parts.join('，'), success: true);
   }
 
   /// 长按加速倍率：弹窗单选 2.0 / 4.0 / 8.0，默认 2.0。
@@ -370,28 +311,10 @@ class MePage extends StatelessWidget {
                 title: '内容与数据',
                 children: [
                   _SettingsTile(
-                    icon: Icons.history,
-                    title: '播放记录',
-                    subtitle: '继续上次的进度，或翻翻看过的',
-                    // 合并模式下历史在「我的」页的第二个分栏里，直接落过去
-                    onTap: () => _push(
-                      context,
-                      merged
-                          ? const RecordsPage(initialTab: 1)
-                          : const HistoryPage(),
-                    ),
-                  ),
-                  _SettingsTile(
                     icon: Icons.dns_outlined,
                     title: '视频源管理',
-                    subtitle: '增删、排序、检测可用性',
+                    subtitle: '增删、排序、检测；导入导出配置也在这里',
                     onTap: () => _push(context, const SitePage()),
-                  ),
-                  _SettingsTile(
-                    icon: Icons.playlist_add,
-                    title: '导入配置源（TVBox / ZYFun）',
-                    subtitle: '从本地 JSON 文件导入，合并进现有源',
-                    onTap: () => _importConfigFile(context),
                   ),
                   _SettingsTile(
                     icon: Icons.devices,
