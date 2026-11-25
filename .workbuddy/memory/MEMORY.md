@@ -73,3 +73,5 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - Git Bash 把 `/S`、`/MIR` 当路径：加 `MSYS_NO_PATHCONV=1`。
 - **Write 新建 `.bat`/`.ps1` 会存 UTF-16**，cmd 读不了：用 Python `encoding='gbk', newline=''`。
 - `flutter pub get` 改 `analysis_options.yaml`、`flutter build` 改 `android/gradle.properties` —— 跑完都 `git checkout --`。
+- **改完不要跑 `dart format`**（2026-11-25 实锤）：toolchain 的 Dart 3.8 新格式化器（pubspec `sdk: ^3.8.0`）按 tall style 重排整个文件，一次 format 能把 86 行改动炸成 360 行噪音 diff。手写代码照现有风格即可，`flutter analyze` 不查格式。
+- Bash commit message 里带 `(...)` 走 `$(printf ...)` 会报 syntax error：**写 `.git/commitmsg.txt` 用 `git commit -F`**。
