@@ -14,6 +14,7 @@ import '../utils/image_prefetch.dart';
 import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
+import '../widgets/view_mode_picker.dart';
 import 'detail_page.dart';
 import 'search_page.dart';
 
@@ -430,18 +431,15 @@ class FilmPageState extends State<FilmPage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 宽屏（平板 / 桌面）：首行够宽，站点切换与右侧操作同排
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
-    // 卡片形态：横向（16:10 图上文下）/ 竖向（竖版海报网格）。
-    // 设置页也能改，这里 select 只订阅这一个字段 —— 用 watch 会让任何设置变更
-    // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
-    final landscape =
-        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    // 卡片显示模式：竖向 / 横向 / 瀑布流三选一。设置页也能改，这里 select
+    // 只订阅这一个字段 —— 用 watch 会让任何设置变更（主题、倍速、下载速度…）
+    // 都把整个首页连同分栏重建一次。
+    final mode = context.select<AppState, ViewMode>((s) => s.config.viewMode);
     // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段。
-    // 瀑布流下卡片按海报原比例走，横竖之分没意义，这个按钮一并让位。
-    final waterfall =
-        context.select<AppState, bool>((s) => s.config.waterfall);
+    // 它现在管**三种**模式（点按循环、长按出菜单），所以瀑布流下也必须留着 ——
+    // 一旦隐藏就没法从这个按钮切回去了（只能进设置页）。
     final showViewToggle =
-        context.select<AppState, bool>((s) => s.config.showViewToggle) &&
-            !waterfall;
+        context.select<AppState, bool>((s) => s.config.showViewToggle);
     return Scaffold(
       appBar: AppBar(
         // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索，
@@ -463,7 +461,7 @@ class FilmPageState extends State<FilmPage>
                     Expanded(child: _buildSearchBox(isDark, height: 40)),
                     if (showViewToggle) ...[
                       const SizedBox(width: 6),
-                      _buildViewButton(isDark, landscape),
+                      _buildViewButton(isDark, mode),
                     ],
                   ],
                 ),
@@ -474,7 +472,7 @@ class FilmPageState extends State<FilmPage>
                   const SizedBox(width: 4),
                   // 手机宽度不够铺开搜索框，仍用一个图标按钮，点开进搜索页
                   _buildSearchButton(isDark),
-                  if (showViewToggle) _buildViewButton(isDark, landscape),
+                  if (showViewToggle) _buildViewButton(isDark, mode),
                   const SizedBox(width: 4),
                 ],
               ),
@@ -600,17 +598,40 @@ class FilmPageState extends State<FilmPage>
   ///
   /// 用 [IconButton] 而不是自绘 InkWell，白送水波纹、焦点框与无障碍语义；
   /// 约束压到 36×36，手机 56 高的工具栏里才不会把站点按钮挤没。
+  ///
+  /// 需要长按时换 [InkResponse] —— [IconButton] 没有 onLongPress 这个口子，
+  /// 但水波纹、Tooltip、36×36 尺寸都保持不变。
   Widget _buildBarIcon({
     required bool isDark,
     required IconData icon,
     required String tooltip,
     required VoidCallback onTap,
+    VoidCallback? onLongPress,
   }) {
+    final color = isDark ? Colors.white70 : const Color(0xFF303133);
+    if (onLongPress != null) {
+      return Tooltip(
+        message: tooltip,
+        // 触摸端 Tooltip 默认就是「长按触发」，会和按钮自己的长按抢手势、
+        // 先冒出一个提示气泡。改成 manual：桌面悬停照样显示，触摸端不抢。
+        triggerMode: TooltipTriggerMode.manual,
+        child: InkResponse(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          radius: 18,
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(child: Icon(icon, size: 20, color: color)),
+          ),
+        ),
+      );
+    }
     return IconButton(
       onPressed: onTap,
       icon: Icon(icon, size: 20),
       tooltip: tooltip,
-      color: isDark ? Colors.white70 : const Color(0xFF303133),
+      color: color,
       padding: EdgeInsets.zero,
       visualDensity: VisualDensity.compact,
       constraints: const BoxConstraints.tightFor(width: 36, height: 36),
@@ -667,17 +688,27 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
-  /// 卡片形态切换：横向卡片（16:10 图上文下）⇄ 竖向卡片（竖版海报网格）。
+  /// 卡片显示模式按钮：**点一下循环切换**（竖向 → 横向 → 瀑布流 → 竖向），
+  /// **长按直接出菜单**三选一。
   ///
-  /// 图标显示的是**点下去会变成什么**，配 tooltip 说清方向，一眼能看出作用；
-  /// 当前形态本身在屏幕上就看得见，不需要再用图标重复一遍。
-  Widget _buildViewButton(bool isDark, bool landscape) {
+  /// 图标画的是「点下去会变成什么」—— 当前是什么形态，屏幕上本来就看得见，
+  /// 再用图标复述一遍没意义。tooltip 把两条操作都写清楚（桌面端悬停时能看到）。
+  Widget _buildViewButton(bool isDark, ViewMode mode) {
+    final next = mode.next;
     return _buildBarIcon(
       isDark: isDark,
-      icon: landscape ? Icons.grid_view_rounded : Icons.view_agenda_rounded,
-      tooltip: landscape ? '切换为竖向卡片' : '切换为横向卡片',
-      onTap: () => context.read<AppState>().setLandscapeCard(!landscape),
+      icon: viewModeIcon(next),
+      tooltip: '当前：${mode.label} · 点按切换为${next.label}，长按选择',
+      onTap: () => context.read<AppState>().setViewMode(next),
+      onLongPress: () => _showViewModeSheet(mode),
     );
+  }
+
+  /// 长按按钮弹出的模式选择（与设置页共用同一个弹层）。
+  Future<void> _showViewModeSheet(ViewMode current) async {
+    final app = context.read<AppState>();
+    final picked = await showViewModePicker(context, current: current);
+    if (picked != null) await app.setViewMode(picked);
   }
 
   /// 分类分栏：可横向滑动（分类多时滚动），也可点选

@@ -44,10 +44,9 @@ class RecordGrid extends StatelessWidget {
       final name = app.siteOf(siteKey)?.name ?? '';
       if (name.isNotEmpty) labels[item.key] = name;
     }
-    // 与首页共用同一套网格列数/卡片比例策略。横竖开关在 build 期读一次，
+    // 与首页共用同一套网格列数/卡片比例策略。显示模式在 build 期读一次，
     // 布局阶段（LayoutBuilder 内）不能再读 InheritedWidget。
-    final landscape = context.select<AppState, bool>((s) => s.config.landscapeCard);
-    final waterfall = context.select<AppState, bool>((s) => s.config.waterfall);
+    final mode = context.select<AppState, ViewMode>((s) => s.config.viewMode);
     final screenWidth = MediaQuery.of(context).size.width;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -55,7 +54,7 @@ class RecordGrid extends StatelessWidget {
             constraints.maxWidth.isFinite && constraints.maxWidth > 0
                 ? constraints.maxWidth - 12
                 : screenWidth - 12;
-        if (waterfall) {
+        if (mode == ViewMode.waterfall) {
           final columns = waterfallColumnCount(available);
           return WaterfallGrid(
             columns: columns,
@@ -77,7 +76,7 @@ class RecordGrid extends StatelessWidget {
         return GridView.builder(
           padding: const EdgeInsets.fromLTRB(6, 4, 6, 16),
           itemCount: items.length,
-          gridDelegate: landscape
+          gridDelegate: mode == ViewMode.landscape
               ? landscapeGridDelegate(available)
               : portraitGridDelegate(available),
           itemBuilder: (context, index) {
