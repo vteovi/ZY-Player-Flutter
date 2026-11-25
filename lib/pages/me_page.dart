@@ -11,6 +11,7 @@ import '../services/data_backup.dart';
 import '../services/list_cache.dart';
 import '../services/system_control.dart';
 import '../services/update_service.dart';
+import '../utils/app_colors.dart';
 import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import 'history_page.dart';
@@ -226,53 +227,30 @@ class MePage extends StatelessWidget {
   /// 之后「外部播放」会直接启动它而不是自动查找已安装的播放器。
   Widget _buildExternalPlayerTile(BuildContext context) {
     final path = context.watch<AppState>().config.externalPlayerPath;
-    final fileName = path.isNotEmpty
-        ? path.split(RegExp(r'[\\/]')).last
-        : null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 12, 16, 2),
-          child: Text(
-            '自定义播放器（PC）',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-        ),
-        ListTile(
-          title: const Text('播放器路径'),
-          subtitle: Text(
-            path.isEmpty
-                ? '未设置，将自动查找已安装的播放器（PotPlayer / VLC 等）'
-                : (fileName ?? path),
-          ),
-          trailing: path.isEmpty
-              ? const Icon(Icons.chevron_right)
-              : Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextButton(
-                      onPressed: () => _testExternalPlayer(context, path),
-                      child: const Text('测试'),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.clear, size: 20),
-                      tooltip: '清除',
-                      onPressed: () => _clearExternalPlayer(context),
-                    ),
-                  ],
+    return _SettingsTile(
+      icon: Icons.open_in_new,
+      title: '自定义播放器（PC）',
+      subtitle: path.isEmpty
+          ? '未设置，将自动查找已安装的播放器（PotPlayer / VLC 等）'
+          : path,
+      subtitleMaxLines: 2,
+      trailing: path.isEmpty
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton(
+                  onPressed: () => _testExternalPlayer(context, path),
+                  child: const Text('测试'),
                 ),
-          onTap: () => _pickExternalPlayer(context),
-        ),
-        if (path.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(
-              path,
-              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                IconButton(
+                  icon: const Icon(Icons.clear, size: 20),
+                  tooltip: '清除',
+                  onPressed: () => _clearExternalPlayer(context),
+                ),
+              ],
             ),
-          ),
-      ],
+      onTap: () => _pickExternalPlayer(context),
     );
   }
 
@@ -359,150 +337,217 @@ class MePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
+    final cfg = appState.config;
+    final merged = cfg.mergeRecords;
+
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
-      body: ListView(
-        children: [
-          const SizedBox(height: 8),
-          _MenuItem(
-            title: '播放记录',
-            subtitle: '记录播放历史',
-            // 合并模式下历史在「我的」页的第二个分栏里，直接落过去
-            onTap: () => _push(
-              context,
-              appState.config.mergeRecords
-                  ? const RecordsPage(initialTab: 1)
-                  : const HistoryPage(),
-            ),
+      // 平板 / 桌面下不把每一行拉满整屏：限宽居中，阅读动线短，也不会
+      // 出现「标题在左、开关在屏幕另一端」的割裂感。
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: ListView(
+            padding: const EdgeInsets.only(bottom: 12),
+            children: [
+              // ---------------------------------------------------------------
+              // 日常入口：看、找、同步
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '内容与数据',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.history,
+                    title: '播放记录',
+                    subtitle: '继续上次的进度，或翻翻看过的',
+                    // 合并模式下历史在「我的」页的第二个分栏里，直接落过去
+                    onTap: () => _push(
+                      context,
+                      merged
+                          ? const RecordsPage(initialTab: 1)
+                          : const HistoryPage(),
+                    ),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.dns_outlined,
+                    title: '视频源管理',
+                    subtitle: '增删、排序、检测可用性',
+                    onTap: () => _push(context, const SitePage()),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.playlist_add,
+                    title: '导入配置源（TVBox / ZYFun）',
+                    subtitle: '从本地 JSON 文件导入，合并进现有源',
+                    onTap: () => _importConfigFile(context),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.devices,
+                    title: '设备同步',
+                    subtitle: '局域网内同步视频源、配置、收藏与历史',
+                    onTap: () => _push(context, const SyncPage()),
+                  ),
+                ],
+              ),
+              // ---------------------------------------------------------------
+              // 播放
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '播放',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.fast_forward,
+                    title: '长按加速倍率',
+                    subtitle:
+                        '全屏时长按画面加速，当前 ${cfg.playerLongPressRate.toStringAsFixed(1)} 倍',
+                    onTap: () => _showLongPressRatePicker(context),
+                  ),
+                  _SwitchTile(
+                    icon: Icons.speed,
+                    title: '显示实时下载速度',
+                    subtitle: '全屏播放时在右上角显示实时网速',
+                    value: cfg.showSpeed,
+                    onChanged: (v) =>
+                        context.read<AppState>().setShowSpeed(v),
+                  ),
+                  if (Platform.isAndroid)
+                    _SwitchTile(
+                      icon: Icons.memory,
+                      title: '强制软件解码',
+                      subtitle: '硬解报「播放失败」的机型打开它，下次播放生效',
+                      value: cfg.forceSoftwareDecode,
+                      onChanged: (v) =>
+                          context.read<AppState>().setForceSoftwareDecode(v),
+                    ),
+                  if (Platform.isWindows) _buildExternalPlayerTile(context),
+                ],
+              ),
+              // ---------------------------------------------------------------
+              // 外观与布局
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '外观与布局',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.dark_mode_outlined,
+                    title: '主题模式',
+                    subtitle: '当前：${const {
+                      'system': '跟随系统',
+                      'light': '浅色',
+                      'dark': '深色',
+                    }[cfg.themeMode] ?? '跟随系统'}',
+                    onTap: () => _showThemeModePicker(context),
+                  ),
+                  _SwitchTile(
+                    icon: Icons.dashboard_customize_outlined,
+                    title: '瀑布流模式',
+                    subtitle: '海报按原始比例排（不裁切），手机两列、平板按宽度自动加列',
+                    value: cfg.waterfall,
+                    onChanged: (v) =>
+                        context.read<AppState>().setWaterfall(v),
+                  ),
+                  _SwitchTile(
+                    icon: Icons.view_agenda_outlined,
+                    title: '横向卡片模式',
+                    subtitle: cfg.waterfall
+                        ? '当前被瀑布流覆盖，关掉瀑布流才生效'
+                        : '海报横版显示（图上文下），竖屏每行一个、平板多列',
+                    value: cfg.landscapeCard,
+                    onChanged: (v) =>
+                        context.read<AppState>().setLandscapeCard(v),
+                  ),
+                  _SwitchTile(
+                    icon: Icons.swap_horiz,
+                    title: '显示视图切换按钮',
+                    subtitle: '首页顶栏右侧的横版/竖版切换按钮，关掉顶栏更简洁',
+                    value: cfg.showViewToggle,
+                    onChanged: (v) =>
+                        context.read<AppState>().setShowViewToggle(v),
+                  ),
+                  _SwitchTile(
+                    icon: Icons.call_merge,
+                    title: '收藏与历史合并',
+                    subtitle: merged
+                        ? '导航栏：首页 / 我的 / 设置，收藏与历史是「我的」页的两栏'
+                        : '导航栏：首页 / 收藏 / 历史 / 设置，各自独立一页',
+                    value: cfg.mergeRecords,
+                    onChanged: (v) =>
+                        context.read<AppState>().setMergeRecords(v),
+                  ),
+                ],
+              ),
+              // ---------------------------------------------------------------
+              // 备份
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '备份与恢复',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.backup_outlined,
+                    title: '备份数据',
+                    subtitle: '视频源、播放记录、收藏夹、设置项打包成文件',
+                    onTap: () => _backupData(context),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.restore,
+                    title: '恢复数据',
+                    subtitle: '从备份文件恢复，会覆盖当前全部数据',
+                    onTap: () => _restoreData(context),
+                  ),
+                ],
+              ),
+              // ---------------------------------------------------------------
+              // 清理（危险操作归一堆，红字统一在最后）
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '清理与重置',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.cleaning_services_outlined,
+                    title: '清除片单缓存',
+                    subtitle: '只清分类列表的本地缓存，封面不受影响',
+                    onTap: () => _clearListCache(context),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.delete_sweep_outlined,
+                    title: '清空播放记录',
+                    subtitle: '清掉全部观看进度，不可恢复',
+                    onTap: () => _clearHistory(context),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.favorite_border,
+                    title: '清空收藏夹',
+                    subtitle: '清掉全部收藏，不可恢复',
+                    onTap: () => _clearStar(context),
+                  ),
+                  _SettingsTile(
+                    icon: Icons.restart_alt,
+                    title: '重置软件',
+                    subtitle: '收藏、历史、视频源、设置全部回到初始状态',
+                    titleColor: const Color(0xFFFF4445),
+                    onTap: () => _resetApp(context),
+                  ),
+                ],
+              ),
+              // ---------------------------------------------------------------
+              // 关于
+              // ---------------------------------------------------------------
+              _SettingsSection(
+                title: '关于',
+                children: [
+                  _VersionUpdateTile(onTap: () => _checkUpdate(context)),
+                ],
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(28, 16, 28, 8),
+                child: Text(
+                  '所有资源来自网上，该软件不参与任何制作、上传、储存等内容，禁止传播违法资源。'
+                  '该软件仅供学习参考，请于安装后 24 小时内删除。',
+                  style: TextStyle(color: Color(0xFFFF4445), fontSize: 11, height: 1.5),
+                ),
+              ),
+            ],
           ),
-          _MenuItem(
-            title: '视频源管理',
-            subtitle: '管理视频源数据',
-            onTap: () => _push(context, const SitePage()),
-          ),
-          _MenuItem(
-            title: '导入配置源 (TVBox / ZYFun)',
-            subtitle: '从本地 JSON 文件导入视频源（合并，保留现有源）',
-            onTap: () => _importConfigFile(context),
-          ),
-          _MenuItem(
-            title: '备份数据',
-            subtitle: '备份视频源、播放记录、收藏夹、设置项到文件',
-            onTap: () => _backupData(context),
-          ),
-          _MenuItem(
-            title: '恢复数据',
-            subtitle: '从备份文件恢复（覆盖当前数据）',
-            onTap: () => _restoreData(context),
-          ),
-          _MenuItem(
-            title: '设备同步',
-            subtitle: '通过局域网在设备间同步视频源、配置、收藏与历史',
-            onTap: () => _push(context, const SyncPage()),
-          ),
-          SwitchListTile(
-            title: const Text('瀑布流模式'),
-            subtitle: const Text(
-                '卡片按海报原始比例展示，高的高、矮的矮，不裁切也不留白；'
-                '手机两列，平板按屏幕宽度自动排（每列约 190dp）。'
-                '开启后上一项的「横向卡片模式」不生效'),
-            value: appState.config.waterfall,
-            onChanged: (value) =>
-                context.read<AppState>().setWaterfall(value),
-          ),
-          SwitchListTile(
-            title: const Text('横向卡片模式'),
-            subtitle: const Text(
-                '开启后海报横版显示（图上文下），竖屏手机每行一个，平板自适应多列'),
-            value: appState.config.landscapeCard,
-            onChanged: (value) =>
-                context.read<AppState>().setLandscapeCard(value),
-          ),
-          SwitchListTile(
-            title: const Text('显示视图切换按钮'),
-            subtitle: const Text(
-                '首页顶栏右侧的「横版 / 竖版卡片」切换按钮；关闭后顶栏更简洁，'
-                '卡片形态仍可用上一项切换'),
-            value: appState.config.showViewToggle,
-            onChanged: (value) =>
-                context.read<AppState>().setShowViewToggle(value),
-          ),
-          SwitchListTile(
-            title: const Text('收藏与历史合并'),
-            subtitle: const Text(
-                '开启后导航栏是「首页 / 我的 / 设置」，收藏与播放记录放进「我的」'
-                '页分两栏（收藏 12 / 历史记录 34）；关闭则导航栏各自独立一项'),
-            value: appState.config.mergeRecords,
-            onChanged: (value) =>
-                context.read<AppState>().setMergeRecords(value),
-          ),
-          SwitchListTile(
-            title: const Text('显示实时下载速度'),
-            subtitle: const Text('全屏播放时在右上角显示实时网速'),
-            value: appState.config.showSpeed,
-            onChanged: (value) => context.read<AppState>().setShowSpeed(value),
-          ),
-          if (Platform.isAndroid)
-            SwitchListTile(
-              title: const Text('强制软件解码'),
-              subtitle: const Text(
-                  '部分机型硬解会报「播放失败」，开启后改用软件解码器（兼容性更好、略耗电），下次播放生效'),
-              value: appState.config.forceSoftwareDecode,
-              onChanged: (value) =>
-                  context.read<AppState>().setForceSoftwareDecode(value),
-            ),
-          if (Platform.isWindows) _buildExternalPlayerTile(context),
-          ListTile(
-            title: const Text('长按加速倍率'),
-            subtitle: Text(
-              '全屏播放时长按画面可加速，当前：${appState.config.playerLongPressRate.toStringAsFixed(1)} 倍',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showLongPressRatePicker(context),
-          ),
-          ListTile(
-            title: const Text('主题模式'),
-            subtitle: Text(
-              '当前：${const {
-                'system': '跟随系统',
-                'light': '浅色',
-                'dark': '深色',
-              }[appState.config.themeMode] ?? '跟随系统'}',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _showThemeModePicker(context),
-          ),
-          _MenuItem(
-            title: '清除片单缓存',
-            subtitle: '清除分类片单的本地缓存（封面不受影响）',
-            onTap: () => _clearListCache(context),
-          ),
-          _MenuItem(
-            title: '清空播放记录',
-            subtitle: '清空播放记录数据',
-            onTap: () => _clearHistory(context),
-          ),
-          _MenuItem(
-            title: '清空收藏夹',
-            subtitle: '清空收藏夹数据',
-            onTap: () => _clearStar(context),
-          ),
-          _MenuItem(
-            title: '重置软件',
-            subtitle: '清空所有数据, 慎点',
-            titleColor: const Color(0xFFFF4445),
-            onTap: () => _resetApp(context),
-          ),
-          _VersionUpdateTile(onTap: () => _checkUpdate(context)),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text(
-              '所有资源来自网上, 该软件不参与任何制作, 上传, 储存等内容, 禁止传播违法资源. '
-              '该软件仅供学习参考, 请于安装后24小时内删除.',
-              style: TextStyle(color: Color(0xFFFF4445), fontSize: 12),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -798,25 +843,143 @@ class MePage extends StatelessWidget {
   }
 }
 
-class _MenuItem extends StatelessWidget {
+/// 设置项分组：小标题 + 圆角卡片，组内自动补分隔线。
+///
+/// 深色模式遵守本项目的 OLED 约定 —— 卡片底色仍是纯黑，只用 1px 描边划边界，
+/// **不靠提亮底色**分层（一提亮整屏就发灰）。
+class _SettingsSection extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+
+  const _SettingsSection({required this.title, required this.children});
+
+  /// 分隔线缩进到文字起点：16(卡片内边距) + 40(图标占位) + 16(图文间距)
+  static const double _dividerIndent = 72;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i++) {
+      if (i > 0) {
+        rows.add(Divider(
+          height: 1,
+          thickness: 1,
+          indent: _dividerIndent,
+          endIndent: 16,
+          color: isDark ? AppColors.darkDivider : AppColors.lightDivider,
+        ));
+      }
+      rows.add(children[i]);
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              title,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.2,
+                letterSpacing: 0.8,
+                fontWeight: FontWeight.w600,
+                color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+              ),
+            ),
+          ),
+          // 用 Material 的 shape 画描边：描边在底色之上、子内容之下，
+          // 子内容透明就不会把它盖掉；clipBehavior 同时把点击涟漪裁进圆角。
+          Material(
+            color: isDark ? AppColors.darkBg : AppColors.lightSurface,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: isDark ? AppColors.darkOutline : AppColors.lightOutline,
+              ),
+            ),
+            child: Column(children: rows),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 可点设置行。图标统一走次级色，靠它把整页左侧的视觉节奏对齐。
+class _SettingsTile extends StatelessWidget {
+  final IconData icon;
   final String title;
   final String subtitle;
+  final int subtitleMaxLines;
   final Color? titleColor;
-  final VoidCallback onTap;
+  final Widget? trailing;
+  final VoidCallback? onTap;
 
-  const _MenuItem({
+  const _SettingsTile({
+    required this.icon,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.subtitleMaxLines = 2,
     this.titleColor,
+    this.trailing,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
     return ListTile(
-      title: Text(title, style: TextStyle(color: titleColor)),
-      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      leading: Icon(icon, size: 22, color: titleColor ?? sub),
+      title: Text(title, style: TextStyle(fontSize: 15, color: titleColor)),
+      subtitle: Text(
+        subtitle,
+        maxLines: subtitleMaxLines,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 12, height: 1.35, color: sub),
+      ),
+      trailing: trailing ??
+          (onTap == null
+              ? null
+              : Icon(Icons.chevron_right, size: 20, color: sub)),
       onTap: onTap,
+    );
+  }
+}
+
+/// 开关设置行。`secondary` 在开关对侧（默认左侧），正好当图标位。
+class _SwitchTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _SwitchTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+    return SwitchListTile(
+      secondary: Icon(icon, size: 22, color: sub),
+      title: Text(title, style: const TextStyle(fontSize: 15)),
+      subtitle: Text(
+        subtitle,
+        style: TextStyle(fontSize: 12, height: 1.35, color: sub),
+      ),
+      value: value,
+      onChanged: onChanged,
     );
   }
 }
@@ -859,12 +1022,11 @@ class _VersionUpdateTileState extends State<_VersionUpdateTile> {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      title: const Text('版本更新'),
-      subtitle: Text(
-        _label.isEmpty ? '读取版本号…' : _label,
-        style: const TextStyle(fontSize: 12),
-      ),
+    return _SettingsTile(
+      icon: Icons.system_update_alt,
+      title: '版本更新',
+      subtitle: _label.isEmpty ? '读取版本号…' : _label,
+      subtitleMaxLines: 1,
       onTap: widget.onTap,
     );
   }
