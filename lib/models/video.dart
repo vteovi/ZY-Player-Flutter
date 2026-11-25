@@ -322,6 +322,20 @@ enum ViewMode {
   /// 瀑布流：按海报**原始比例**排，不等高、不裁切。
   waterfall;
 
+  /// 中文名（设置页、首页顶栏按钮、选择弹层共用）
+  String get label => switch (this) {
+        ViewMode.portrait => '竖向海报',
+        ViewMode.landscape => '横向卡片',
+        ViewMode.waterfall => '瀑布流',
+      };
+
+  /// 点一下顶栏按钮时切到的下一个模式：竖向 → 横向 → 瀑布流 → 竖向
+  ViewMode get next => switch (this) {
+        ViewMode.portrait => ViewMode.landscape,
+        ViewMode.landscape => ViewMode.waterfall,
+        ViewMode.waterfall => ViewMode.portrait,
+      };
+
   /// 宽松解析：新值优先，读不到就按 1.36.0 及更早的两个布尔反推。
   /// 老用户升级后看到的效果与升级前一致，不会莫名其妙跳回竖版。
   static ViewMode parse(Map<dynamic, dynamic> json) {

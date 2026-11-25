@@ -6,7 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../services/data_backup.dart';
 import '../services/list_cache.dart';
@@ -15,6 +14,7 @@ import '../services/update_service.dart';
 import '../utils/app_colors.dart';
 import '../utils/file_pick.dart';
 import '../utils/toast.dart';
+import '../widgets/view_mode_picker.dart';
 import 'history_page.dart';
 import 'records_page.dart';
 import 'site_page.dart';
@@ -335,42 +335,16 @@ class MePage extends StatelessWidget {
     }
   }
 
-  /// 卡片显示模式的短标签（设置项与弹窗共用）。
-  static String _viewModeLabel(ViewMode mode) => switch (mode) {
-        ViewMode.portrait => '竖向海报',
-        ViewMode.landscape => '横向卡片',
-        ViewMode.waterfall => '瀑布流',
-      };
-
   /// 卡片显示模式：竖向 / 横向 / 瀑布流三选一，选完立即生效。
   ///
   /// 以前是「横向卡片」和「瀑布流」两个独立开关，得靠优先级（瀑布流 > 横向）
   /// 决定谁生效，用户容易配出两个都开的困惑状态；这里收成一个单选。
-  Future<void> _showViewModePicker(BuildContext context) async {
-    final current = context.read<AppState>().config.viewMode;
-    final picked = await showDialog<ViewMode>(
-      context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text('卡片显示模式'),
-        children: [
-          for (final (mode, desc) in const [
-            (ViewMode.portrait, '列数随屏幕宽度变，海报统一竖版比例（默认）'),
-            (ViewMode.landscape, '左图右文，手机竖屏每行一个、平板多列'),
-            (ViewMode.waterfall, '按海报原始比例排，不等高也不裁切'),
-          ])
-            RadioListTile<ViewMode>(
-              title: Text(_viewModeLabel(mode)),
-              subtitle: Text(desc, style: const TextStyle(fontSize: 12)),
-              value: mode,
-              groupValue: current,
-              onChanged: (v) => Navigator.of(dialogContext).pop(v),
-            ),
-        ],
-      ),
-    );
-    if (picked != null && context.mounted) {
-      await context.read<AppState>().setViewMode(picked);
-    }
+  /// 弹层与首页顶栏按钮**长按**共用同一个实现，两处文案不会漂。
+  Future<void> _pickViewMode(BuildContext context) async {
+    final app = context.read<AppState>();
+    final picked =
+        await showViewModePicker(context, current: app.config.viewMode);
+    if (picked != null) await app.setViewMode(picked);
   }
 
   @override
@@ -479,13 +453,13 @@ class MePage extends StatelessWidget {
                   _SettingsTile(
                     icon: Icons.view_quilt_outlined,
                     title: '卡片显示模式',
-                    subtitle: '当前：${_viewModeLabel(cfg.viewMode)}',
-                    onTap: () => _showViewModePicker(context),
+                    subtitle: '当前：${cfg.viewMode.label}',
+                    onTap: () => _pickViewMode(context),
                   ),
                   _SwitchTile(
                     icon: Icons.swap_horiz,
                     title: '显示视图切换按钮',
-                    subtitle: '首页顶栏加一个竖向/横向一键切换（瀑布流下不显示）',
+                    subtitle: '首页顶栏的模式按钮：点一下循环切换，长按直接选',
                     value: cfg.showViewToggle,
                     onChanged: (v) =>
                         context.read<AppState>().setShowViewToggle(v),
