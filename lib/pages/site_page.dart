@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +11,7 @@ import '../providers/app_state.dart';
 import '../services/http_service.dart';
 import '../services/site_export.dart';
 import '../utils/app_colors.dart';
+import '../utils/file_pick.dart';
 import '../utils/site_dup.dart';
 import '../utils/toast.dart';
 import 'duplicate_page.dart';
@@ -92,6 +97,65 @@ class _SitePageState extends State<SitePage> {
       _urlController.clear();
       _showImport = !_showImport;
     });
+  }
+
+  /// 从本地配置文件导入 TVBox / ZYFun 源（合并进现有源，不清空）。
+  ///
+  /// 与工具栏的「导入视频源」（填一个接口地址）是两件事，所以入口放在
+  /// 右上角菜单里并配副标题说明，避免两个「导入」互相混淆。
+  Future<void> _importFromFile() async {
+    FilePickerResult? result;
+    try {
+      // 扩展名过滤走 FilePick：老系统 MIME 表不认 json/conf 时自动退回不过滤的选择器。
+      result = await FilePick.pick(extensions: const ['json', 'txt', 'conf']);
+    } catch (e) {
+      if (!mounted) return;
+      showToast(context, '无法打开文件选择器：$e', success: false);
+      return;
+    }
+    if (result == null || result.files.isEmpty) return; // 用户取消
+
+    // 优先用选择器直接返回的字节，取不到再按路径读（老系统上更稳）。
+    Uint8List? raw = result.files.single.bytes;
+    if (raw == null) {
+      final path = result.files.single.path;
+      if (path == null) {
+        if (!mounted) return;
+        showToast(context, '文件无效', success: false);
+        return;
+      }
+      try {
+        raw = await File(path).readAsBytes();
+      } catch (e) {
+        if (!mounted) return;
+        showToast(context, '读取文件失败：$e', success: false);
+        return;
+      }
+    }
+    // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
+    final content = utf8.decode(raw, allowMalformed: true);
+
+    // 上面有 await（读文件），先确认还挂在树上再用 context
+    if (!mounted) return;
+    final summary =
+        await context.read<AppState>().importSitesFromContent(content);
+    if (!mounted) return;
+
+    if (!summary.ok) {
+      showToast(context, '导入失败：${summary.message}', success: false);
+      return;
+    }
+    final fmt = summary.format == 'zyfun'
+        ? 'ZYFun'
+        : summary.format == 'tvbox'
+            ? 'TVBox'
+            : '配置';
+    final parts = ['导入$fmt 成功：新增 ${summary.added} 个'];
+    if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
+    if (summary.skipped > 0) {
+      parts.add('跳过 ${summary.skipped} 个需插件的源');
+    }
+    showToast(context, parts.join('，'), success: true);
   }
 
   // ---------------------------------------------------------------------------
@@ -579,37 +643,56 @@ class _SitePageState extends State<SitePage> {
       appBar: AppBar(
         title: const Text('源管理'),
         actions: [
-          IconButton(
-            onPressed: sites.isEmpty ? null : _exportSites,
-            icon: const Icon(Icons.file_upload_outlined),
-            tooltip: '导出所有源',
-          ),
-          // 「清空所有源」是破坏性操作，放在溢出菜单里，不给它和常用按钮抢位置
+          // 导入 / 导出 / 清空全部收进「三个点」：都有主标题与一句说明。
+          // 原来导出只有一个上传图标，没人猜得出是导出；导入配置藏在设置页，
+          // 而它本来就跟源管理是一件事。
           PopupMenuButton<String>(
             tooltip: '更多',
-            enabled: sites.isNotEmpty,
+            constraints: const BoxConstraints(minWidth: 236, maxWidth: 300),
             onSelected: (value) {
-              if (value == 'clearAll') _clearAllSites();
+              switch (value) {
+                case 'importFile':
+                  _importFromFile();
+                  break;
+                case 'export':
+                  _exportSites();
+                  break;
+                case 'clearAll':
+                  _clearAllSites();
+                  break;
+              }
             },
-            itemBuilder: (ctx) {
-              final isDark = Theme.of(ctx).brightness == Brightness.dark;
-              final danger = isDark ? AppColors.failDark : AppColors.failLight;
-              return <PopupMenuEntry<String>>[
-                PopupMenuItem<String>(
-                  value: 'clearAll',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete_sweep_outlined, size: 18, color: danger),
-                      const SizedBox(width: 10),
-                      Text(
-                        '清空所有源',
-                        style: TextStyle(fontSize: 14, color: danger),
-                      ),
-                    ],
-                  ),
-                ),
-              ];
-            },
+            itemBuilder: (ctx) => <PopupMenuEntry<String>>[
+              _menuItem(
+                ctx,
+                value: 'importFile',
+                icon: Icons.playlist_add,
+                title: '导入配置文件',
+                subtitle: 'TVBox / ZYFun 的 JSON 文件，合并进现有源',
+              ),
+              _menuItem(
+                ctx,
+                value: 'export',
+                icon: Icons.file_upload_outlined,
+                title: '导出所有源',
+                subtitle: '存成 TVBox / ZYFun 格式，可分享或当订阅',
+                enabled: sites.isNotEmpty,
+              ),
+              const PopupMenuDivider(),
+              _menuItem(
+                ctx,
+                value: 'clearAll',
+                icon: Icons.delete_sweep_outlined,
+                title: '清空所有源',
+                subtitle: sites.isEmpty
+                    ? '当前没有源'
+                    : '删除全部 ${sites.length} 个，无法撤销',
+                color: Theme.of(ctx).brightness == Brightness.dark
+                    ? AppColors.failDark
+                    : AppColors.failLight,
+                enabled: sites.isNotEmpty,
+              ),
+            ],
           ),
         ],
       ),
@@ -626,6 +709,56 @@ class _SitePageState extends State<SitePage> {
             child: sites.isEmpty
                 ? const _EmptySites()
                 : _buildSiteList(sites, state),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 溢出菜单的一项：图标 + 主标题 + 一句说明。
+  ///
+  /// 三个动作都带「源」字，光看名字容易错点（导入文件 / 导出文件相邻），
+  /// 副标题把「从哪来、到哪去、会不会丢数据」写清楚。
+  PopupMenuItem<String> _menuItem(
+    BuildContext ctx, {
+    required String value,
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    Color? color,
+    bool enabled = true,
+  }) {
+    final isDark = Theme.of(ctx).brightness == Brightness.dark;
+    final sub = isDark ? AppColors.darkSubText : AppColors.lightSubText;
+    final text = Theme.of(ctx).textTheme.bodyMedium?.color ??
+        (isDark ? Colors.white : Colors.black87);
+    // 禁用态整体压成次要色，避免「红色却点不动」看起来像坏了
+    final main = enabled ? (color ?? text) : sub;
+    return PopupMenuItem<String>(
+      value: value,
+      enabled: enabled,
+      height: 62,
+      child: Row(
+        children: [
+          Icon(icon, size: 19, color: main),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: main,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(subtitle, style: TextStyle(fontSize: 11.5, color: sub)),
+              ],
+            ),
           ),
         ],
       ),
@@ -1085,9 +1218,11 @@ class _EmptySites extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '点上方「导入视频源」添加，支持 TVBox / ZYFun 配置、多仓与导航页',
+            '点上方「导入视频源」填地址，\n或点右上角菜单导入配置文件',
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 12,
+              height: 1.5,
               color: isDark ? const Color(0xFF6E6E73) : const Color(0xFFB4B8BE),
             ),
           ),
