@@ -97,13 +97,9 @@ class VideoGridView extends StatelessWidget {
         icon: Icons.search_off,
       );
     }
-    // 横竖开关在 build 阶段读一次；布局阶段（LayoutBuilder 内）不能再读
+    // 显示模式在 build 阶段读一次；布局阶段（LayoutBuilder 内）不能再读
     // InheritedWidget，否则会触发「依赖注册发生在 layout」的断言。
-    final landscape =
-        context.select<AppState, bool>((s) => s.config.landscapeCard);
-    // 瀑布流优先级最高：开了它就按海报原比例排，横版 / 竖版就都不管了
-    final waterfall =
-        context.select<AppState, bool>((s) => s.config.waterfall);
+    final mode = context.select<AppState, ViewMode>((s) => s.config.viewMode);
     final screenWidth = MediaQuery.of(context).size.width;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -112,7 +108,7 @@ class VideoGridView extends StatelessWidget {
         final available = constraints.maxWidth.isFinite && constraints.maxWidth > 0
             ? constraints.maxWidth - 12 // GridView 左右各 6
             : screenWidth - 12;
-        if (waterfall) {
+        if (mode == ViewMode.waterfall) {
           final columns = waterfallColumnCount(available);
           final colWidth = available / columns;
           final memW = (colWidth * 2).round().clamp(300, 480);
@@ -141,7 +137,7 @@ class VideoGridView extends StatelessWidget {
             },
           );
         }
-        final delegate = landscape
+        final delegate = mode == ViewMode.landscape
             ? landscapeGridDelegate(available)
             : portraitGridDelegate(available);
         // 列宽决定封面解码尺寸：屏幕越宽单列越宽，但解码像素按显示尺寸的 ~2 倍即可，
@@ -236,10 +232,7 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
         isDark ? AppColors.darkSkeletonHigh : AppColors.lightSkeletonHigh;
     // 在 build 期取一次（含 select 依赖），别放进 AnimatedBuilder / LayoutBuilder
     // 里反复读 —— 布局阶段注册依赖会触发断言。
-    final landscape =
-        context.select<AppState, bool>((s) => s.config.landscapeCard);
-    final waterfall =
-        context.select<AppState, bool>((s) => s.config.waterfall);
+    final mode = context.select<AppState, ViewMode>((s) => s.config.viewMode);
     final screenWidth = MediaQuery.of(context).size.width;
 
     return LayoutBuilder(
@@ -248,7 +241,7 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
             constraints.maxWidth.isFinite && constraints.maxWidth > 0
                 ? constraints.maxWidth - 12
                 : screenWidth - 12;
-        final delegate = landscape
+        final delegate = mode == ViewMode.landscape
             ? landscapeGridDelegate(available)
             : portraitGridDelegate(available);
         return AnimatedBuilder(
@@ -256,7 +249,7 @@ class _VideoGridSkeletonState extends State<VideoGridSkeleton>
           builder: (context, _) {
             final t = Curves.easeInOut.transform(_controller.value);
             final color = Color.lerp(base, highlight, t)!;
-            if (waterfall) {
+            if (mode == ViewMode.waterfall) {
               // 瀑布流骨架：占位块按默认海报比例排，切换模式时形状不会突然变
               return WaterfallGrid(
                 columns: waterfallColumnCount(available),

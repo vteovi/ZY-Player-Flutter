@@ -307,6 +307,41 @@ class RecordItem extends Video {
   }
 }
 
+/// 首页 / 搜索 / 收藏 / 历史的卡片显示模式 —— **三选一**，互斥。
+///
+/// 1.33.0 之前是「横版卡片」一个开关，1.35.0 又加了「瀑布流」变成两个独立
+/// 布尔（靠优先级压：瀑布流 > 横版）。两个开关要用户自己理解先后关系，容易
+/// 配出"两个都开着，到底哪个生效"的困惑，1.36.1 起合并成单一枚举。
+enum ViewMode {
+  /// 竖向海报（默认）：列数按宽度自适应，海报裁成统一竖版比例。
+  portrait,
+
+  /// 横向卡片：左图右文，手机竖屏每行一个，平板多列。
+  landscape,
+
+  /// 瀑布流：按海报**原始比例**排，不等高、不裁切。
+  waterfall;
+
+  /// 宽松解析：新值优先，读不到就按 1.36.0 及更早的两个布尔反推。
+  /// 老用户升级后看到的效果与升级前一致，不会莫名其妙跳回竖版。
+  static ViewMode parse(Map<dynamic, dynamic> json) {
+    switch (json['viewMode']?.toString()) {
+      case 'portrait':
+        return ViewMode.portrait;
+      case 'landscape':
+        return ViewMode.landscape;
+      case 'waterfall':
+        return ViewMode.waterfall;
+    }
+    // 老存档没有 viewMode：按当年的优先级（瀑布流 > 横向 > 竖向）还原
+    if (_truthy(json['waterfall'])) return ViewMode.waterfall;
+    if (_truthy(json['landscapeCard'])) return ViewMode.landscape;
+    return ViewMode.portrait;
+  }
+
+  static bool _truthy(Object? v) => v == true || v?.toString() == 'true';
+}
+
 /// 软件配置（对应 setting 库里 key = config 的记录）
 class AppConfig {
   final int id;
@@ -343,13 +378,13 @@ class AppConfig {
   /// 显示模式：'system' 跟随系统 / 'light' 浅色 / 'dark' 深色，默认跟随系统。
   final String themeMode;
 
-  /// 首页卡片横向模式：开启后海报横向（左图右文），
-  /// 手机竖屏每行一个，平板大屏自适应多列；关闭为竖向海报（默认）。
-  final bool landscapeCard;
+  /// 卡片显示模式：竖向 / 横向 / 瀑布流，见 [ViewMode]。
+  /// 三种互斥，不再有「两个开关谁的优先级高」的问题。
+  final ViewMode viewMode;
 
-  /// 首页顶栏是否显示「视图切换」按钮（横版 / 竖版卡片一键互换）。
+  /// 首页顶栏是否显示「视图切换」按钮（竖向 / 横向卡片一键互换）。
   /// 默认关闭：顶栏只留站点与搜索，界面更干净；关闭时仍可在设置页
-  /// 的「横向卡片模式」里切换卡片形态。
+  /// 的「显示模式」里切换。
   final bool showViewToggle;
 
   /// 收藏与历史记录是否合并成一个页面（顶部 TabBar 分两栏）。
@@ -357,11 +392,6 @@ class AppConfig {
   /// 开启后导航栏缩回「首页 / 收藏与历史 / 设置」，点进去再分栏。
   /// （1.33.0 之前一直是合并形态，这个开关用来照顾习惯老布局的用户）
   final bool mergeRecords;
-
-  /// 瀑布流显示模式：卡片按海报**原始比例**排布（不等高、不裁切）。
-  /// 手机固定 2 列，平板 / 桌面按宽度铺（每列约 190dp，最多 8 列）。
-  /// 开启后优先级高于 [landscapeCard]——比例都按原图走了，横竖之分就没意义了。
-  final bool waterfall;
 
   /// 自定义播放器的可执行文件路径（Windows 专属）。
   /// 设置后，「外部播放」会直接启动该 exe 并带上播放地址，
@@ -384,10 +414,9 @@ class AppConfig {
     this.forceSoftwareDecode = false,
     this.playerLongPressRate = 2.0,
     this.themeMode = 'system',
-    this.landscapeCard = false,
+    this.viewMode = ViewMode.portrait,
     this.showViewToggle = false,
     this.mergeRecords = false,
-    this.waterfall = false,
     this.externalPlayerPath = '',
     this.updateUrl = '',
   });
@@ -410,14 +439,11 @@ class AppConfig {
         return rate is num ? rate.toDouble() : double.tryParse('$rate') ?? 2.0;
       }(),
       themeMode: mode == 'light' || mode == 'dark' ? mode : 'system',
-      landscapeCard:
-          json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
+      viewMode: ViewMode.parse(json),
       showViewToggle:
           json['showViewToggle'] == true || json['showViewToggle'].toString() == 'true',
       mergeRecords:
           json['mergeRecords'] == true || json['mergeRecords'].toString() == 'true',
-      waterfall:
-          json['waterfall'] == true || json['waterfall'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
       updateUrl: (json['updateUrl'] ?? '').toString(),
     );
@@ -434,10 +460,13 @@ class AppConfig {
         'forceSoftwareDecode': forceSoftwareDecode,
         'playerLongPressRate': playerLongPressRate,
         'themeMode': themeMode,
-        'landscapeCard': landscapeCard,
+        'viewMode': viewMode.name,
+        // 两个旧布尔仍写出去：1.36.0 及更早的版本恢复本备份时还能读懂
+        // （它们只认 landscapeCard / waterfall），不至于把显示模式丢掉。
+        'landscapeCard': viewMode == ViewMode.landscape,
+        'waterfall': viewMode == ViewMode.waterfall,
         'showViewToggle': showViewToggle,
         'mergeRecords': mergeRecords,
-        'waterfall': waterfall,
         'externalPlayerPath': externalPlayerPath,
         'updateUrl': updateUrl,
       };
@@ -451,10 +480,9 @@ class AppConfig {
     bool? forceSoftwareDecode,
     double? playerLongPressRate,
     String? themeMode,
-    bool? landscapeCard,
+    ViewMode? viewMode,
     bool? showViewToggle,
     bool? mergeRecords,
-    bool? waterfall,
     String? externalPlayerPath,
     String? updateUrl,
   }) =>
@@ -469,10 +497,9 @@ class AppConfig {
         forceSoftwareDecode: forceSoftwareDecode ?? this.forceSoftwareDecode,
         playerLongPressRate: playerLongPressRate ?? this.playerLongPressRate,
         themeMode: themeMode ?? this.themeMode,
-        landscapeCard: landscapeCard ?? this.landscapeCard,
+        viewMode: viewMode ?? this.viewMode,
         showViewToggle: showViewToggle ?? this.showViewToggle,
         mergeRecords: mergeRecords ?? this.mergeRecords,
-        waterfall: waterfall ?? this.waterfall,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
         updateUrl: updateUrl ?? this.updateUrl,
       );

@@ -325,10 +325,11 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 首页卡片横向 / 竖向切换，默认竖向
-  Future<void> setLandscapeCard(bool value) async {
-    if (_config.landscapeCard == value) return;
-    _config = _config.copyWith(landscapeCard: value);
+  /// 卡片显示模式：竖向 / 横向 / 瀑布流三选一，默认竖向。
+  /// 三种互斥，切换即时生效（网格组件监听 config 重建）。
+  Future<void> setViewMode(ViewMode mode) async {
+    if (_config.viewMode == mode) return;
+    _config = _config.copyWith(viewMode: mode);
     await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
     notifyListeners();
   }
@@ -346,14 +347,6 @@ class AppState extends ChangeNotifier {
   Future<void> setMergeRecords(bool value) async {
     if (_config.mergeRecords == value) return;
     _config = _config.copyWith(mergeRecords: value);
-    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
-    notifyListeners();
-  }
-
-  /// 瀑布流显示模式：卡片按海报原始比例不等高排布（不裁切），默认关闭
-  Future<void> setWaterfall(bool value) async {
-    if (_config.waterfall == value) return;
-    _config = _config.copyWith(waterfall: value);
     await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
     notifyListeners();
   }

@@ -430,18 +430,16 @@ class FilmPageState extends State<FilmPage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     // 宽屏（平板 / 桌面）：首行够宽，站点切换与右侧操作同排
     final isWide = MediaQuery.of(context).size.width >= _wideThreshold;
-    // 卡片形态：横向（16:10 图上文下）/ 竖向（竖版海报网格）。
-    // 设置页也能改，这里 select 只订阅这一个字段 —— 用 watch 会让任何设置变更
-    // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
-    final landscape =
-        context.select<AppState, bool>((s) => s.config.landscapeCard);
+    // 卡片显示模式：竖向 / 横向 / 瀑布流三选一。设置页也能改，这里 select
+    // 只订阅这一个字段 —— 用 watch 会让任何设置变更（主题、倍速、下载速度…）
+    // 都把整个首页连同分栏重建一次。
+    final mode = context.select<AppState, ViewMode>((s) => s.config.viewMode);
+    final landscape = mode == ViewMode.landscape;
     // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段。
     // 瀑布流下卡片按海报原比例走，横竖之分没意义，这个按钮一并让位。
-    final waterfall =
-        context.select<AppState, bool>((s) => s.config.waterfall);
     final showViewToggle =
         context.select<AppState, bool>((s) => s.config.showViewToggle) &&
-            !waterfall;
+            mode != ViewMode.waterfall;
     return Scaffold(
       appBar: AppBar(
         // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索，
@@ -671,12 +669,15 @@ class FilmPageState extends State<FilmPage>
   ///
   /// 图标显示的是**点下去会变成什么**，配 tooltip 说清方向，一眼能看出作用；
   /// 当前形态本身在屏幕上就看得见，不需要再用图标重复一遍。
+  /// 只在这两种之间来回切，不碰瀑布流（瀑布流下这个按钮本身就不显示）。
   Widget _buildViewButton(bool isDark, bool landscape) {
     return _buildBarIcon(
       isDark: isDark,
       icon: landscape ? Icons.grid_view_rounded : Icons.view_agenda_rounded,
       tooltip: landscape ? '切换为竖向卡片' : '切换为横向卡片',
-      onTap: () => context.read<AppState>().setLandscapeCard(!landscape),
+      onTap: () => context
+          .read<AppState>()
+          .setViewMode(landscape ? ViewMode.portrait : ViewMode.landscape),
     );
   }
 
