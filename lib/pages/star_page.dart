@@ -9,8 +9,9 @@ import 'detail_page.dart';
 
 /// 收藏页：卡片网格，点开详情，长按取消收藏。
 ///
-/// 以前和历史记录挤在一个页面用 TabBar 分栏，拆开之后各自是一个独立 Tab，
-/// 条数搬到了标题右边（[RecordCountTag]）。
+/// 只在「收藏与历史合并」关闭（默认）时出现 —— 此时导航栏是
+/// 「首页 / 收藏 / 历史 / 设置」，条数显示在标题右边的 [RecordCountTag] 里。
+/// 打开合并开关后改由 `RecordsPage`（「我的」）承载，收藏与历史分两个 Tab。
 class StarPage extends StatefulWidget {
   const StarPage({super.key});
 

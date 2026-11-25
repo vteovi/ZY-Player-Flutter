@@ -341,6 +341,15 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 收藏与历史是否合并成一个页面（顶部两栏），默认分开。
+  /// 改完立刻生效：导航栏项数会跟着变（MainPage 监听 config 重建）。
+  Future<void> setMergeRecords(bool value) async {
+    if (_config.mergeRecords == value) return;
+    _config = _config.copyWith(mergeRecords: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   /// 全屏长按加速倍率（2.0 / 4.0 / 8.0），默认 2.0
   Future<void> setPlayerLongPressRate(double value) async {
     if (_config.playerLongPressRate == value) return;

@@ -14,6 +14,7 @@ import '../services/update_service.dart';
 import '../utils/file_pick.dart';
 import '../utils/toast.dart';
 import 'history_page.dart';
+import 'records_page.dart';
 import 'site_page.dart';
 import 'sync_page.dart';
 
@@ -366,7 +367,13 @@ class MePage extends StatelessWidget {
           _MenuItem(
             title: '播放记录',
             subtitle: '记录播放历史',
-            onTap: () => _push(context, const HistoryPage()),
+            // 合并模式下历史在「我的」页的第二个分栏里，直接落过去
+            onTap: () => _push(
+              context,
+              appState.config.mergeRecords
+                  ? const RecordsPage(initialTab: 1)
+                  : const HistoryPage(),
+            ),
           ),
           _MenuItem(
             title: '视频源管理',
@@ -409,6 +416,15 @@ class MePage extends StatelessWidget {
             value: appState.config.showViewToggle,
             onChanged: (value) =>
                 context.read<AppState>().setShowViewToggle(value),
+          ),
+          SwitchListTile(
+            title: const Text('收藏与历史合并'),
+            subtitle: const Text(
+                '开启后导航栏是「首页 / 我的 / 设置」，收藏与播放记录放进「我的」'
+                '页分两栏（收藏 12 / 历史记录 34）；关闭则导航栏各自独立一项'),
+            value: appState.config.mergeRecords,
+            onChanged: (value) =>
+                context.read<AppState>().setMergeRecords(value),
           ),
           SwitchListTile(
             title: const Text('显示实时下载速度'),
