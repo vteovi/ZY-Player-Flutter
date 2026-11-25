@@ -48,6 +48,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - 首页片单缓存 `list_cache.dart` 先读缓存秒出再静默刷新；封面预取并发 6，网格 `memCacheWidth:480`、详情 600。`PosterCover` 自定义 `imageBuilder` 会丢淡入，用 `frameBuilder + AnimatedOpacity` 补。
 - **收藏/历史**：`mergeRecords` 开关 —— 关（默认）导航 4 项（首页/收藏/历史/设置），`StarPage`+`HistoryPage`，共用 `widgets/record_grid.dart`；开则 3 项（首页/我的/设置）+ `RecordsPage` TabBar 两栏。角标 `RecordCountTag`。`MainPage` 用**逻辑槽位 + `_slotOf()/_indexOf()`**，别用物理下标（会越界/弹回首页）。
 - 记录 key = `{siteKey}-{videoId}`，siteKey 含连字符，**绝不用 `split('-')[0]`**，用 `resolveRecordKey()`。
+- **输入框别用 `TextInputType.url`**（2026-11-25 实锤）：映射成 `TYPE_TEXT_VARIATION_URI`，配 `autocorrect:false`/`enableSuggestions:false` 的 `NO_SUGGESTIONS`，国产输入法会判成敏感输入并切「安全键盘」，用户调不出常用输入法与粘贴板。网址/接口地址框一律 `TextInputType.text`。
 - 源检测 `checkSite`（`?ac=list` 超时 8s）→ ok/warn/fail；中途只更新 chip，结尾统一启停+重排；结果只放内存。**`PopupMenuButton` 别整个 `enabled:false`**，会连非破坏项一起禁掉。
 - **大屏（≥600）**：首页搜索框并入 AppBar 第一排 [站点 ≤260 | 搜索 | 共 N]，toolbarHeight 60；NavigationRail `trailing` 放大屏入口。播放页分栏：宽≥840 且 宽>高，右栏 min(30%,420) 且 ≥300。
 - **播放页**：进度条独占一行 + 等宽按钮行；比例/大小是独立两维（`_stageAreaSize` + 双层 FittedBox）；左亮右音量、双击暂停；自绘 `_ProgressSlider`；`PopScope` 先退全屏再退页；控制层 4s 隐藏；倍速 0.5~3.0 八档；**收藏按钮只在 `!_fullscreen || _landscapeNow` 显示**。
