@@ -352,6 +352,12 @@ class AppConfig {
   /// 的「横向卡片模式」里切换卡片形态。
   final bool showViewToggle;
 
+  /// 收藏与历史记录是否合并成一个页面（顶部 TabBar 分两栏）。
+  /// 默认 false：各自独立成页，导航栏是「首页 / 收藏 / 历史 / 设置」；
+  /// 开启后导航栏缩回「首页 / 收藏与历史 / 设置」，点进去再分栏。
+  /// （1.33.0 之前一直是合并形态，这个开关用来照顾习惯老布局的用户）
+  final bool mergeRecords;
+
   /// 自定义播放器的可执行文件路径（Windows 专属）。
   /// 设置后，「外部播放」会直接启动该 exe 并带上播放地址，
   /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
@@ -375,6 +381,7 @@ class AppConfig {
     this.themeMode = 'system',
     this.landscapeCard = false,
     this.showViewToggle = false,
+    this.mergeRecords = false,
     this.externalPlayerPath = '',
     this.updateUrl = '',
   });
@@ -401,6 +408,8 @@ class AppConfig {
           json['landscapeCard'] == true || json['landscapeCard'].toString() == 'true',
       showViewToggle:
           json['showViewToggle'] == true || json['showViewToggle'].toString() == 'true',
+      mergeRecords:
+          json['mergeRecords'] == true || json['mergeRecords'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
       updateUrl: (json['updateUrl'] ?? '').toString(),
     );
@@ -419,6 +428,7 @@ class AppConfig {
         'themeMode': themeMode,
         'landscapeCard': landscapeCard,
         'showViewToggle': showViewToggle,
+        'mergeRecords': mergeRecords,
         'externalPlayerPath': externalPlayerPath,
         'updateUrl': updateUrl,
       };
@@ -434,6 +444,7 @@ class AppConfig {
     String? themeMode,
     bool? landscapeCard,
     bool? showViewToggle,
+    bool? mergeRecords,
     String? externalPlayerPath,
     String? updateUrl,
   }) =>
@@ -450,6 +461,7 @@ class AppConfig {
         themeMode: themeMode ?? this.themeMode,
         landscapeCard: landscapeCard ?? this.landscapeCard,
         showViewToggle: showViewToggle ?? this.showViewToggle,
+        mergeRecords: mergeRecords ?? this.mergeRecords,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
         updateUrl: updateUrl ?? this.updateUrl,
       );
