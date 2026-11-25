@@ -435,9 +435,13 @@ class FilmPageState extends State<FilmPage>
     // （主题、倍速、下载速度…）都把整个首页连同分栏重建一次。
     final landscape =
         context.select<AppState, bool>((s) => s.config.landscapeCard);
-    // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段
+    // 视图切换按钮默认隐藏（设置页里开启），同样只订阅这一个字段。
+    // 瀑布流下卡片按海报原比例走，横竖之分没意义，这个按钮一并让位。
+    final waterfall =
+        context.select<AppState, bool>((s) => s.config.waterfall);
     final showViewToggle =
-        context.select<AppState, bool>((s) => s.config.showViewToggle);
+        context.select<AppState, bool>((s) => s.config.showViewToggle) &&
+            !waterfall;
     return Scaffold(
       appBar: AppBar(
         // 「首页」文字已去掉，原位改放站点切换（含资源数）+ 搜索，

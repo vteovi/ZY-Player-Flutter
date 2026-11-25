@@ -11,6 +11,7 @@ import 'services/boot_snapshot.dart';
 import 'utils/app_colors.dart';
 import 'utils/constants.dart';
 import 'utils/cover_cache.dart';
+import 'utils/poster_ratio.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,7 +28,7 @@ Future<void> main() async {
   // 内容**：封面路径索引让海报直接读本地文件，首屏快照让站点 / 分类 / 片单
   // 在第一帧就铺得出来，不必先空白一两秒等异步链路走完。
   // 并行读，别串行等两次。
-  await Future.wait([CoverCache.load(), BootSnapshot.load()]);
+  await Future.wait([CoverCache.load(), BootSnapshot.load(), PosterRatio.load()]);
   runApp(const ZyPlayerApp());
 }
 

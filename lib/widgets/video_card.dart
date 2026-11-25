@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -7,6 +8,7 @@ import '../models/video.dart';
 import '../utils/app_colors.dart';
 import '../utils/cover_cache.dart';
 import '../utils/image_cache.dart';
+import '../utils/poster_ratio.dart';
 
 /// 海报封面：纯图（CachedNetworkImage），支持来源角标与占位/错误态。
 ///
@@ -44,6 +46,8 @@ class PosterCover extends StatelessWidget {
       if (localPath == null) {
         image = _buildNetwork(bgColor, iconColor);
       } else {
+        // 顺手量一下海报原始比例（只读文件头），供瀑布流用；已量过会立即返回
+        unawaited(PosterRatio.measureFromFile(pic, localPath));
         image = Image.file(
           File(localPath),
           fit: BoxFit.cover,
@@ -97,6 +101,28 @@ class PosterCover extends StatelessWidget {
       // 限制内存解码尺寸：海报原图往往 600×900+，卡片只显示 ~150dp 宽，
       // 解码到 480px 宽足够清晰，能大幅降低内存占用与首屏解码耗时，滚动更跟手。
       memCacheWidth: memCacheWidth,
+      imageBuilder: (context, imageProvider) {
+        // 拿内部 provider 再 resolve 一次读真实像素尺寸，供瀑布流按原比例排版。
+        // 这里与下面 Image 用的是**同一个 provider**（同一个 ImageCache 条目），
+        // 所以不会重复下载、也不会重复解码。
+        _probeRatio(imageProvider);
+        return Image(
+          image: imageProvider,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
+          frameBuilder: (context, child, frame, wasSync) {
+            if (wasSync) return child;
+            // 自定义 imageBuilder 后 CachedNetworkImage 自带的 fadeInDuration
+            // 不再生效，这里补一个同样的淡入，观感与改动前一致。
+            return AnimatedOpacity(
+              opacity: frame == null ? 0 : 1,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+              child: child,
+            );
+          },
+        );
+      },
       placeholder: (_, __) => ColoredBox(
         color: bgColor,
         child: Center(
@@ -112,6 +138,34 @@ class PosterCover extends StatelessWidget {
         child: Center(child: Icon(Icons.broken_image, color: iconColor)),
       ),
     );
+  }
+
+  /// 图片解码完成后把「宽 / 高」记进 [PosterRatio]，供瀑布流重排。
+  ///
+  /// 同一 URL 只探测一次；失败（图片挂了）也会放开标记，下次还能再试。
+  void _probeRatio(ImageProvider provider) {
+    if (!PosterRatio.beginProbe(pic)) return;
+    final stream = provider.resolve(ImageConfiguration.empty);
+    late final ImageStreamListener listener;
+    var done = false;
+    void finish() {
+      if (done) return;
+      done = true;
+      PosterRatio.endProbe(pic);
+      // 图片可能已在缓存里、回调是同步发生的，此时不能直接移除自己
+      scheduleMicrotask(() => stream.removeListener(listener));
+    }
+
+    listener = ImageStreamListener(
+      (info, _) {
+        final w = info.image.width;
+        final h = info.image.height;
+        if (w > 0 && h > 0) PosterRatio.remember(pic, w / h);
+        finish();
+      },
+      onError: (_, __) => finish(),
+    );
+    stream.addListener(listener);
   }
 }
 
@@ -129,12 +183,21 @@ class VideoCard extends StatelessWidget {
   /// 封面解码内存尺寸（按网格列宽自适应，平板大屏更低以省 GPU 纹理内存）
   final int memCacheWidth;
 
+  /// 封面「宽 / 高」比例。
+  ///
+  /// - 网格模式传 null：封面用 [Expanded] 撑满卡片剩余高度（网格已把整张卡的
+  ///   宽高比算死了）。
+  /// - 瀑布流传实测比例：封面用 [AspectRatio] 定高，卡片高度随各张海报自然不等，
+  ///   比例准确时 `BoxFit.cover` 不会裁掉任何一条边。
+  final double? coverRatio;
+
   const VideoCard({
     super.key,
     required this.video,
     required this.onTap,
     this.sourceLabel,
     this.memCacheWidth = 480,
+    this.coverRatio,
   });
 
   @override
@@ -150,12 +213,21 @@ class VideoCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: SizedBox(
-                width: double.infinity,
-                child: _buildCover(isDark),
+            if (coverRatio != null)
+              AspectRatio(
+                aspectRatio: coverRatio!,
+                child: SizedBox(
+                  width: double.infinity,
+                  child: _buildCover(isDark),
+                ),
+              )
+            else
+              Expanded(
+                child: SizedBox(
+                  width: double.infinity,
+                  child: _buildCover(isDark),
+                ),
               ),
-            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
               child: Text(

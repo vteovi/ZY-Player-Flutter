@@ -350,6 +350,14 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 瀑布流显示模式：卡片按海报原始比例不等高排布（不裁切），默认关闭
+  Future<void> setWaterfall(bool value) async {
+    if (_config.waterfall == value) return;
+    _config = _config.copyWith(waterfall: value);
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   /// 全屏长按加速倍率（2.0 / 4.0 / 8.0），默认 2.0
   Future<void> setPlayerLongPressRate(double value) async {
     if (_config.playerLongPressRate == value) return;

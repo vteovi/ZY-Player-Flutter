@@ -358,6 +358,11 @@ class AppConfig {
   /// （1.33.0 之前一直是合并形态，这个开关用来照顾习惯老布局的用户）
   final bool mergeRecords;
 
+  /// 瀑布流显示模式：卡片按海报**原始比例**排布（不等高、不裁切）。
+  /// 手机固定 2 列，平板 / 桌面按宽度铺（每列约 190dp，最多 8 列）。
+  /// 开启后优先级高于 [landscapeCard]——比例都按原图走了，横竖之分就没意义了。
+  final bool waterfall;
+
   /// 自定义播放器的可执行文件路径（Windows 专属）。
   /// 设置后，「外部播放」会直接启动该 exe 并带上播放地址，
   /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
@@ -382,6 +387,7 @@ class AppConfig {
     this.landscapeCard = false,
     this.showViewToggle = false,
     this.mergeRecords = false,
+    this.waterfall = false,
     this.externalPlayerPath = '',
     this.updateUrl = '',
   });
@@ -410,6 +416,8 @@ class AppConfig {
           json['showViewToggle'] == true || json['showViewToggle'].toString() == 'true',
       mergeRecords:
           json['mergeRecords'] == true || json['mergeRecords'].toString() == 'true',
+      waterfall:
+          json['waterfall'] == true || json['waterfall'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
       updateUrl: (json['updateUrl'] ?? '').toString(),
     );
@@ -429,6 +437,7 @@ class AppConfig {
         'landscapeCard': landscapeCard,
         'showViewToggle': showViewToggle,
         'mergeRecords': mergeRecords,
+        'waterfall': waterfall,
         'externalPlayerPath': externalPlayerPath,
         'updateUrl': updateUrl,
       };
@@ -445,6 +454,7 @@ class AppConfig {
     bool? landscapeCard,
     bool? showViewToggle,
     bool? mergeRecords,
+    bool? waterfall,
     String? externalPlayerPath,
     String? updateUrl,
   }) =>
@@ -462,6 +472,7 @@ class AppConfig {
         landscapeCard: landscapeCard ?? this.landscapeCard,
         showViewToggle: showViewToggle ?? this.showViewToggle,
         mergeRecords: mergeRecords ?? this.mergeRecords,
+        waterfall: waterfall ?? this.waterfall,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
         updateUrl: updateUrl ?? this.updateUrl,
       );

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'cover_cache.dart';
 import 'image_cache.dart';
+import 'poster_ratio.dart';
 
 /// 后台预取封面图，缩短「片单秒出」到「封面也秒出」的距离。
 ///
@@ -41,12 +42,17 @@ class ImagePrefetch {
       for (var i = 0; i < todo.length; i += maxConcurrent) {
         final batch = todo.skip(i).take(maxConcurrent).toList();
         await Future.wait(
-          batch.map(
-            (u) => cm
-                .getSingleFile(u)
-                .then((file) => CoverCache.remember(u, file.path))
-                .catchError((_) {}),
-          ),
+          batch.map((u) async {
+            try {
+              final file = await cm.getSingleFile(u);
+              CoverCache.remember(u, file.path);
+              // 顺手量一次海报原始比例（只读前 64KB 文件头，不解码、零网络），
+              // 供瀑布流按真实比例排卡片；量不到的等下次有文件再补。
+              unawaited(PosterRatio.measureFromFile(u, file.path));
+            } catch (_) {
+              // 单张失败不影响这一批
+            }
+          }),
         );
       }
     } finally {
