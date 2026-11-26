@@ -43,6 +43,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - **TVBox 加密配置（勿回退）**：`box.iqinu.com` 类站只在 `okhttp/*` UA 下给真配置，正文 `$#key#$` + AES-128-CBC + 13 字节 IV。`_fetchConfig` 按 okhttp/3.15→3.12→浏览器试；`utils/tvbox_crypto.dart` 纯 Dart 解密（**不引 pointycastle**；GF 求逆用 `x^254`）。spider 兜底要严：`.js/.json/.txt`、逗号多域名一律不导。
 - 地址一律 `HttpService._apiUrl()`；type 不可信，按首字符判 JSON/XML；先 GET 仅 4xx 回退 POST；`Site.id` 只是装饰，身份用 `key`。CDN 常按 UA 拦 ExoPlayer → `_kPlayerHeaders` 用浏览器 UA。
 - **多线路（1.44.0，勿回退）**：`vod_play_from` / `vod_play_url` 都是 `$$$` 分段且按序对应，聚合站一部片可达 11 条（`ys.cxkjg.cn` 实测，集数 15~21 不等）。`VideoDetail.lines` 是唯一真源（`m3u8List` 只是 `lines.first.items` 的 getter）；`_mapPlayLines()` 逐段配对、缺名补「线路N」、含 m3u8 的排前。详情页 `_selectLine` 只换选集不重请求；播放页 `_switchLine` 按集名对齐同集、对不上按原位置；进播放页用 `widget.url` 反查线路，历史/收藏不串台。**绝不要再退回「firstWhere 取第一段」**。
+- **详情页滑动切线路（1.45.0）**：内容区包 `GestureDetector(onHorizontalDrag*)`，阈值 48px 或 320px/s，向左滑=下一条；`_lines.length<2` 不挂手势。线路 chip 各挂 `GlobalKey`，切换后 postFrame `Scrollable.ensureVisible(alignment:0.5)` 让它自动居中——**同时管横向与纵向**，页面滚到底也能拉回视口。线路条自身横向滚动在竞技场更深会优先吃手势（有意：否则后面线路选不到）。
 
 ## UI 约定（勿回退）
 - **加载态一律骨架屏**，禁灰黑遮罩（`LoadingMask` 已删）；刷新不抹内容，顶部 2px `LinearProgressIndicator`；换源不重置 `_classes`。
