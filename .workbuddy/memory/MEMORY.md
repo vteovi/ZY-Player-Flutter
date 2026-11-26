@@ -21,6 +21,9 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 ## 构建与发版
 - **出包**：Actions → `Build APK + Windows` → 选分支 + `variant`（split 推荐）。手动跑**不发 Release**，产物在 Artifacts（留 30 天）。
 - **发版顺序（勿乱）**：改 pubspec → 打 tag → push → CI 产 Release（含固定名 `ZY-Player-arm64-latest.apk`）→ **Release 存在后**才改 `update.json`（5 条左右用户能感知的说明）→ push → 清 CDN → 验镜像 → 切 dev `git checkout main -- update.json` 同步。
+- **Release 正文自动取自 `更新记录.MD`**：`tools/release-notes.sh` 按行首 `## v<版本>` 截取当前版本那节，末尾附「下载哪个包」表 + 安装须知，并给出 `更新记录.MD` 的**可点击链接**（指向 tag 而非 main，中文名用 `%E6%9B%B4...` 编码）。两个 job 都跑它，`gh release create/edit --notes-file`。补写已发布 Release 用 `.github/workflows/sync-release-notes.yml`（`workflow_dispatch` 填 tag，或改 `.release-sync` 一行再 push）。
+- **Release 404 ≠ 权限问题**：`GET /releases/tags/<tag>` 返 404 时先查 `releases?per_page=3` 列表 —— 用户可能手动删过 Release（2026-11-26 踩过，白排查 6 次）。`repos/<repo>` 与列表都 200 就说明 token 没问题。
+- **APK 直连 `releases/download` 本机常年 000**，验下载能力看镜像 Range 206 即可，别当成发布失败。
 - **版本号两处**：`pubspec.yaml`（`1.37.0+235`）+ `android/local.properties`（gitignore）。设置页副标题走原生 `PackageManager`。
 - **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 68MB；arm64 单独 18MB 必须 split。首包 ~26 分钟，缓存命中 3~5 分钟。
 - **签名（勿回退）**：库在仓库外 `C:\Users\Administrator\keystores\zy-player-release.jks`（alias `zyplayer`，口令见 `android/key.properties`）。`build.gradle.kts` 有则 release、无则退化 debug；CI 用 Secret `KEYSTORE_BASE64` + `KEYSTORE_PASSWORD` 现场生成。**keystore 绝不能入库**（仓库 public）。⚠️ 换签名后老用户须卸载重装 —— 写进每次更新说明末尾。
