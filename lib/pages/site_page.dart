@@ -142,16 +142,12 @@ class _SitePageState extends State<SitePage> {
     final progress = ValueNotifier<_ImportUiState>(
       const _ImportUiState(stage: '正在读取文件…'),
     );
-    var dialogClosed = false;
     showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => PopScope(
         canPop: false,
-        child: _ImportProgressDialog(
-          progress: progress,
-          onDone: () => dialogClosed = true,
-        ),
+        child: _ImportProgressDialog(progress: progress),
       ),
     );
 
@@ -201,19 +197,9 @@ class _SitePageState extends State<SitePage> {
       progress.value = _ImportUiState.failure('导入失败：$e');
     }
 
-    // 结果页短暂停留，让「新增 / 更新」看得清就自动关。列表此时已经
-    // 刷新完毕，用户看到的不是半成品，而是稳定的结果。
-    // 成功只留 0.8s：数据早就导完了，别为了展示结果让人觉得导入变慢；
-    // 失败留 2.4s，报错原因要看得清。
-    if (!mounted) return;
-    await Future<void>.delayed(
-      Duration(milliseconds: progress.value.ok ? 800 : 2400),
-    );
-    if (!mounted) return;
-    // 用户可能在这段时间里已经点了「完成」，别把下一个页面误关掉
-    if (!dialogClosed) {
-      Navigator.of(context, rootNavigator: true).pop();
-    }
+    // 结果页不再自动关闭：是否看清由用户自己决定，点「完成」才收起。
+    // 列表此时已经刷新完毕，用户看到的不是半成品，而是稳定的结果。
+    // 想快就秒点「完成」，想仔细看数字就慢慢看，主动权交回给用户。
   }
 
   // ---------------------------------------------------------------------------
@@ -1474,13 +1460,7 @@ class _ImportUiState {
 class _ImportProgressDialog extends StatelessWidget {
   final ValueNotifier<_ImportUiState> progress;
 
-  /// 用户主动点「完成」时回传，避免自动收尾时把下一个页面误关掉
-  final VoidCallback onDone;
-
-  const _ImportProgressDialog({
-    required this.progress,
-    required this.onDone,
-  });
+  const _ImportProgressDialog({required this.progress});
 
   @override
   Widget build(BuildContext context) {
@@ -1511,10 +1491,7 @@ class _ImportProgressDialog extends StatelessWidget {
           actions: value.finished
               ? [
                   FilledButton(
-                    onPressed: () {
-                      onDone();
-                      Navigator.of(context).pop();
-                    },
+                    onPressed: () => Navigator.of(context).pop(),
                     child: const Text('完成'),
                   ),
                 ]
