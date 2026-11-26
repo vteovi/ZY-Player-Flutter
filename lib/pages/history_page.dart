@@ -7,12 +7,13 @@ import 'package:provider/provider.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
+import '../widgets/record_detail_dialog.dart';
 import '../widgets/record_grid.dart';
 import 'play_page.dart';
 import 'search_page.dart';
 
 /// 历史记录页：卡片网格（封面下方带进度条），点开从上次位置续播，
-/// 长按弹出「搜索该影片 / 复制影片名称 / 删除」菜单（与收藏页一致）。
+/// 长按弹出五项菜单（与收藏页一致）：搜索 / 复制片名 / 查看详情 / 外部播放 / 删除。
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -46,12 +47,12 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  /// 长按历史卡片：在手指位置弹出「搜索 / 复制片名 / 删除」菜单。
+  /// 长按历史卡片：在手指位置弹出五项操作菜单。
   Future<void> _showActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
-    // 菜单约 200 宽、三项约 150 高，贴边时往里收，别弹出屏幕外
+    // 菜单约 200 宽、五项约 240 高，贴边时往里收，别弹出屏幕外
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
-    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 250));
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -82,6 +83,26 @@ class _HistoryPageState extends State<HistoryPage> {
           ),
         ),
         PopupMenuItem<String>(
+          value: 'detail',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 20),
+              SizedBox(width: 12),
+              Text('查看详情'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'external',
+          child: Row(
+            children: [
+              Icon(Icons.open_in_new, size: 20),
+              SizedBox(width: 12),
+              Text('外部播放'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
           value: 'delete',
           child: Row(
             children: [
@@ -98,6 +119,15 @@ class _HistoryPageState extends State<HistoryPage> {
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
+    } else if (action == 'detail') {
+      showRecordDetailDialog(
+        context: context,
+        item: item,
+        onExternalPlay: () => openRecordExternally(context, item),
+        onOpenDetail: () => openRecordDetail(context, item),
+      );
+    } else if (action == 'external') {
+      await openRecordExternally(context, item);
     } else if (action == 'delete') {
       await _removeHistory(item);
     }
