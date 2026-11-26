@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
-import '../widgets/record_detail_dialog.dart';
+import '../widgets/record_actions.dart';
 import '../widgets/record_grid.dart';
 import 'detail_page.dart';
 import 'play_page.dart';
@@ -16,8 +16,8 @@ import 'search_page.dart';
 /// 收藏与历史合并页 —— 顶部 TabBar 两个分栏，对应设置页里的
 /// 「收藏与历史合并」开关开启时的老布局（导航栏那一项显示为「我的」）。
 ///
-/// - 收藏：卡片网格，点开详情，长按弹出「搜索 / 复制片名 / 删除」菜单
-/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按同样的三项菜单
+/// - 收藏：卡片网格，点开详情，长按弹出「搜索该影片 / 复制片名 / 外部播放 / 删除」
+/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按多一项「复制播放地址」
 ///
 /// 条数放在 Tab 文字里（`收藏 12` / `历史记录 34`），顶部一眼看得到。
 /// 关闭开关后导航栏会变成「收藏」「历史」两个独立页（StarPage / HistoryPage），
@@ -86,8 +86,90 @@ class _RecordsPageState extends State<RecordsPage>
     );
   }
 
-  /// 长按收藏卡片：在手指位置弹出五项操作菜单。
+  /// 长按收藏卡片：在手指位置弹出四项操作菜单。
   Future<void> _showStarActions(RecordItem item, Offset position) async {
+    final screen = MediaQuery.of(context).size;
+    final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 210));
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        x.toDouble(),
+        y.toDouble(),
+        x.toDouble(),
+        y.toDouble(),
+      ),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'search',
+          child: Row(
+            children: [
+              Icon(Icons.search, size: 20),
+              SizedBox(width: 12),
+              Text('搜索该影片'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_all_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制片名'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'external',
+          child: Row(
+            children: [
+              Icon(Icons.open_in_new, size: 20),
+              SizedBox(width: 12),
+              Text('外部播放'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 20),
+              SizedBox(width: 12),
+              Text('删除'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == 'search') {
+      _searchOnline(item);
+    } else if (action == 'copy') {
+      await _copyName(item);
+    } else if (action == 'external') {
+      await openRecordExternally(context, item);
+    } else if (action == 'delete') {
+      await _removeStar(item);
+    }
+  }
+
+  /// 拿片名去全网搜：打开搜索页并自动搜，范围默认「全部站点」。
+  void _searchOnline(RecordItem item) {
+    final keyword = item.name.trim();
+    if (keyword.isEmpty) {
+      showToast(context, '这条收藏没有片名，无法搜索', success: false);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SearchPage(initialKeyword: keyword),
+      ),
+    );
+  }
+
+  /// 长按历史卡片：多一项「复制播放地址」，因为历史记录一定存了播放地址。
+  Future<void> _showHistoryActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
     final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 250));
@@ -116,116 +198,17 @@ class _RecordsPageState extends State<RecordsPage>
             children: [
               Icon(Icons.copy_all_outlined, size: 20),
               SizedBox(width: 12),
-              Text('复制影片名称'),
+              Text('复制片名'),
             ],
           ),
         ),
         PopupMenuItem<String>(
-          value: 'detail',
+          value: 'copyurl',
           child: Row(
             children: [
-              Icon(Icons.info_outline, size: 20),
+              Icon(Icons.link, size: 20),
               SizedBox(width: 12),
-              Text('查看详情'),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'external',
-          child: Row(
-            children: [
-              Icon(Icons.open_in_new, size: 20),
-              SizedBox(width: 12),
-              Text('外部播放'),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'delete',
-          child: Row(
-            children: [
-              Icon(Icons.delete_outline, size: 20),
-              SizedBox(width: 12),
-              Text('删除'),
-            ],
-          ),
-        ),
-      ],
-    );
-    if (!mounted || action == null) return;
-    if (action == 'search') {
-      _searchOnline(item);
-    } else if (action == 'copy') {
-      await _copyName(item);
-    } else if (action == 'detail') {
-      showRecordDetailDialog(
-        context: context,
-        item: item,
-        onExternalPlay: () => openRecordExternally(context, item),
-        onOpenDetail: () => openRecordDetail(context, item),
-      );
-    } else if (action == 'external') {
-      await openRecordExternally(context, item);
-    } else if (action == 'delete') {
-      await _removeStar(item);
-    }
-  }
-
-  /// 拿片名去全网搜：打开搜索页并自动搜，范围默认「全部站点」。
-  void _searchOnline(RecordItem item) {
-    final keyword = item.name.trim();
-    if (keyword.isEmpty) {
-      showToast(context, '这条收藏没有片名，无法搜索', success: false);
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => SearchPage(initialKeyword: keyword),
-      ),
-    );
-  }
-
-  /// 长按历史卡片：同样弹出「搜索 / 复制片名 / 删除」三项菜单。
-  Future<void> _showHistoryActions(RecordItem item, Offset position) async {
-    final screen = MediaQuery.of(context).size;
-    final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
-    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
-    final action = await showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        x.toDouble(),
-        y.toDouble(),
-        x.toDouble(),
-        y.toDouble(),
-      ),
-      items: const [
-        PopupMenuItem<String>(
-          value: 'search',
-          child: Row(
-            children: [
-              Icon(Icons.search, size: 20),
-              SizedBox(width: 12),
-              Text('搜索该影片'),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'copy',
-          child: Row(
-            children: [
-              Icon(Icons.copy_all_outlined, size: 20),
-              SizedBox(width: 12),
-              Text('复制影片名称'),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'detail',
-          child: Row(
-            children: [
-              Icon(Icons.info_outline, size: 20),
-              SizedBox(width: 12),
-              Text('查看详情'),
+              Text('复制播放地址'),
             ],
           ),
         ),
@@ -256,13 +239,8 @@ class _RecordsPageState extends State<RecordsPage>
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
-    } else if (action == 'detail') {
-      showRecordDetailDialog(
-        context: context,
-        item: item,
-        onExternalPlay: () => openRecordExternally(context, item),
-        onOpenDetail: () => openRecordDetail(context, item),
-      );
+    } else if (action == 'copyurl') {
+      await _copyUrl(item);
     } else if (action == 'external') {
       await openRecordExternally(context, item);
     } else if (action == 'delete') {
@@ -280,7 +258,20 @@ class _RecordsPageState extends State<RecordsPage>
     await Clipboard.setData(ClipboardData(text: name));
     if (!mounted) return;
     HapticFeedback.mediumImpact();
-    showToast(context, '已复制影片名称：$name');
+    showToast(context, '已复制片名：$name');
+  }
+
+  /// 复制这一条记录的播放地址（点开续播用的那个地址）。
+  Future<void> _copyUrl(RecordItem item) async {
+    final url = item.url.trim();
+    if (url.isEmpty) {
+      showToast(context, '这条记录没有保存播放地址', success: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    showToast(context, '已复制播放地址');
   }
 
   Future<void> _removeStar(RecordItem item) async {

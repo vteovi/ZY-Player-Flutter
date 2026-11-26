@@ -7,13 +7,13 @@ import 'package:provider/provider.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
-import '../widgets/record_detail_dialog.dart';
+import '../widgets/record_actions.dart';
 import '../widgets/record_grid.dart';
 import 'play_page.dart';
 import 'search_page.dart';
 
 /// 历史记录页：卡片网格（封面下方带进度条），点开从上次位置续播，
-/// 长按弹出五项菜单（与收藏页一致）：搜索 / 复制片名 / 查看详情 / 外部播放 / 删除。
+/// 长按弹出五项菜单：「搜索该影片 / 复制片名 / 复制播放地址 / 外部播放 / 删除」。
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -78,17 +78,17 @@ class _HistoryPageState extends State<HistoryPage> {
             children: [
               Icon(Icons.copy_all_outlined, size: 20),
               SizedBox(width: 12),
-              Text('复制影片名称'),
+              Text('复制片名'),
             ],
           ),
         ),
         PopupMenuItem<String>(
-          value: 'detail',
+          value: 'copyurl',
           child: Row(
             children: [
-              Icon(Icons.info_outline, size: 20),
+              Icon(Icons.link, size: 20),
               SizedBox(width: 12),
-              Text('查看详情'),
+              Text('复制播放地址'),
             ],
           ),
         ),
@@ -119,13 +119,8 @@ class _HistoryPageState extends State<HistoryPage> {
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
-    } else if (action == 'detail') {
-      showRecordDetailDialog(
-        context: context,
-        item: item,
-        onExternalPlay: () => openRecordExternally(context, item),
-        onOpenDetail: () => openRecordDetail(context, item),
-      );
+    } else if (action == 'copyurl') {
+      await _copyUrl(item);
     } else if (action == 'external') {
       await openRecordExternally(context, item);
     } else if (action == 'delete') {
@@ -157,7 +152,20 @@ class _HistoryPageState extends State<HistoryPage> {
     await Clipboard.setData(ClipboardData(text: name));
     if (!mounted) return;
     HapticFeedback.mediumImpact();
-    showToast(context, '已复制影片名称：$name');
+    showToast(context, '已复制片名：$name');
+  }
+
+  /// 复制这一条记录的播放地址（点开续播用的那个地址）。
+  Future<void> _copyUrl(RecordItem item) async {
+    final url = item.url.trim();
+    if (url.isEmpty) {
+      showToast(context, '这条记录没有保存播放地址', success: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: url));
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    showToast(context, '已复制播放地址');
   }
 
   Future<void> _removeHistory(RecordItem item) async {

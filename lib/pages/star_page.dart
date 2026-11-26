@@ -7,12 +7,12 @@ import 'package:provider/provider.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
-import '../widgets/record_detail_dialog.dart';
+import '../widgets/record_actions.dart';
 import '../widgets/record_grid.dart';
 import 'detail_page.dart';
 import 'search_page.dart';
 
-/// 收藏页：卡片网格，点开详情，长按弹出「搜索 / 复制片名 / 查看详情 / 外部播放 / 删除」菜单。
+/// 收藏页：卡片网格，点开详情，长按弹出「搜索该影片 / 复制片名 / 外部播放 / 删除」菜单。
 ///
 /// 只在「收藏与历史合并」关闭（默认）时出现 —— 此时导航栏是
 /// 「首页 / 收藏 / 历史 / 设置」，条数显示在标题右边的 [RecordCountTag] 里。
@@ -44,12 +44,12 @@ class _StarPageState extends State<StarPage> {
     );
   }
 
-  /// 长按收藏卡片：在手指位置弹出五项操作菜单。
+  /// 长按收藏卡片：在手指位置弹出四项操作菜单。
   Future<void> _showActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
-    // 菜单约 200 宽、五项约 240 高，贴边时往里收，别弹出屏幕外
+    // 菜单约 200 宽、四项约 200 高，贴边时往里收，别弹出屏幕外
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
-    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 250));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 210));
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -75,17 +75,7 @@ class _StarPageState extends State<StarPage> {
             children: [
               Icon(Icons.copy_all_outlined, size: 20),
               SizedBox(width: 12),
-              Text('复制影片名称'),
-            ],
-          ),
-        ),
-        PopupMenuItem<String>(
-          value: 'detail',
-          child: Row(
-            children: [
-              Icon(Icons.info_outline, size: 20),
-              SizedBox(width: 12),
-              Text('查看详情'),
+              Text('复制片名'),
             ],
           ),
         ),
@@ -116,13 +106,6 @@ class _StarPageState extends State<StarPage> {
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
-    } else if (action == 'detail') {
-      showRecordDetailDialog(
-        context: context,
-        item: item,
-        onExternalPlay: () => openRecordExternally(context, item),
-        onOpenDetail: () => openRecordDetail(context, item),
-      );
     } else if (action == 'external') {
       await openRecordExternally(context, item);
     } else if (action == 'delete') {
@@ -140,7 +123,7 @@ class _StarPageState extends State<StarPage> {
     await Clipboard.setData(ClipboardData(text: name));
     if (!mounted) return;
     HapticFeedback.mediumImpact();
-    showToast(context, '已复制影片名称：$name');
+    showToast(context, '已复制片名：$name');
   }
 
   /// 拿片名去全网搜：打开搜索页并自动搜，范围默认「全部站点」。
