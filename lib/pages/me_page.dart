@@ -986,7 +986,7 @@ class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
   Widget _option({
     required String value,
     required String title,
-    required String subtitle,
+    String? subtitle,
     required ExternalPlayerInfo result,
   }) {
     final checked = widget.currentPackage == value;
@@ -997,7 +997,7 @@ class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
         color: checked ? Theme.of(context).colorScheme.primary : null,
       ),
       title: Text(title),
-      subtitle: Text(subtitle),
+      subtitle: subtitle == null ? null : Text(subtitle),
       onTap: () => _select(result),
     );
   }
@@ -1036,7 +1036,6 @@ class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
         _option(
           value: player.package,
           title: player.label,
-          subtitle: player.package,
           result: player,
         ),
       );
