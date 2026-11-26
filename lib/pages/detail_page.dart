@@ -213,8 +213,14 @@ class _DetailPageState extends State<DetailPage> {
     // 以 AppState 中的权威状态为准，不信任本页缓存的 _starred：
     // 从播放页返回后本地状态可能过期，导致对已存在的收藏重复 add（返回 false → 添加失败）。
     final starred = state.isStarred(_recordKey);
+    // 收藏时连当前线路第一集的集名 / 地址一起存：以前只存元数据，
+    // 收藏条目没有 url，长按「查看详情」里看不到播放链接，「外部播放」
+    // 也只能跳回详情页重新选集。
+    final first = _playList.isNotEmpty ? _playList.first : null;
     final item = RecordItem(
       key: _recordKey,
+      label: first?.label ?? '',
+      url: first?.value ?? '',
       id: detail.id,
       tid: detail.tid,
       name: detail.name,
@@ -398,9 +404,9 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Future<void> _onShare() async {
+  Future<void> _onCopyUrl() async {
     if (_playList.isEmpty) {
-      showToast(context, '没有可分享的地址', success: false);
+      showToast(context, '没有可复制的地址', success: false);
       return;
     }
     await Clipboard.setData(ClipboardData(text: _playList.first.value));
@@ -443,7 +449,6 @@ class _DetailPageState extends State<DetailPage> {
                       icon: Icons.arrow_back,
                       onTap: () => Navigator.of(context).maybePop(),
                     ),
-                    _circleButton(icon: Icons.more_vert, onTap: _onShare),
                   ],
                 ),
               ),
@@ -674,6 +679,17 @@ class _DetailPageState extends State<DetailPage> {
               onPressed: _onExternalPlayTap,
               icon: const Icon(Icons.open_in_new, size: 18),
               label: const Text('外部播放'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // 复制地址以前藏在右上角那个「 ⋮ 」里，点一下没任何视觉反馈，
+          // 很多人以为那是菜单。挪到底部和播放并排，意图一眼就明白。
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _onCopyUrl,
+              icon: const Icon(Icons.copy_all_outlined, size: 18),
+              label: const Text('复制播放地址'),
             ),
           ),
         ],
