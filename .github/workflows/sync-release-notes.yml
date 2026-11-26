@@ -59,12 +59,16 @@ jobs:
           NOTES_REF: ${{ steps.target.outputs.tag }}
         run: |
           # 直接打 API 而不是用 gh：HTTP 状态码原样打出来，
-          # 权限不足（403）和 tag 拼错（404）一眼就能分开。
+          # 权限不足（403/404）和 tag 拼错（404）靠下面几行诊断区分。
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          for probe in "repos/$REPO" "repos/$REPO/releases?per_page=3"; do
+            c=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "https://api.github.com/$probe")
+            echo "探针 $probe -> HTTP $c"
+          done
+          echo "token 长度: ${#GH_TOKEN}"
+
           API="https://api.github.com/repos/$REPO/releases/tags/$TAG"
-          code=$(curl -sS -o rel.json -w '%{http_code}' \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$API")
+          code=$(curl -sS -o rel.json -w '%{http_code}' "${auth[@]}" "$API")
           echo "GET $TAG -> HTTP $code"
           if [ "$code" != "200" ]; then
             head -c 400 rel.json || true
@@ -80,9 +84,7 @@ jobs:
           body = open('release-notes.md', encoding='utf-8').read()
           open('payload.json', 'w', encoding='utf-8').write(json.dumps({'body': body}))
           PY
-          code=$(curl -sS -o out.json -w '%{http_code}' -X PATCH \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
+          code=$(curl -sS -o out.json -w '%{http_code}' -X PATCH "${auth[@]}" \
             -H "Content-Type: application/json" \
             --data-binary @payload.json \
             "$API")
