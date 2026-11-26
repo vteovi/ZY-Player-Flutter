@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/video.dart';
@@ -14,8 +15,8 @@ import 'search_page.dart';
 /// 收藏与历史合并页 —— 顶部 TabBar 两个分栏，对应设置页里的
 /// 「收藏与历史合并」开关开启时的老布局（导航栏那一项显示为「我的」）。
 ///
-/// - 收藏：卡片网格，点开详情，长按弹出「搜索该影片 / 删除」菜单
-/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按清除记录
+/// - 收藏：卡片网格，点开详情，长按弹出「搜索 / 复制片名 / 删除」菜单
+/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按同样的三项菜单
 ///
 /// 条数放在 Tab 文字里（`收藏 12` / `历史记录 34`），顶部一眼看得到。
 /// 关闭开关后导航栏会变成「收藏」「历史」两个独立页（StarPage / HistoryPage），
@@ -84,11 +85,11 @@ class _RecordsPageState extends State<RecordsPage>
     );
   }
 
-  /// 长按收藏卡片：在手指位置弹出「搜索该影片 / 删除」菜单。
+  /// 长按收藏卡片：在手指位置弹出「搜索 / 复制片名 / 删除」菜单。
   Future<void> _showStarActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
-    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 120));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -109,6 +110,16 @@ class _RecordsPageState extends State<RecordsPage>
           ),
         ),
         PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_all_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制影片名称'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
           value: 'delete',
           child: Row(
             children: [
@@ -123,6 +134,8 @@ class _RecordsPageState extends State<RecordsPage>
     if (!mounted || action == null) return;
     if (action == 'search') {
       _searchOnline(item);
+    } else if (action == 'copy') {
+      await _copyName(item);
     } else if (action == 'delete') {
       await _removeStar(item);
     }
@@ -140,6 +153,75 @@ class _RecordsPageState extends State<RecordsPage>
         builder: (_) => SearchPage(initialKeyword: keyword),
       ),
     );
+  }
+
+  /// 长按历史卡片：同样弹出「搜索 / 复制片名 / 删除」三项菜单。
+  Future<void> _showHistoryActions(RecordItem item, Offset position) async {
+    final screen = MediaQuery.of(context).size;
+    final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        x.toDouble(),
+        y.toDouble(),
+        x.toDouble(),
+        y.toDouble(),
+      ),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'search',
+          child: Row(
+            children: [
+              Icon(Icons.search, size: 20),
+              SizedBox(width: 12),
+              Text('搜索该影片'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_all_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制影片名称'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 20),
+              SizedBox(width: 12),
+              Text('删除'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == 'search') {
+      _searchOnline(item);
+    } else if (action == 'copy') {
+      await _copyName(item);
+    } else if (action == 'delete') {
+      await _removeHistory(item);
+    }
+  }
+
+  /// 复制片名到剪贴板。长按没有点击那样明确的按下反馈，补一次震动。
+  Future<void> _copyName(RecordItem item) async {
+    final name = item.name.trim();
+    if (name.isEmpty) {
+      showToast(context, '这条影片没有片名', success: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: name));
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    showToast(context, '已复制影片名称：$name');
   }
 
   Future<void> _removeStar(RecordItem item) async {
@@ -223,7 +305,7 @@ class _RecordsPageState extends State<RecordsPage>
             emptyMessage: '还没有播放记录',
             emptyIcon: Icons.history,
             onTap: _play,
-            onLongPress: (item, _) => _removeHistory(item),
+            onLongPress: _showHistoryActions,
           ),
         ],
       ),

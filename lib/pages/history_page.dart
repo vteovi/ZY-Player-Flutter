@@ -1,4 +1,7 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/video.dart';
@@ -6,9 +9,10 @@ import '../providers/app_state.dart';
 import '../utils/toast.dart';
 import '../widgets/record_grid.dart';
 import 'play_page.dart';
+import 'search_page.dart';
 
 /// 历史记录页：卡片网格（封面下方带进度条），点开从上次位置续播，
-/// 长按删除该条记录。
+/// 长按弹出「搜索该影片 / 复制影片名称 / 删除」菜单（与收藏页一致）。
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -40,6 +44,90 @@ class _HistoryPageState extends State<HistoryPage> {
         ),
       ),
     );
+  }
+
+  /// 长按历史卡片：在手指位置弹出「搜索 / 复制片名 / 删除」菜单。
+  Future<void> _showActions(RecordItem item, Offset position) async {
+    final screen = MediaQuery.of(context).size;
+    // 菜单约 200 宽、三项约 150 高，贴边时往里收，别弹出屏幕外
+    final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        x.toDouble(),
+        y.toDouble(),
+        x.toDouble(),
+        y.toDouble(),
+      ),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'search',
+          child: Row(
+            children: [
+              Icon(Icons.search, size: 20),
+              SizedBox(width: 12),
+              Text('搜索该影片'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'copy',
+          child: Row(
+            children: [
+              Icon(Icons.copy_all_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制影片名称'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 20),
+              SizedBox(width: 12),
+              Text('删除'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == 'search') {
+      _searchOnline(item);
+    } else if (action == 'copy') {
+      await _copyName(item);
+    } else if (action == 'delete') {
+      await _removeHistory(item);
+    }
+  }
+
+  /// 拿片名去全网搜：打开搜索页并自动搜，范围默认「全部站点」。
+  void _searchOnline(RecordItem item) {
+    final keyword = item.name.trim();
+    if (keyword.isEmpty) {
+      showToast(context, '这条记录没有片名，无法搜索', success: false);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SearchPage(initialKeyword: keyword),
+      ),
+    );
+  }
+
+  /// 复制片名到剪贴板。长按没有点击那样明确的按下反馈，补一次震动。
+  Future<void> _copyName(RecordItem item) async {
+    final name = item.name.trim();
+    if (name.isEmpty) {
+      showToast(context, '这条影片没有片名', success: false);
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: name));
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    showToast(context, '已复制影片名称：$name');
   }
 
   Future<void> _removeHistory(RecordItem item) async {
@@ -86,7 +174,7 @@ class _HistoryPageState extends State<HistoryPage> {
         emptyMessage: '还没有播放记录',
         emptyIcon: Icons.history,
         onTap: _play,
-        onLongPress: (item, _) => _removeHistory(item),
+        onLongPress: _showActions,
       ),
     );
   }
