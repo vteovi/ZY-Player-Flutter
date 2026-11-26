@@ -9,11 +9,13 @@ import 'video_card.dart';
 ///
 /// 交互：
 /// - 点击：收藏 → 打开详情，历史 → 从上次位置续播（由外部决定）。
-/// - 长按：取消收藏 / 清除该条记录（外部弹出确认框防误触）。
+/// - 长按：收藏弹出「搜索该影片 / 删除」菜单，历史弹确认框删除（外部处理）。
 class RecordCard extends StatelessWidget {
   final RecordItem item;
   final VoidCallback onTap;
-  final VoidCallback? onLongPress;
+
+  /// 长按回调带上手指位置，供上层在触点处弹菜单（搜索 / 删除）。
+  final void Function(Offset position)? onLongPress;
   final bool isHistory;
 
   /// 来源角标（站点名）：与搜索结果卡片一致，贴在封面左上角。
@@ -45,60 +47,66 @@ class RecordCard extends StatelessWidget {
       margin: const EdgeInsets.all(6),
       child: InkWell(
         onTap: onTap,
-        onLongPress: onLongPress,
-        child: Stack(
-          children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (coverRatio != null)
-                  AspectRatio(
-                    aspectRatio: coverRatio!,
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: PosterCover(
-                        pic: item.pic,
-                        isDark: isDark,
-                        sourceLabel: sourceLabel,
+        // InkWell 的长按回调不带触点；套一层 GestureDetector 拿手指位置，
+        // 上层才能把菜单弹在卡片旁边而不是屏幕固定位置。
+        child: GestureDetector(
+          onLongPressStart: onLongPress == null
+              ? null
+              : (details) => onLongPress!(details.globalPosition),
+          child: Stack(
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (coverRatio != null)
+                    AspectRatio(
+                      aspectRatio: coverRatio!,
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: PosterCover(
+                          pic: item.pic,
+                          isDark: isDark,
+                          sourceLabel: sourceLabel,
+                        ),
+                      ),
+                    )
+                  else
+                    Expanded(
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: PosterCover(
+                          pic: item.pic,
+                          isDark: isDark,
+                          sourceLabel: sourceLabel,
+                        ),
                       ),
                     ),
-                  )
-                else
-                  Expanded(
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: PosterCover(
-                        pic: item.pic,
-                        isDark: isDark,
-                        sourceLabel: sourceLabel,
-                      ),
+                  if (isHistory && progress > 0)
+                    LinearProgressIndicator(
+                      value: progress / 100,
+                      minHeight: 3,
+                      backgroundColor:
+                          isDark ? AppColors.darkDivider : const Color(0xFFEDEDED),
+                      valueColor: const AlwaysStoppedAnimation(AppColors.brand),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                    child: Text(
+                      item.name.isEmpty ? '未知' : item.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(fontWeight: FontWeight.w600),
                     ),
                   ),
-                if (isHistory && progress > 0)
-                  LinearProgressIndicator(
-                    value: progress / 100,
-                    minHeight: 3,
-                    backgroundColor:
-                        isDark ? AppColors.darkDivider : const Color(0xFFEDEDED),
-                    valueColor: const AlwaysStoppedAnimation(AppColors.brand),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: _buildMetaRow(theme, isDark),
                   ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-                  child: Text(
-                    item.name.isEmpty ? '未知' : item.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                  child: _buildMetaRow(theme, isDark),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -18,7 +18,7 @@ class RecordGrid extends StatelessWidget {
   final String emptyMessage;
   final IconData emptyIcon;
   final void Function(RecordItem) onTap;
-  final void Function(RecordItem) onLongPress;
+  final void Function(RecordItem, Offset position) onLongPress;
 
   const RecordGrid({
     super.key,
@@ -68,7 +68,7 @@ class RecordGrid extends StatelessWidget {
                 sourceLabel: labels[item.key],
                 coverRatio: waterfallCoverRatio(item.pic),
                 onTap: () => onTap(item),
-                onLongPress: () => onLongPress(item),
+                onLongPress: (position) => onLongPress(item, position),
               );
             },
           );
@@ -87,7 +87,7 @@ class RecordGrid extends StatelessWidget {
               isHistory: isHistory,
               sourceLabel: labels[item.key],
               onTap: () => onTap(item),
-              onLongPress: () => onLongPress(item),
+              onLongPress: (position) => onLongPress(item, position),
             );
           },
         );

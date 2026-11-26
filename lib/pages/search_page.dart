@@ -60,7 +60,11 @@ class SearchPage extends StatefulWidget {
   /// 首页还没选源时为 null，该选项会置灰。
   final Site? currentSite;
 
-  const SearchPage({super.key, this.currentSite});
+  /// 带词进入时直接搜这个词（收藏页「搜索该影片」用）。
+  /// 为空则维持原来的行为：聚焦输入框、显示搜索历史。
+  final String? initialKeyword;
+
+  const SearchPage({super.key, this.currentSite, this.initialKeyword});
 
   @override
   State<SearchPage> createState() => _SearchPageState();
@@ -121,9 +125,17 @@ class _SearchPageState extends State<SearchPage> {
     super.initState();
     _controller.addListener(_onTextChanged);
     _loadHistory();
-    // 进入页面自动聚焦输入框
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _focusNode.requestFocus();
+      if (!mounted) return;
+      final initial = widget.initialKeyword?.trim() ?? '';
+      if (initial.isEmpty) {
+        // 常规进入：聚焦输入框，显示搜索历史
+        _focusNode.requestFocus();
+        return;
+      }
+      // 从收藏页带片名进来：填好词立刻搜，省得用户再点一次
+      _controller.text = initial;
+      _doSearch(initial);
     });
   }
 
