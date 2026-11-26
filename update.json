@@ -1,7 +1,7 @@
 {
-  "versionName": "1.46.1",
-  "versionCode": 248,
-  "apkUrl": "https://github.com/vteovi/ZY-Player-Flutter/releases/download/v1.46.1/ZY-Player-arm64-latest.apk",
-  "notes": "1. 修复：配置文件导入完成后，结果页停留时间从 1.5 秒缩到 0.8 秒，导入体感更快。\n2. 说明：导入失败时仍保留 2.4 秒，方便看清报错原因；进度提示与「完成」按钮都还在。\n\n上一条 1.46.0 的内容：配置导入有完整进度提示，源检测失败会自动重试一次，减少把有效站误判成失效。\n\n注意：Android 6 以上首次安装需先允许「安装未知应用」。若安装时提示「应用未安装」，是 1.18.0 起改用正式签名导致的，卸载旧版再装本版即可（仅此一次）。",
+  "versionName": "1.47.2",
+  "versionCode": 251,
+  "apkUrl": "https://github.com/vteovi/ZY-Player-Flutter/releases/download/v1.47.2/ZY-Player-arm64-latest.apk",
+  "notes": "1. 修复：配置文件导入成功后的结果弹窗不再一闪而过，改成由你点「完成」才关闭。想快就秒点，想看清「新增/更新/跳过」就慢慢看。\n\n上两条的内容：收藏页长按影片可弹出「搜索该影片 / 删除」菜单；批量删源（清空所有源/清除死站）的进度改为局部刷新，删的时候不再反复重建整个源列表，速度更接近以前。\n\n注意：Android 6 以上首次安装需先允许「安装未知应用」。若安装时提示「应用未安装」，是 1.18.0 起改用正式签名导致的，卸载旧版再装本版即可（仅此一次）。",
   "force": false
 }
