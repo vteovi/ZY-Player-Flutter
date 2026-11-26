@@ -19,6 +19,8 @@ on:
   push:
     paths:
       - '.release-sync'
+      # 改本文件也会跑一遍：调脚本时方便当场验证效果
+      - '.github/workflows/sync-release-notes.yml'
 
 permissions:
   contents: write
@@ -51,13 +53,18 @@ jobs:
       - name: 重新生成正文并写回 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ steps.target.outputs.tag }}
           # 链接指向 tag 本身，而不是本次运行所在的分支
           NOTES_REF: ${{ steps.target.outputs.tag }}
         run: |
-          set -euo pipefail
-          if ! gh release view "$TAG" > /dev/null 2>&1; then
-            echo "::error::Release $TAG 不存在，检查 tag 是否拼错"
+          set -uo pipefail
+          echo "gh: $(gh --version 2>&1 | head -n 1)"
+          if ! OUT=$(gh release view "$TAG" 2>&1 > /dev/null); then
+            echo "gh release view 失败：$OUT"
+            echo "现有 Release（最多 5 条）:"
+            gh release list --limit 5 2>&1 || true
+            echo "::error::读不到 Release $TAG，见上方 gh 输出"
             exit 1
           fi
           bash tools/release-notes.sh "${TAG#v}" release-notes.md .
