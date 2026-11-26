@@ -21,7 +21,17 @@ class DetailPage extends StatefulWidget {
   final String siteKey;
   final String videoId;
 
-  const DetailPage({super.key, required this.siteKey, required this.videoId});
+  /// 从收藏 / 历史的「外部播放」入口跳进来时置 true：详情加载完成后
+  /// 自动弹出「选择集数 · 外部播放」，省掉用户再点一次外部播放按钮。
+  /// 这些条目通常没存播放地址，只能回详情页重新取选集列表。
+  final bool autoExternal;
+
+  const DetailPage({
+    super.key,
+    required this.siteKey,
+    required this.videoId,
+    this.autoExternal = false,
+  });
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -87,6 +97,11 @@ class _DetailPageState extends State<DetailPage> {
         // 源站连通但没返回这条影片：多半是被下架 / 改版，给出比通用文案更准的提示
         _error = detail == null ? '源站未返回该影片的数据' : null;
       });
+      // 收藏 / 历史条目没存播放地址，从那里点「外部播放」跳进来，
+      // 详情加载好后直接弹选集，省掉再点一次「外部播放」按钮。
+      if (widget.autoExternal && _playList.isNotEmpty) {
+        _onExternalPlayTap();
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -295,15 +310,19 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _openExternal(PlayItem item) async {
     // 与内置播放一致，先记一条播放记录
     _addHistory(item);
+    final config = context.read<AppState>().config;
     final status = await SystemControl.openWithExternalPlayer(
       url: item.value,
       title: item.label.isNotEmpty ? item.label : (_detail?.name ?? ''),
-      customPath: context.read<AppState>().config.externalPlayerPath,
+      customPath: config.externalPlayerPath,
+      package: config.externalPlayerPackage,
     );
     if (!mounted) return;
     switch (status) {
       case 'no_app':
         showToast(context, '没找到能播放该地址的播放器', success: false);
+      case 'no_player':
+        showToast(context, '所选播放器打不开该地址，请到设置重新选择', success: false);
       case 'no_url':
         showToast(context, '没有可播放的地址', success: false);
       case 'error':

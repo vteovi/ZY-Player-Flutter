@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/video.dart';
 import '../providers/app_state.dart';
 import '../utils/toast.dart';
+import '../widgets/record_detail_dialog.dart';
 import '../widgets/record_grid.dart';
 import 'detail_page.dart';
 import 'play_page.dart';
@@ -85,11 +86,11 @@ class _RecordsPageState extends State<RecordsPage>
     );
   }
 
-  /// 长按收藏卡片：在手指位置弹出「搜索 / 复制片名 / 删除」菜单。
+  /// 长按收藏卡片：在手指位置弹出五项操作菜单。
   Future<void> _showStarActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
-    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 170));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 250));
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -120,6 +121,26 @@ class _RecordsPageState extends State<RecordsPage>
           ),
         ),
         PopupMenuItem<String>(
+          value: 'detail',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 20),
+              SizedBox(width: 12),
+              Text('查看详情'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'external',
+          child: Row(
+            children: [
+              Icon(Icons.open_in_new, size: 20),
+              SizedBox(width: 12),
+              Text('外部播放'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
           value: 'delete',
           child: Row(
             children: [
@@ -136,6 +157,15 @@ class _RecordsPageState extends State<RecordsPage>
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
+    } else if (action == 'detail') {
+      showRecordDetailDialog(
+        context: context,
+        item: item,
+        onExternalPlay: () => openRecordExternally(context, item),
+        onOpenDetail: () => openRecordDetail(context, item),
+      );
+    } else if (action == 'external') {
+      await openRecordExternally(context, item);
     } else if (action == 'delete') {
       await _removeStar(item);
     }
@@ -190,6 +220,26 @@ class _RecordsPageState extends State<RecordsPage>
           ),
         ),
         PopupMenuItem<String>(
+          value: 'detail',
+          child: Row(
+            children: [
+              Icon(Icons.info_outline, size: 20),
+              SizedBox(width: 12),
+              Text('查看详情'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'external',
+          child: Row(
+            children: [
+              Icon(Icons.open_in_new, size: 20),
+              SizedBox(width: 12),
+              Text('外部播放'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
           value: 'delete',
           child: Row(
             children: [
@@ -206,6 +256,15 @@ class _RecordsPageState extends State<RecordsPage>
       _searchOnline(item);
     } else if (action == 'copy') {
       await _copyName(item);
+    } else if (action == 'detail') {
+      showRecordDetailDialog(
+        context: context,
+        item: item,
+        onExternalPlay: () => openRecordExternally(context, item),
+        onOpenDetail: () => openRecordDetail(context, item),
+      );
+    } else if (action == 'external') {
+      await openRecordExternally(context, item);
     } else if (action == 'delete') {
       await _removeHistory(item);
     }

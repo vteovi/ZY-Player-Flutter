@@ -46,9 +46,11 @@ class MainActivity : FlutterActivity() {
                     "openWithExternalPlayer" -> result.success(
                         openWithExternalPlayer(
                             call.argument<String>("url").orEmpty(),
-                            call.argument<String>("title").orEmpty()
+                            call.argument<String>("title").orEmpty(),
+                            call.argument<String>("package").orEmpty()
                         )
                     )
+                    "listExternalPlayers" -> result.success(listExternalPlayers())
                     "setKeepScreenOn" -> {
                         setKeepScreenOn(call.argument<Boolean>("value") ?: false)
                         result.success(null)
@@ -110,43 +112,69 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /**
-     * 调起第三方播放器打开视频地址，返回状态字符串给 Dart 侧提示用：
-     * `ok` / `no_url` / `no_app` / `error`。
-     *
-     * 为什么不用现成的 url_launcher：它走的是「浏览器式」ACTION_VIEW，
-     * 遇到 m3u8 直链多半只会弹浏览器，用户要的是「选播放器」。
-     *
-     * ⚠️ 注释里千万别写「斜杠+星号」或「星号+斜杠」的字面量。
-     *    Kotlin 的块注释是**可嵌套**的：多写一个「斜杠+星号」就多开一层，
-     *    后面的「星号+斜杠」只关掉内层，外层一直不闭合，
-     *    整个文件后半段被当成注释吞掉，报一堆假的 unresolved reference
-     *    外加结尾一句 Unclosed comment。这次就是这么翻车的。
-     *
-     * m3u8 直链没有能识别的文件扩展名，各家播放器的 intent-filter 写法不一
-     * （有的按 video 通配（video 斜杠星号）收，有的按 application/x-mpegURL 收，
-     * MX Player 这类还要求 mime 非空），所以这里按「最可能被接住」的顺序挑第一个
-     * 能解析到的组合，再交给系统选择器，避免出现「一无匹配直接闪退/无反应」。
-     */
-    private fun openWithExternalPlayer(url: String, title: String): String {
-        if (url.isBlank()) return "no_url"
+    // 调起第三方播放器打开视频地址，返回状态字符串给 Dart 侧提示用：
+    // ok / no_url / no_app / no_player / error。
+    //
+    // 不用 url_launcher：它走「浏览器式」ACTION_VIEW，m3u8 直链多半只会弹浏览器。
+    // targetPackage 非空时直接调起用户指定的应用，不再弹系统选择器。
+    //
+    // m3u8 直链没有能识别的文件扩展名，各家播放器的 intent-filter 写法不一
+    // （有的按 video 通配收，有的按 application/x-mpegURL 收，MX Player 这类还
+    // 要求 mime 非空），所以按最可能被接住的顺序逐个试，最后再试不带 mime 的
+    // 纯 data 形式（浏览器之类只认 scheme）。
 
+    private fun videoViewIntents(url: String, title: String): List<Intent> {
         val uri = Uri.parse(url)
-        val mimeCandidates = listOf(
+        val mimes = listOf(
             "video/*",
             "application/x-mpegURL",
             "application/vnd.apple.mpegurl",
             "*/*"
         )
-
-        for (mime in mimeCandidates) {
-            val intent = Intent(Intent.ACTION_VIEW).apply {
+        val intents = mimes.map { mime ->
+            Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(uri, mime)
-                if (title.isNotEmpty()) putExtra("title", title)
+                if (title.isNotBlank()) putExtra("title", title)
             }
+        }.toMutableList()
+        intents.add(Intent(Intent.ACTION_VIEW).apply {
+            setData(uri)
+            if (title.isNotBlank()) putExtra("title", title)
+        })
+        return intents
+    }
+
+    private fun openWithExternalPlayer(
+        url: String,
+        title: String,
+        targetPackage: String
+    ): String {
+        if (url.isBlank()) return "no_url"
+
+        val intents = videoViewIntents(url, title)
+
+        if (targetPackage.isNotBlank()) {
+            if (targetPackage == packageName) return "no_player"
+            for (intent in intents) {
+                @Suppress("DEPRECATION")
+                val matched = packageManager.queryIntentActivities(intent, 0)
+                    .any { it.activityInfo.packageName == targetPackage }
+                if (!matched) continue
+                return try {
+                    startActivity(Intent(intent).apply { setPackage(targetPackage) })
+                    "ok"
+                } catch (e: Exception) {
+                    "no_player"
+                }
+            }
+            // 指定了但接不住地址：明确告诉用户去设置里重选，不静默退回选择器
+            return "no_player"
+        }
+
+        for (intent in intents) {
             @Suppress("DEPRECATION")
-            val matches = packageManager.queryIntentActivities(intent, 0)
-            if (matches.isEmpty()) continue
+            val matched = packageManager.queryIntentActivities(intent, 0).isNotEmpty()
+            if (!matched) continue
             return try {
                 startActivity(Intent.createChooser(intent, "选择播放器"))
                 "ok"
@@ -154,24 +182,31 @@ class MainActivity : FlutterActivity() {
                 "error"
             }
         }
+        return "no_app"
+    }
 
-        // 候选都没解析到：再试一次不带 mime 的纯 data 形式（浏览器之类只认 scheme）
-        val plain = Intent(Intent.ACTION_VIEW).apply {
-            setData(uri)
-            if (title.isNotEmpty()) putExtra("title", title)
+    // 设置页列出能接住视频地址的应用。Android 11+ 的包可见性靠 manifest 的
+    // queries 声明放行；这里按同一组 mime / scheme 查询并去重，按应用名排序。
+    private fun listExternalPlayers(): List<Map<String, String>> {
+        val found = LinkedHashMap<String, String>()
+        val sample = "http://example.com/video.m3u8"
+        for (intent in videoViewIntents(sample, "")) {
+            @Suppress("DEPRECATION")
+            val matches = packageManager.queryIntentActivities(intent, 0)
+            for (info in matches) {
+                val pkg = info.activityInfo.packageName
+                if (pkg.isBlank() || pkg == packageName || found.containsKey(pkg)) continue
+                val label = try {
+                    info.loadLabel(packageManager).toString()
+                } catch (e: Exception) {
+                    ""
+                }
+                found[pkg] = label.ifBlank { pkg }
+            }
         }
-        @Suppress("DEPRECATION")
-        val plainMatches = packageManager.queryIntentActivities(plain, 0)
-        if (plainMatches.isEmpty()) {
-            // 一个都接不住：设备上确实没有能处理这个地址的应用
-            return "no_app"
-        }
-        return try {
-            startActivity(Intent.createChooser(plain, "选择播放器"))
-            "ok"
-        } catch (e: Exception) {
-            "error"
-        }
+        return found.entries
+            .sortedBy { it.value.lowercase() }
+            .map { mapOf("package" to it.key, "label" to it.value) }
     }
 
     /**

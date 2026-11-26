@@ -165,6 +165,42 @@ class MePage extends StatelessWidget {
     }
   }
 
+  /// 外部播放器（Android）：默认「系统分享」每次弹选择器；指定某个应用后，
+  /// 所有「外部播放」入口都直接调起它，不用再选。
+  Widget _buildAndroidExternalPlayerTile(BuildContext context) {
+    final cfg = context.watch<AppState>().config;
+    final package = cfg.externalPlayerPackage;
+    final name = cfg.externalPlayerLabel.isEmpty ? package : cfg.externalPlayerLabel;
+    return _SettingsTile(
+      icon: Icons.play_circle_outline,
+      title: '外部播放器',
+      subtitle: package.isEmpty
+          ? '系统分享：每次点外部播放时选择应用'
+          : '$name · 点外部播放直接调起',
+      onTap: () => _pickAndroidExternalPlayer(context),
+    );
+  }
+
+  Future<void> _pickAndroidExternalPlayer(BuildContext context) async {
+    final cfg = context.read<AppState>().config;
+    final picked = await showDialog<ExternalPlayerInfo>(
+      context: context,
+      builder: (_) => _ExternalPlayerPicker(
+        currentPackage: cfg.externalPlayerPackage,
+        currentLabel: cfg.externalPlayerLabel,
+      ),
+    );
+    if (picked == null || !context.mounted) return;
+    await context.read<AppState>().setExternalPlayer(picked.package, picked.label);
+    if (!context.mounted) return;
+    showToast(
+      context,
+      picked.package.isEmpty
+          ? '已恢复系统分享'
+          : '外部播放器已设为 ${picked.label}',
+    );
+  }
+
   /// 自定义播放器（PC / Windows 专属）：用文件选择器选一个 .exe，
   /// 之后「外部播放」会直接启动它而不是自动查找已安装的播放器。
   Widget _buildExternalPlayerTile(BuildContext context) {
@@ -354,6 +390,7 @@ class MePage extends StatelessWidget {
                       onChanged: (v) =>
                           context.read<AppState>().setForceSoftwareDecode(v),
                     ),
+                  if (Platform.isAndroid) _buildAndroidExternalPlayerTile(context),
                   if (Platform.isWindows) _buildExternalPlayerTile(context),
                 ],
               ),
@@ -904,6 +941,132 @@ class _SwitchTile extends StatelessWidget {
       ),
       value: value,
       onChanged: onChanged,
+    );
+  }
+}
+
+/// 选择 Android 外部播放器：第一项是「系统分享」（每次弹选择器），
+/// 后面是原生查到的、能接住视频地址的应用。点一项即选中并返回。
+class _ExternalPlayerPicker extends StatefulWidget {
+  final String currentPackage;
+  final String currentLabel;
+
+  const _ExternalPlayerPicker({
+    required this.currentPackage,
+    required this.currentLabel,
+  });
+
+  @override
+  State<_ExternalPlayerPicker> createState() => _ExternalPlayerPickerState();
+}
+
+class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
+  List<ExternalPlayerInfo> _players = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final players = await SystemControl.listExternalPlayers();
+    if (!mounted) return;
+    setState(() {
+      _players = players;
+      _loading = false;
+    });
+  }
+
+  void _select(ExternalPlayerInfo info) => Navigator.of(context).pop(info);
+
+  /// 自己画单选圆点：项目里老的 RadioListTile.groupValue 已被 SDK 标弃用，
+  /// 这里不需要 RadioGroup 的复杂语义，看见勾、点一下就返回即可。
+  Widget _option({
+    required String value,
+    required String title,
+    required String subtitle,
+    required ExternalPlayerInfo result,
+  }) {
+    final checked = widget.currentPackage == value;
+    return ListTile(
+      leading: Icon(
+        checked ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+        size: 20,
+        color: checked ? Theme.of(context).colorScheme.primary : null,
+      ),
+      title: Text(title),
+      subtitle: Text(subtitle),
+      onTap: () => _select(result),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.currentPackage;
+    final rows = <Widget>[
+      _option(
+        value: '',
+        title: '系统分享',
+        subtitle: '每次点外部播放时弹出系统选择器',
+        result: const ExternalPlayerInfo(package: '', label: '系统分享'),
+      ),
+    ];
+
+    // 之前选的应用如果卸载了，查询列表里不会有它；仍留一项让用户能看见
+    // 「当前选的是谁」并显式改回系统分享，而不是莫名其妙地只剩系统分享。
+    if (!_loading &&
+        selected.isNotEmpty &&
+        !_players.any((p) => p.package == selected)) {
+      final label =
+          widget.currentLabel.isEmpty ? selected : widget.currentLabel;
+      rows.add(
+        _option(
+          value: selected,
+          title: label,
+          subtitle: '当前选择 · 设备上没找到，可能已卸载',
+          result: ExternalPlayerInfo(package: selected, label: label),
+        ),
+      );
+    }
+
+    for (final player in _players) {
+      rows.add(
+        _option(
+          value: player.package,
+          title: player.label,
+          subtitle: player.package,
+          result: player,
+        ),
+      );
+    }
+
+    return AlertDialog(
+      title: const Text('外部播放器'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: _loading
+            ? const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              )
+            : SingleChildScrollView(
+                child: Column(mainAxisSize: MainAxisSize.min, children: rows),
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+      ],
     );
   }
 }

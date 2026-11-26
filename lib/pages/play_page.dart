@@ -908,15 +908,19 @@ class _PlayPageState extends State<PlayPage> {
   /// 优先给**解析后**的地址：解析成功却播放失败时，外部播放器拿直链还有救；
   /// 拿原始网页地址出去则必然放不了。
   Future<void> _openExternalFromError() async {
+    final config = context.read<AppState>().config;
     final status = await SystemControl.openWithExternalPlayer(
       url: _playUrl.isNotEmpty ? _playUrl : _currentUrl,
       title: _title.isNotEmpty ? _title : (_detail?.name ?? ''),
-      customPath: context.read<AppState>().config.externalPlayerPath,
+      customPath: config.externalPlayerPath,
+      package: config.externalPlayerPackage,
     );
     if (!mounted) return;
     switch (status) {
       case 'no_app':
         showToast(context, '没找到能播放该地址的播放器', success: false);
+      case 'no_player':
+        showToast(context, '所选播放器打不开该地址，请到设置重新选择', success: false);
       case 'no_url':
         showToast(context, '没有可播放的地址', success: false);
       case 'error':

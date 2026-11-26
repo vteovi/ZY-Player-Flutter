@@ -494,6 +494,14 @@ class AppConfig {
   /// 而不是自动查找已安装的播放器（PotPlayer / VLC 等）。为空表示未设置。
   final String externalPlayerPath;
 
+  /// 指定的外部播放器包名（Android 专属）。为空 = 系统分享，每次弹选择器；
+  /// 非空时「外部播放」直接调起该应用，不再让用户选。
+  final String externalPlayerPackage;
+
+  /// 上面包名对应的应用名，仅用于设置页展示。应用卸载后仍能从设置里认出
+  /// 之前选的是谁，方便重新选择。
+  final String externalPlayerLabel;
+
   /// 版本更新清单地址（`update.json`）。
   /// 为空时用内置默认地址（`UpdateService.defaultManifestUrl`）。
   /// 直连 GitHub raw 不通时，可改成自己的服务器或 Gitee raw 地址。
@@ -514,6 +522,8 @@ class AppConfig {
     this.showViewToggle = false,
     this.mergeRecords = false,
     this.externalPlayerPath = '',
+    this.externalPlayerPackage = '',
+    this.externalPlayerLabel = '',
     this.updateUrl = '',
   });
 
@@ -541,6 +551,8 @@ class AppConfig {
       mergeRecords:
           json['mergeRecords'] == true || json['mergeRecords'].toString() == 'true',
       externalPlayerPath: (json['externalPlayerPath'] ?? '').toString(),
+      externalPlayerPackage: (json['externalPlayerPackage'] ?? '').toString(),
+      externalPlayerLabel: (json['externalPlayerLabel'] ?? '').toString(),
       updateUrl: (json['updateUrl'] ?? '').toString(),
     );
   }
@@ -564,6 +576,8 @@ class AppConfig {
         'showViewToggle': showViewToggle,
         'mergeRecords': mergeRecords,
         'externalPlayerPath': externalPlayerPath,
+        'externalPlayerPackage': externalPlayerPackage,
+        'externalPlayerLabel': externalPlayerLabel,
         'updateUrl': updateUrl,
       };
 
@@ -580,6 +594,8 @@ class AppConfig {
     bool? showViewToggle,
     bool? mergeRecords,
     String? externalPlayerPath,
+    String? externalPlayerPackage,
+    String? externalPlayerLabel,
     String? updateUrl,
   }) =>
       AppConfig(
@@ -597,6 +613,9 @@ class AppConfig {
         showViewToggle: showViewToggle ?? this.showViewToggle,
         mergeRecords: mergeRecords ?? this.mergeRecords,
         externalPlayerPath: externalPlayerPath ?? this.externalPlayerPath,
+        externalPlayerPackage:
+            externalPlayerPackage ?? this.externalPlayerPackage,
+        externalPlayerLabel: externalPlayerLabel ?? this.externalPlayerLabel,
         updateUrl: updateUrl ?? this.updateUrl,
       );
 }

@@ -2,6 +2,14 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+/// 设备上能接住视频地址的一个应用（由原生侧查询已安装应用得到）。
+class ExternalPlayerInfo {
+  final String package;
+  final String label;
+
+  const ExternalPlayerInfo({required this.package, required this.label});
+}
+
 /// 系统亮度与媒体音量的读写，原生侧（Android）实现。
 ///
 /// - 亮度：改的是当前 Activity 窗口的 `screenBrightness`，**不写系统设置**，
@@ -72,10 +80,13 @@ class SystemControl {
   /// - `ok`：已经弹出选择器 / 直接进入播放器
   /// - `no_url`：地址为空
   /// - `no_app`：设备上没有能处理这个地址的应用
+  /// - `no_player`：设置里指定的播放器打不开这个地址（可能被卸载了）
   /// - `error`：调起过程中抛异常
   ///
   /// [customPath] 是用户在设置里指定的播放器可执行文件路径（Windows 专属）。
   /// 非空且文件存在时优先用它启动；为空则走自动查找（Windows）/ 系统选择器（Android）。
+  /// [package] 是用户在设置里指定的播放器包名（Android 专属）；非空时直接
+  /// 调起它，为空则弹系统选择器。
   ///
   /// 走自写通道而不引 `url_launcher`：后者是「浏览器式」的 ACTION_VIEW，
   /// m3u8 直链在多数机型上只会弹浏览器，用户要的是「选播放器」。
@@ -83,6 +94,7 @@ class SystemControl {
     required String url,
     String title = '',
     String? customPath,
+    String? package,
   }) async {
     if (url.isEmpty) return 'no_url';
     if (Platform.isWindows) {
@@ -91,11 +103,41 @@ class SystemControl {
     try {
       final status = await _channel.invokeMethod<String>(
         'openWithExternalPlayer',
-        <String, dynamic>{'url': url, 'title': title},
+        <String, dynamic>{
+          'url': url,
+          'title': title,
+          'package': package ?? '',
+        },
       );
       return status ?? 'error';
     } catch (_) {
       return 'error';
+    }
+  }
+
+  /// 列出设备上能接住视频地址的应用，供设置页选择「指定外部播放器」。
+  /// 始终包含「系统分享」（package 为空）这一项，由调用方自己加。
+  /// 查询不到（非 Android / 通道异常）时返回空列表，不影响其它设置。
+  static Future<List<ExternalPlayerInfo>> listExternalPlayers() async {
+    if (!Platform.isAndroid) return const [];
+    try {
+      final raw =
+          await _channel.invokeListMethod<dynamic>('listExternalPlayers') ??
+              const <dynamic>[];
+      return raw
+          .map(
+            (e) {
+              final map = Map<dynamic, dynamic>.from(e as Map);
+              return ExternalPlayerInfo(
+                package: (map['package'] ?? '').toString(),
+                label: (map['label'] ?? '').toString(),
+              );
+            },
+          )
+          .where((e) => e.package.isNotEmpty && e.label.isNotEmpty)
+          .toList();
+    } catch (_) {
+      return const [];
     }
   }
 
