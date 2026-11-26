@@ -4,8 +4,11 @@ name: Sync Release Notes
 # 覆盖到指定 tag 的 Release 上。发布后才发现正文要改（漏了说明、要加更新
 # 记录链接）时用这个，不必重新跑一遍完整构建、也不会动任何产物。
 #
-# 用法：Actions -> Sync Release Notes -> Run workflow，填 tag（如 v1.44.2）
-
+# 两种触发方式：
+#   1) Actions -> Sync Release Notes -> Run workflow，填 tag（如 v1.44.2）
+#   2) 往仓库根目录的 .release-sync 里写一行 tag 再 push —— 本地没有可用的
+#      GitHub token 时走这条，推完 CI 自动读文件里的 tag 改正文。
+#      文件留着不用清理，下次改内容再推一次即可。
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +16,9 @@ on:
         description: '要补写正文的 tag（如 v1.44.2）'
         required: true
         type: string
+  push:
+    paths:
+      - '.release-sync'
 
 permissions:
   contents: write
@@ -23,12 +29,31 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: 确定要同步的 tag
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG=$(tr -d '[:space:]' < .release-sync 2>/dev/null || true)
+          fi
+          TAG="${TAG#v}"
+          if [ -z "$TAG" ]; then
+            echo "::error::没有拿到 tag，检查 .release-sync 内容或 workflow 输入"
+            exit 1
+          fi
+          echo "tag=v$TAG" >> "$GITHUB_OUTPUT"
+          echo "目标: v$TAG"
+
       - name: 重新生成正文并写回 Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.target.outputs.tag }}
           # 链接指向 tag 本身，而不是本次运行所在的分支
-          NOTES_REF: ${{ inputs.tag }}
+          NOTES_REF: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" > /dev/null 2>&1; then
