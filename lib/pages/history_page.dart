@@ -13,7 +13,7 @@ import 'play_page.dart';
 import 'search_page.dart';
 
 /// 历史记录页：卡片网格（封面下方带进度条），点开从上次位置续播，
-/// 长按弹出五项菜单：「搜索该影片 / 复制片名 / 复制链接 / 外部播放 / 删除」。
+/// 长按弹出五项菜单：「搜索该影片 / 复制片名 / 复制播放地址 / 外部播放 / 删除」。
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
 
@@ -88,7 +88,7 @@ class _HistoryPageState extends State<HistoryPage> {
             children: [
               Icon(Icons.link, size: 20),
               SizedBox(width: 12),
-              Text('复制链接'),
+              Text('复制播放地址'),
             ],
           ),
         ),
@@ -155,17 +155,17 @@ class _HistoryPageState extends State<HistoryPage> {
     showToast(context, '已复制片名：$name');
   }
 
-  /// 复制这一条记录的播放链接（点开续播用的那个地址）。
+  /// 复制这一条记录的播放地址（点开续播用的那个地址）。
   Future<void> _copyUrl(RecordItem item) async {
     final url = item.url.trim();
     if (url.isEmpty) {
-      showToast(context, '这条记录没有保存播放链接', success: false);
+      showToast(context, '这条记录没有保存播放地址', success: false);
       return;
     }
     await Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;
     HapticFeedback.mediumImpact();
-    showToast(context, '已复制播放链接');
+    showToast(context, '已复制播放地址');
   }
 
   Future<void> _removeHistory(RecordItem item) async {

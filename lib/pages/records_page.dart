@@ -17,7 +17,7 @@ import 'search_page.dart';
 /// 「收藏与历史合并」开关开启时的老布局（导航栏那一项显示为「我的」）。
 ///
 /// - 收藏：卡片网格，点开详情，长按弹出「搜索该影片 / 复制片名 / 外部播放 / 删除」
-/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按多一项「复制链接」
+/// - 历史记录：卡片网格（封面下方带进度条），点开续播，长按多一项「复制播放地址」
 ///
 /// 条数放在 Tab 文字里（`收藏 12` / `历史记录 34`），顶部一眼看得到。
 /// 关闭开关后导航栏会变成「收藏」「历史」两个独立页（StarPage / HistoryPage），
@@ -168,7 +168,7 @@ class _RecordsPageState extends State<RecordsPage>
     );
   }
 
-  /// 长按历史卡片：多一项「复制链接」，因为历史记录一定存了播放地址。
+  /// 长按历史卡片：多一项「复制播放地址」，因为历史记录一定存了播放地址。
   Future<void> _showHistoryActions(RecordItem item, Offset position) async {
     final screen = MediaQuery.of(context).size;
     final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
@@ -208,7 +208,7 @@ class _RecordsPageState extends State<RecordsPage>
             children: [
               Icon(Icons.link, size: 20),
               SizedBox(width: 12),
-              Text('复制链接'),
+              Text('复制播放地址'),
             ],
           ),
         ),
@@ -261,17 +261,17 @@ class _RecordsPageState extends State<RecordsPage>
     showToast(context, '已复制片名：$name');
   }
 
-  /// 复制这一条记录的播放链接（点开续播用的那个地址）。
+  /// 复制这一条记录的播放地址（点开续播用的那个地址）。
   Future<void> _copyUrl(RecordItem item) async {
     final url = item.url.trim();
     if (url.isEmpty) {
-      showToast(context, '这条记录没有保存播放链接', success: false);
+      showToast(context, '这条记录没有保存播放地址', success: false);
       return;
     }
     await Clipboard.setData(ClipboardData(text: url));
     if (!mounted) return;
     HapticFeedback.mediumImpact();
-    showToast(context, '已复制播放链接');
+    showToast(context, '已复制播放地址');
   }
 
   Future<void> _removeStar(RecordItem item) async {
