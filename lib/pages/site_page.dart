@@ -50,6 +50,15 @@ class _SitePageState extends State<SitePage> {
   int _done = 0;
   int _total = 0;
 
+  /// 批量删源（清除死站 / 清空所有源）进行中。
+  ///
+  /// 删条目是一条一条写盘的，Windows 端每次 remove 都要整份偏好重写一遍
+  /// （同步阻塞 UI 线程）—— 几十个源能把界面按住好几秒。没有「正在删」的
+  /// 提示时，用户只会看到一个点了没反应的页面，以为软件卡死了。
+  bool _clearing = false;
+  int _clearDone = 0;
+  int _clearTotal = 0;
+
   @override
   void dispose() {
     _urlController.dispose();
@@ -547,6 +556,7 @@ class _SitePageState extends State<SitePage> {
   /// 删除不可逆，所以先弹确认框。提示里说明：只想暂时屏蔽就点「检测全部」
   /// 让失效源自动停用，条目会保留。
   Future<void> _clearDead() async {
+    if (_clearing) return;
     final targets = _deadSites;
     if (targets.isEmpty) return;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -577,7 +587,7 @@ class _SitePageState extends State<SitePage> {
     );
     if (confirmed != true) return;
     if (!mounted) return;
-    final removed = await context.read<AppState>().removeSites(targets);
+    final removed = await _removeWithProgress(targets);
     if (!mounted) return;
     // 源已经删了，对应的检测结果也要一起丢掉，否则汇总数字会一直挂着
     setState(() {
@@ -588,11 +598,46 @@ class _SitePageState extends State<SitePage> {
     showToast(context, '已清除 $removed 个死站');
   }
 
+  /// 批量删源并全程报进度（清除死站 / 清空所有源共用）。
+  ///
+  /// 进度靠 `_clearing` 驱动：工具栏按钮文字变成「清除中 3/12」、下方出现
+  /// 2px 进度条，其余按钮同时禁用 —— 用户点完「删除」立刻能看到东西在动，
+  /// 不会盯着没变化的列表怀疑卡死。
+  Future<int> _removeWithProgress(List<Site> targets) async {
+    setState(() {
+      _clearing = true;
+      _clearDone = 0;
+      _clearTotal = targets.length;
+    });
+    try {
+      return await context.read<AppState>().removeSites(
+            targets,
+            onProgress: (done, total) {
+              if (!mounted) return;
+              setState(() {
+                _clearDone = done;
+                _clearTotal = total;
+              });
+            },
+          );
+    } finally {
+      // 无论如何都要复位，否则一次异常就让整页停在「清除中」
+      if (mounted) {
+        setState(() {
+          _clearing = false;
+          _clearDone = 0;
+          _clearTotal = 0;
+        });
+      }
+    }
+  }
+
   /// 清空所有源：把列表里**全部**视频源删掉（不分好坏）。
   ///
   /// 比「清除死站」更狠，连没检测过的源一起走，所以必须二次确认，
   /// 并明确告知收藏 / 播放记录里的条目会连带打不开。
   Future<void> _clearAllSites() async {
+    if (_clearing) return;
     final sites = context.read<AppState>().sites;
     if (sites.isEmpty) return;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -622,7 +667,7 @@ class _SitePageState extends State<SitePage> {
     );
     if (confirmed != true) return;
     if (!mounted) return;
-    final removed = await context.read<AppState>().removeSites(sites);
+    final removed = await _removeWithProgress(sites);
     if (!mounted) return;
     // 源都没了，检测结果自然作废（顺带丢掉可能的在飞行中的标记）
     setState(() {
@@ -701,7 +746,7 @@ class _SitePageState extends State<SitePage> {
                 color: Theme.of(ctx).brightness == Brightness.dark
                     ? AppColors.failDark
                     : AppColors.failLight,
-                enabled: sites.isNotEmpty,
+                enabled: sites.isNotEmpty && !_clearing,
               ),
             ],
           ),
@@ -710,9 +755,11 @@ class _SitePageState extends State<SitePage> {
       body: Column(
         children: [
           _buildToolbar(state),
-          if (_batchRunning)
+          if (_batchRunning || _clearing)
             LinearProgressIndicator(
-              value: _total == 0 ? null : _done / _total,
+              value: _batchRunning
+                  ? (_total == 0 ? null : _done / _total)
+                  : (_clearTotal == 0 ? null : _clearDone / _clearTotal),
               minHeight: 2,
             ),
           const Divider(height: 1),
@@ -819,7 +866,7 @@ class _SitePageState extends State<SitePage> {
     final dead = _deadSites.length;
     // 「清理重复」是纯本地比对，不依赖有没有检测过
     final dup = duplicateDropCount(state.sites);
-    final idle = _batchRunning || state.sites.isEmpty;
+    final idle = _batchRunning || _clearing || state.sites.isEmpty;
     final wide = MediaQuery.sizeOf(context).width >= _wideToolbarWidth;
 
     final actions = <Widget>[
@@ -840,7 +887,11 @@ class _SitePageState extends State<SitePage> {
       ),
       _toolButton(
         icon: Icons.delete_outline,
-        label: dead > 0 ? '清除死站 ($dead)' : '清除死站',
+        // 删的过程中把「删到第几个」写在按钮上：列表要等全部删完才刷新，
+        // 光有进度条容易被当成卡住，数字在走最直观
+        label: _clearing
+            ? '清除中 $_clearDone/$_clearTotal'
+            : (dead > 0 ? '清除死站 ($dead)' : '清除死站'),
         onPressed: idle || dead == 0 ? null : _clearDead,
         color: danger,
       ),

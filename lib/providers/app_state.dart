@@ -187,14 +187,19 @@ class AppState extends ChangeNotifier {
     await loadSites();
   }
 
-  /// 批量删除源（源管理页「清除死站」用），返回实际删除数量。
+  /// 批量删除源（源管理页「清除死站」「清空所有源」用），返回实际删除数量。
   ///
-  /// 走 [ZyDatabase.removeMany]，key 列表只重写一次；
-  /// 剩下的源保持原有顺序（含置顶）。
-  Future<int> removeSites(Iterable<Site> targets) async {
+  /// 走 [ZyDatabase.removeMany]，key 列表只重写一次；剩下的源保持原有顺序
+  /// （含置顶）。[onProgress] 回报（已删, 总数），供界面显示进度 ——
+  /// 逐条删会在 Windows 端同步写盘，没有进度提示时看着就像卡死。
+  Future<int> removeSites(
+    Iterable<Site> targets, {
+    void Function(int done, int total)? onProgress,
+  }) async {
     final removed = await ZyDatabase.instance.removeMany(
       DbNames.site,
       targets.map((s) => s.key),
+      onProgress: onProgress,
     );
     if (removed > 0) await loadSites();
     return removed;
