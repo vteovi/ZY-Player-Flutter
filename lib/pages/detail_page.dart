@@ -38,6 +38,13 @@ class _DetailPageState extends State<DetailPage> {
   List<PlayLine> _lines = <PlayLine>[];
   int _lineIndex = 0;
 
+  /// 每个线路标签的 GlobalKey：切线路后要靠它把选中项滚到线路条中间，
+  /// 否则线路一多，选中的那一条可能停在屏幕外，用户看不到自己切到了哪。
+  List<GlobalKey> _lineKeys = <GlobalKey>[];
+
+  /// 本次横向滑动的累计位移，手指抬起时据此判断是「切换」还是「误触」。
+  double _lineDragDx = 0;
+
   @override
   void initState() {
     super.initState();
@@ -68,6 +75,10 @@ class _DetailPageState extends State<DetailPage> {
       setState(() {
         _detail = detail;
         _lines = detail?.lines ?? <PlayLine>[];
+        _lineKeys = List<GlobalKey>.generate(
+          _lines.length,
+          (_) => GlobalKey(debugLabel: 'play-line'),
+        );
         _lineIndex = _lines.isEmpty ? 0 : _lineIndex.clamp(0, _lines.length - 1);
         _playList = detail == null
             ? <PlayItem>[]
@@ -138,6 +149,45 @@ class _DetailPageState extends State<DetailPage> {
     setState(() {
       _lineIndex = index;
       _playList = _buildPlayList(detail, widget.siteKey, widget.videoId);
+    });
+    _revealLine(index);
+  }
+
+  /// 页面上左右滑动切换线路：向左滑看下一条，向右滑看上一条。
+  ///
+  /// 阈值取「横向拖动 48 逻辑像素」或「甩动速度 320 px/s」，满足任一即切换；
+  /// 手指上下滚页面时总会带一点横向抖动，靠这个阈值挡掉，避免误切。
+  void _handleLineSwipe(double dx, double velocity) {
+    if (_lines.length < 2) return;
+    if (dx.abs() < 48 && velocity.abs() < 320) return;
+    final forward = dx.abs() >= 48 ? dx < 0 : velocity < 0;
+    final next = forward ? _lineIndex + 1 : _lineIndex - 1;
+    if (next < 0 || next >= _lines.length) {
+      // 已经到头了：给一次轻触反馈，比「滑了没反应」更容易理解
+      HapticFeedback.selectionClick();
+      return;
+    }
+    HapticFeedback.selectionClick();
+    _selectLine(next);
+  }
+
+  /// 把选中线路滚到线路条中央。
+  ///
+  /// `ensureVisible` 会顺着所有祖先滚动容器对齐，所以同时解决两件事：
+  /// 横向把标签滚进可视区（还可能顺带露出相邻线路名），纵向在用户把页面
+  /// 拖到底、线路条已经滚出屏幕时把它拉回来 —— 线路名始终看得见。
+  void _revealLine(int index) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || index < 0 || index >= _lineKeys.length) return;
+      final ctx = _lineKeys[index].currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        // 居中而不是贴边：两侧各留半个身位，暗示「还能继续滑」
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+      );
     });
   }
 
@@ -421,7 +471,7 @@ class _DetailPageState extends State<DetailPage> {
 
   Widget _buildContent(Size size) {
     final detail = _detail!;
-    return SingleChildScrollView(
+    final content = SingleChildScrollView(
       child: Column(
         children: [
           SizedBox(height: size.height * 0.1),
@@ -459,6 +509,19 @@ class _DetailPageState extends State<DetailPage> {
           _buildInfoSection(detail),
         ],
       ),
+    );
+    // 只有一条线路时不必挂横向手势，省得和纵向滚动、文字选择互相争抢
+    if (_lines.length < 2) return content;
+    return GestureDetector(
+      // 水平和纵向滚动各认各的方向，手指往上推仍然正常翻页
+      onHorizontalDragStart: (_) => _lineDragDx = 0,
+      onHorizontalDragUpdate: (d) => _lineDragDx += d.delta.dx,
+      onHorizontalDragEnd: (d) {
+        final dx = _lineDragDx;
+        _lineDragDx = 0;
+        _handleLineSwipe(dx, d.primaryVelocity ?? 0);
+      },
+      child: content,
     );
   }
 
@@ -607,15 +670,33 @@ class _DetailPageState extends State<DetailPage> {
   Widget _buildLineBar() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final line = _lines[_lineIndex];
+    final hintColor = (isDark ? Colors.white70 : const Color(0xFF606266))
+        .withValues(alpha: 0.8);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '播放线路 · ${line.name}（${_playList.length} 集）',
-          style: TextStyle(
-            fontSize: 12,
-            color: isDark ? Colors.white70 : const Color(0xFF606266),
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '播放线路 · ${line.name}（${_playList.length} 集）',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white70 : const Color(0xFF606266),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            // 手势没有视觉入口，给一行小字说明，否则没人知道能滑
+            Icon(Icons.swipe, size: 13, color: hintColor),
+            const SizedBox(width: 3),
+            Text(
+              '左右滑动切换',
+              style: TextStyle(fontSize: 11, color: hintColor),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         SingleChildScrollView(
@@ -642,6 +723,8 @@ class _DetailPageState extends State<DetailPage> {
       onTap: selected ? null : () => _selectLine(index),
       borderRadius: BorderRadius.circular(16),
       child: Container(
+        // key 挂在这里，切换后据此把标签滚进可视区
+        key: index < _lineKeys.length ? _lineKeys[index] : null,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? accent : Colors.transparent,
