@@ -102,9 +102,28 @@ class Video {
   static String _s(dynamic v) => v == null ? '' : v.toString();
 }
 
-/// 视频详情 = 视频条目 + 播放列表（m3u8List 中每一项的原始写法为「集名$地址」）
+/// 一条播放线路。
+///
+/// maccms 的 `vod_play_from`（线路名）和 `vod_play_url`（选集）都是 `$$$` 分隔的
+/// 多段，两边同一序号一一对应。只采一家的站通常只有一段，但聚合站会把同一部片的
+/// 多个站点片源都塞进来（实测某站 11 条：「金鹰」「闪电」「量子」「红牛」…），
+/// 各线路的集数、清晰度、可用性都可能不同 —— 金鹰只有 19 集、量子有 21 集。
+class PlayLine {
+  /// 线路名（`vod_play_from` 的对应项）。为空时由解析层补成「线路N」。
+  final String name;
+
+  /// 该线路的原始选集，每项形如 `第1集$https://…/index.m3u8`。
+  final List<String> items;
+
+  const PlayLine(this.name, this.items);
+
+  int get length => items.length;
+}
+
+/// 视频详情 = 视频条目 + 播放线路（[PlayLine.items] 每项原始写法为「集名$地址」）
 class VideoDetail extends Video {
-  final List<String> m3u8List;
+  /// 全部线路，按源站给出的顺序（第一条即原先只认的那条）
+  final List<PlayLine> lines;
 
   const VideoDetail({
     super.id,
@@ -120,10 +139,23 @@ class VideoDetail extends Video {
     super.director,
     super.des,
     super.last,
-    this.m3u8List = const [],
+    this.lines = const [],
   });
 
-  factory VideoDetail.fromVideo(Video v, {List<String> m3u8List = const []}) {
+  /// 第一条线路的选集。大多数调用只关心「默认线路有哪些集」，
+  /// 多线路的切换由 [lines] 决定。
+  List<String> get m3u8List =>
+      lines.isEmpty ? const <String>[] : lines.first.items;
+
+  /// [m3u8List] 是单线路的旧写法，[lines] 优先；两者都没有则为空。
+  factory VideoDetail.fromVideo(
+    Video v, {
+    List<String> m3u8List = const [],
+    List<PlayLine> lines = const [],
+  }) {
+    final resolved = lines.isNotEmpty
+        ? lines
+        : (m3u8List.isEmpty ? const <PlayLine>[] : [PlayLine('', m3u8List)]);
     return VideoDetail(
       id: v.id,
       tid: v.tid,
@@ -138,11 +170,26 @@ class VideoDetail extends Video {
       director: v.director,
       des: v.des,
       last: v.last,
-      m3u8List: m3u8List,
+      lines: resolved,
     );
   }
 
   factory VideoDetail.fromJson(Map<dynamic, dynamic> json) {
+    final rawLines = json['lines'];
+    if (rawLines is List && rawLines.isNotEmpty) {
+      final lines = <PlayLine>[];
+      for (final item in rawLines) {
+        if (item is! Map) continue;
+        final items = item['items'];
+        lines.add(PlayLine(
+          item['name']?.toString() ?? '',
+          items is List ? items.map((e) => e.toString()).toList() : const [],
+        ));
+      }
+      if (lines.isNotEmpty) {
+        return VideoDetail.fromVideo(Video.fromJson(json), lines: lines);
+      }
+    }
     final list = json['m3u8List'];
     return VideoDetail.fromVideo(
       Video.fromJson(json),
@@ -154,6 +201,9 @@ class VideoDetail extends Video {
   Map<String, dynamic> toJson() {
     final json = super.toJson();
     json['m3u8List'] = m3u8List;
+    json['lines'] = [
+      for (final line in lines) {'name': line.name, 'items': line.items},
+    ];
     return json;
   }
 }
