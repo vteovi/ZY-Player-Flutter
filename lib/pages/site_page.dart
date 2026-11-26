@@ -196,11 +196,13 @@ class _SitePageState extends State<SitePage> {
       progress.value = _ImportUiState.failure('导入失败：$e');
     }
 
-    // 结果页停留一会儿，让「新增 / 更新」看得清再自动关。列表此时已经
+    // 结果页短暂停留，让「新增 / 更新」看得清就自动关。列表此时已经
     // 刷新完毕，用户看到的不是半成品，而是稳定的结果。
+    // 成功只留 0.8s：数据早就导完了，别为了展示结果让人觉得导入变慢；
+    // 失败留 2.4s，报错原因要看得清。
     if (!mounted) return;
     await Future<void>.delayed(
-      Duration(milliseconds: progress.value.ok ? 1500 : 2400),
+      Duration(milliseconds: progress.value.ok ? 800 : 2400),
     );
     if (!mounted) return;
     // 用户可能在这段时间里已经点了「完成」，别把下一个页面误关掉

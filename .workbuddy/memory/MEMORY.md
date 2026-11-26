@@ -27,7 +27,7 @@ uni-app ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/�
 - 详情页滑动切线路：内容区 `GestureDetector(onHorizontalDrag*)`，48px 或 320px/s，左滑下一条；chip 挂 GlobalKey，切换后 postFrame `Scrollable.ensureVisible(alignment:.5)` 横纵都拉回；<2 条不挂手势。
 - 手动添加/编辑：`site_edit_page.dart`，长按源卡片菜单；编辑沿用原 key，删源不删记录。
 - **checkSite 防误判**：`checkSite(site,{retry:true})` 拆出 `_checkSiteOnce`，fail 自动重试一次（错峰 300~700ms、二次 9s），ok/warn 一次返回。批量 8 并发下瞬超时/5xx/限流常见，旧逻辑一次 fail 就停用有效源。检测中途只更新 chip，结尾统一启停重排。
-- **导入要有始有终**：选完文件立刻 `showDialog`（不可取消）→ `_ImportProgressDialog`（读文件→解析→写库 N/M→结果淡入），1.5/2.4s 自动关；`importSitesFromContent` 带 onProgress + 每 12 条 16ms 让出事件循环。
+- **导入要有始有终**：选完文件立刻 `showDialog`（不可取消）→ `_ImportProgressDialog`（读文件→解析→写库 N/M→结果淡入），0.8/2.4s 自动关；`importSitesFromContent` 带 onProgress + 每 12 条 16ms 让出事件循环。
 
 ## UI（勿回退）
 - 加载一律骨架屏，禁灰黑遮罩；刷新不抹内容，顶部 2px 进度；换源不重置 `_classes`。
