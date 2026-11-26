@@ -1,0 +1,40 @@
+name: Sync Release Notes
+
+# 补写已发布 Release 的正文：用 更新记录.MD 里该版本那一节重新生成正文，
+# 覆盖到指定 tag 的 Release 上。发布后才发现正文要改（漏了说明、要加更新
+# 记录链接）时用这个，不必重新跑一遍完整构建、也不会动任何产物。
+#
+# 用法：Actions -> Sync Release Notes -> Run workflow，填 tag（如 v1.44.2）
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要补写正文的 tag（如 v1.44.2）'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: 重新生成正文并写回 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          # 链接指向 tag 本身，而不是本次运行所在的分支
+          NOTES_REF: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::Release $TAG 不存在，检查 tag 是否拼错"
+            exit 1
+          fi
+          bash tools/release-notes.sh "${TAG#v}" release-notes.md .
+          gh release edit "$TAG" --notes-file release-notes.md
+          echo "已更新 $TAG 的 Release 正文"

@@ -4,6 +4,10 @@
 # 用法: bash tools/release-notes.sh <版本号> <输出文件> [仓库根目录]
 #   例: bash tools/release-notes.sh 1.44.1 /tmp/notes.md .
 #
+# 可选环境变量：
+#   NOTES_REF  链接要指向的 ref（默认取 GITHUB_REF_NAME，再退到 v<版本号>）。
+#              补写历史 Release 正文时用它指定那个 tag。
+#
 # 抓取规则：以「## v<版本号>」开头的行算本节起点，遇到下一个「## v」结束。
 # 版本号做行首精确比较（避免 v1.44.1 误命中 v1.44.10）。
 #
@@ -58,8 +62,29 @@ if [ -z "$BODY" ]; then
 本版更新内容请见仓库根目录的 \`更新记录.MD\`。"
 fi
 
+# 正文里再给一个**可点击**的链接，用户不想只看这一版时能直接跳到完整更新
+# 记录（含所有历史版本）。指向当前 tag 而不是 main：老版本的 Release 点进
+# 去看到的仍是当时的记录，不会被后续改动带偏。
+# 仓库名优先取 Actions 的 GITHUB_REPOSITORY，本地跑脚本时从 remote 反推。
+REPO="${GITHUB_REPOSITORY:-}"
+if [ -z "$REPO" ]; then
+  REPO=$(git -C "$ROOT" remote get-url origin 2>/dev/null \
+    | sed -e 's#^git@[^:]*:##' -e 's#^ssh://git@[^/]*/##' \
+          -e 's#^https\{0,1\}://[^/]*/##' -e 's#\.git$##' || true)
+fi
+# 文件名带中文，链接里用百分号编码（%E6%9B%B4... = 更新记录.MD），
+# 各家 markdown 渲染器都能认。
+REF="${NOTES_REF:-${GITHUB_REF_NAME:-v$VER}}"
+NOTES_LINK=""
+if [ -n "$REPO" ]; then
+  NOTES_LINK="**完整更新记录（含全部历史版本）**：[更新记录.MD](https://github.com/$REPO/blob/$REF/%E6%9B%B4%E6%96%B0%E8%AE%B0%E5%BD%95.MD)"
+fi
+
 {
   printf '%s\n\n' "$BODY"
+  if [ -n "$NOTES_LINK" ]; then
+    printf '%s\n\n' "$NOTES_LINK"
+  fi
   cat <<'EOF'
 ---
 
