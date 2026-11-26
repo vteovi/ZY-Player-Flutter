@@ -46,6 +46,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - **深色 = 纯黑 OLED**：`#000000` / surface `#0D0D0D`，层级靠 1px `0x24FFFFFF` 描边，不提亮底色；`main.dart` 把 `colorScheme.surface` 压纯黑（M3 Dialog/Sheet 默认取它）。`bottomNavigationBarTheme.type: fixed`（否则 4 项变 shifting）。
 - **卡片模式 = 单枚举 `ViewMode {portrait, landscape, waterfall}`**（1.36.1 起，别拆回散装布尔）。`parse` 兼容老存档（按 瀑布流>横向 反推），`toJson` 仍写 `landscapeCard`/`waterfall` 派生值。入口：设置页 + 首页顶栏（**点按循环 竖→横→瀑布，长按弹底部菜单**，共用 `widgets/view_mode_picker.dart`；`IconButton` 无 onLongPress，须 `Tooltip(triggerMode: manual)+InkResponse`）。瀑布流下按钮也要显示，否则切进去出不来。
 - 瀑布流 `widgets/waterfall_grid.dart`：用 `SliverMasonryGrid` 主构造（`.count` 无 `addAutomaticKeepAlives`）。列数 `<600→2`，否则 `(w/190).floor().clamp(2,8)`。比例来自 `utils/poster_ratio.dart`：**只读图片头 64KB**（JPEG 找 SOF 排除 C4/C8/CC、PNG IHDR、GIF、WebP），三级缓存（内存→`poster_ratio.json`→解析），缺省 `2/3` 占位。
+- **首页分类栏不做任何名字屏蔽**（1.44.2 起）：接口给几个就显示几个，只按 tid 去重（`FilmPageState._dedupeClasses`）。别再写「电影/电视剧/综艺/动漫」这类黑名单 —— 那是把采集站最主流的分类整块藏掉，实测某站 9 个分类只剩 6 栏。
 - 首页片单缓存 `list_cache.dart` 先读缓存秒出再静默刷新；封面预取并发 6，网格 `memCacheWidth:480`、详情 600。`PosterCover` 自定义 `imageBuilder` 会丢淡入，用 `frameBuilder + AnimatedOpacity` 补。
 - **收藏/历史**：`mergeRecords` 开关 —— 关（默认）导航 4 项（首页/收藏/历史/设置），`StarPage`+`HistoryPage`，共用 `widgets/record_grid.dart`；开则 3 项（首页/我的/设置）+ `RecordsPage` TabBar 两栏。角标 `RecordCountTag`。`MainPage` 用**逻辑槽位 + `_slotOf()/_indexOf()`**，别用物理下标（会越界/弹回首页）。
 - 记录 key = `{siteKey}-{videoId}`，siteKey 含连字符，**绝不用 `split('-')[0]`**，用 `resolveRecordKey()`。
