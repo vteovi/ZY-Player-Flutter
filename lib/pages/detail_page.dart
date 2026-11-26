@@ -214,8 +214,7 @@ class _DetailPageState extends State<DetailPage> {
     // 从播放页返回后本地状态可能过期，导致对已存在的收藏重复 add（返回 false → 添加失败）。
     final starred = state.isStarred(_recordKey);
     // 收藏时连当前线路第一集的集名 / 地址一起存：以前只存元数据，
-    // 收藏条目没有 url，长按「查看详情」里看不到播放链接，「外部播放」
-    // 也只能跳回详情页重新选集。
+    // 收藏条目没有 url，「外部播放」只能跳回详情页重新选集。
     final first = _playList.isNotEmpty ? _playList.first : null;
     final item = RecordItem(
       key: _recordKey,

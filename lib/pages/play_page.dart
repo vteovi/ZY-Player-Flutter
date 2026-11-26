@@ -618,7 +618,7 @@ class _PlayPageState extends State<PlayPage> {
     // 退而从历史记录取元数据，再退而用标题/地址兜底 —— 这样「点收藏」绝不会
     // 因为 _detail 为 null 而静默失败（修复「从历史进入偶尔收藏不了」）。
     // 顺手把当前正在播的集名 / 地址存进收藏：以前只存元数据，收藏条目
-    // 没有 url，长按「查看详情」看不到播放链接，「外部播放」还得跳回详情页选集。
+    // 没有 url，「外部播放」还得跳回详情页选集。
     final first = _playList.isNotEmpty ? _playList.first : null;
     final item = detail != null
         ? RecordItem(
