@@ -429,6 +429,21 @@ class FilmPageState extends State<FilmPage>
     );
   }
 
+  /// 长按海报：带片名直接进搜索页并立刻搜，省得用户先记片名再去搜。
+  /// 范围默认「全部站点」——用户想找的往往是这片子在别的源的线路。
+  void _searchVideo(Video video) {
+    final keyword = video.name.trim();
+    if (keyword.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SearchPage(
+          currentSite: _site,
+          initialKeyword: keyword,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -766,6 +781,7 @@ class FilmPageState extends State<FilmPage>
               videoClass: c,
               onRecordCount: _onRecordCount,
               onTapVideo: _openDetail,
+              onLongPressVideo: _searchVideo,
               refreshTick: _refreshTicks[c.tid] ?? 0,
               // 快照来的那一页片单只在「同一个源」上注入一次，
               // 否则换源后同一个 tid 会把旧站的片子画到新站上
@@ -786,6 +802,9 @@ class CategoryTab extends StatefulWidget {
   final void Function(String tid, int count) onRecordCount;
   final void Function(Video video) onTapVideo;
 
+  /// 长按影片：带片名进搜索页（首页专属）
+  final void Function(Video video) onLongPressVideo;
+
   /// 「刷新令牌」：父级把某个分类的令牌 +1，本分栏就静默重拉一次片单。
   ///
   /// 用自增 int 而不是 GlobalKey 调子 State 方法，是因为分栏都在
@@ -802,6 +821,7 @@ class CategoryTab extends StatefulWidget {
     required this.videoClass,
     required this.onRecordCount,
     required this.onTapVideo,
+    required this.onLongPressVideo,
     this.refreshTick = 0,
     this.initialVideos,
   });
@@ -1288,6 +1308,7 @@ class CategoryTabState extends State<CategoryTab>
                     scrollController: _scrollController,
                     loadingMore: _loadingMore,
                     onTap: widget.onTapVideo,
+                    onLongPress: widget.onLongPressVideo,
                     // 窄屏右下角有悬浮搜索按钮，给最后一排留出能滚过去的空间
                     bottomInset:
                         MediaQuery.sizeOf(context).width < FilmPageState._wideThreshold

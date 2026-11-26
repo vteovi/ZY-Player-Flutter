@@ -73,6 +73,9 @@ class VideoGridView extends StatelessWidget {
   final bool loadingMore;
   final void Function(Video) onTap;
 
+  /// 长按卡片回调（首页用来按片名直接进搜索）。null 则不挂手势。
+  final void Function(Video)? onLongPress;
+
   /// 可选：结果来源角标（全站搜索时显示站点名），返回 null 则不显示
   final String? Function(Video)? labelOf;
 
@@ -92,6 +95,7 @@ class VideoGridView extends StatelessWidget {
     this.scrollController,
     this.loadingMore = false,
     required this.onTap,
+    this.onLongPress,
     this.labelOf,
     this.bottomInset = 0,
     this.footer,
@@ -144,6 +148,8 @@ class VideoGridView extends StatelessWidget {
                 // 按海报实测比例定高：比例准了 BoxFit.cover 就不裁切
                 coverRatio: waterfallCoverRatio(video.pic),
                 onTap: () => onTap(video),
+                onLongPress:
+                    onLongPress == null ? null : () => onLongPress!(video),
               );
             },
           );
@@ -175,6 +181,8 @@ class VideoGridView extends StatelessWidget {
                       sourceLabel: labelOf?.call(video),
                       memCacheWidth: memW,
                       onTap: () => onTap(video),
+                      onLongPress:
+                          onLongPress == null ? null : () => onLongPress!(video),
                     );
                   },
                   childCount: videos.length,
@@ -206,6 +214,7 @@ Widget buildVideoGrid({
   ScrollController? scrollController,
   bool loadingMore = false,
   required void Function(Video) onTap,
+  void Function(Video)? onLongPress,
   String? Function(Video)? labelOf,
   double bottomInset = 0,
   Widget? footer,
@@ -214,6 +223,7 @@ Widget buildVideoGrid({
   scrollController: scrollController,
   loadingMore: loadingMore,
   onTap: onTap,
+  onLongPress: onLongPress,
   labelOf: labelOf,
   bottomInset: bottomInset,
   footer: footer,

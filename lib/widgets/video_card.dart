@@ -177,6 +177,10 @@ class VideoCard extends StatelessWidget {
   final Video video;
   final VoidCallback onTap;
 
+  /// 长按卡片：首页用来「按片名直接进搜索」。null 则不挂手势，
+  /// 收藏 / 历史页的 [RecordCard] 有自己的长按菜单，不受这里影响。
+  final VoidCallback? onLongPress;
+
   /// 来源角标（全站搜索时显示站点名），null 则不显示
   final String? sourceLabel;
 
@@ -195,6 +199,7 @@ class VideoCard extends StatelessWidget {
     super.key,
     required this.video,
     required this.onTap,
+    this.onLongPress,
     this.sourceLabel,
     this.memCacheWidth = 480,
     this.coverRatio,
@@ -210,6 +215,7 @@ class VideoCard extends StatelessWidget {
       // 底色交给 CardTheme（深色下是纯黑），这里不再写死
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
