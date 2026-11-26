@@ -460,17 +460,55 @@ class AppState extends ChangeNotifier {
     final record = item.ts == 0
         ? item.copyWithRecord(ts: DateTime.now().millisecondsSinceEpoch)
         : item;
+
+    // 乐观更新：先把内存和图标切过去，再异步写盘。
+    // 以前是 await put + await loadStars（整库重读）之后才 notifyListeners，
+    // 按钮要等两次磁盘 IO 才变红，Windows 上每次写盘都是整份序列化，尤其明显。
+    final had = _stars.any((s) => s.key == record.key);
+    final previous = had
+        ? _stars.firstWhere((s) => s.key == record.key)
+        : null;
+    _stars.removeWhere((s) => s.key == record.key);
+    _stars.add(record);
+    _sortStars();
+    notifyListeners();
+
     // 用 put（upsert）而非 add：即使出现「内存状态短暂过期」导致重复收藏，
     // 也不会因为 key 已存在而静默返回 false，保证收藏一定成功落库。
     final ok = await ZyDatabase.instance.put(DbNames.star, record.toJson());
-    await loadStars();
+    if (!ok) {
+      // 落库失败就把界面切回原样，别让用户以为收藏成功了
+      _stars.removeWhere((s) => s.key == record.key);
+      if (previous != null) _stars.add(previous);
+      _sortStars();
+      notifyListeners();
+    }
     return ok;
   }
 
   Future<bool> removeStar(String key) async {
+    final index = _stars.indexWhere((s) => s.key == key);
+    if (index < 0) {
+      // 内存里没有（极少见，比如刚启动尚未 loadStars）：走老路径兜底
+      final ok = await ZyDatabase.instance.remove(DbNames.star, key);
+      await loadStars();
+      return ok;
+    }
+    final previous = _stars[index];
+    _stars.removeAt(index);
+    notifyListeners();
+
     final ok = await ZyDatabase.instance.remove(DbNames.star, key);
-    await loadStars();
+    if (!ok) {
+      _stars.add(previous);
+      _sortStars();
+      notifyListeners();
+    }
     return ok;
+  }
+
+  void _sortStars() {
+    _stars.sort((a, b) => b.ts.compareTo(a.ts));
   }
 
   /// 收藏 / 取消收藏
