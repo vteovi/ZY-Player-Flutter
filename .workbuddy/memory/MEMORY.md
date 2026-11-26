@@ -51,7 +51,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - **输入框别用 `TextInputType.url`**（2026-11-25 实锤）：映射成 `TYPE_TEXT_VARIATION_URI`，配 `autocorrect:false`/`enableSuggestions:false` 的 `NO_SUGGESTIONS`，国产输入法会判成敏感输入并切「安全键盘」，用户调不出常用输入法与粘贴板。网址/接口地址框一律 `TextInputType.text`。
 - 源检测 `checkSite`（`?ac=list` 超时 8s）→ ok/warn/fail；中途只更新 chip，结尾统一启停+重排；结果只放内存。**`PopupMenuButton` 别整个 `enabled:false`**，会连非破坏项一起禁掉。
 - **大屏（≥600）**：首页搜索框并入 AppBar 第一排 [站点 ≤260 | 搜索 | 共 N]，toolbarHeight 60；NavigationRail `trailing` 放大屏入口。播放页分栏：宽≥840 且 宽>高，右栏 min(30%,420) 且 ≥300。
-- **播放页**：进度条独占一行 + 等宽按钮行；比例/大小是独立两维（`_stageAreaSize` + 双层 FittedBox）；左亮右音量、双击暂停；自绘 `_ProgressSlider`；`PopScope` 先退全屏再退页；控制层 4s 隐藏；倍速 0.5~3.0 八档；**收藏按钮只在 `!_fullscreen || _landscapeNow` 显示**。
+- **播放页**：进度条独占一行 + 等宽按钮行；比例/大小底层是独立两维（`_stageAreaSize` + 双层 FittedBox），但 UI 已合并成**单个「画面」按钮 + 单个 `_screenPanelOpen` 面板**（1.43.0，面板内分「画面比例」「画面大小」两段，别再拆回两个按钮）；左亮右音量、双击暂停；自绘 `_ProgressSlider`；`PopScope` 先退全屏再退页；控制层 4s 隐藏；倍速 0.5~3.0 八档；**收藏按钮只在 `!_fullscreen || _landscapeNow` 显示**。
 - 设置页：六组卡片（内容与数据/播放/外观与布局/备份与恢复/清理与重置/关于），`_SettingsSection`+`_SettingsTile`+`_SwitchTile`，桌面限宽 720 居中。导入导出已并入源管理菜单，**设置页不再有「播放记录」「导入配置源」**。
 
 ## 其他坑（勿回退）
