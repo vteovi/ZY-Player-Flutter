@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,8 +8,9 @@ import '../providers/app_state.dart';
 import '../utils/toast.dart';
 import '../widgets/record_grid.dart';
 import 'detail_page.dart';
+import 'search_page.dart';
 
-/// 收藏页：卡片网格，点开详情，长按取消收藏。
+/// 收藏页：卡片网格，点开详情，长按弹出「搜索该影片 / 删除」菜单。
 ///
 /// 只在「收藏与历史合并」关闭（默认）时出现 —— 此时导航栏是
 /// 「首页 / 收藏 / 历史 / 设置」，条数显示在标题右边的 [RecordCountTag] 里。
@@ -35,6 +38,65 @@ class _StarPageState extends State<StarPage> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DetailPage(siteKey: parts[0], videoId: parts[1]),
+      ),
+    );
+  }
+
+  /// 长按收藏卡片：在手指位置弹出「搜索该影片 / 删除」菜单。
+  Future<void> _showActions(RecordItem item, Offset position) async {
+    final screen = MediaQuery.of(context).size;
+    // 菜单约 200 宽、两项约 100 高，贴边时往里收，别弹出屏幕外
+    final x = position.dx.clamp(0.0, math.max(0.0, screen.width - 210));
+    final y = position.dy.clamp(0.0, math.max(0.0, screen.height - 120));
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        x.toDouble(),
+        y.toDouble(),
+        x.toDouble(),
+        y.toDouble(),
+      ),
+      items: const [
+        PopupMenuItem<String>(
+          value: 'search',
+          child: Row(
+            children: [
+              Icon(Icons.search, size: 20),
+              SizedBox(width: 12),
+              Text('搜索该影片'),
+            ],
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 20),
+              SizedBox(width: 12),
+              Text('删除'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    if (action == 'search') {
+      _searchOnline(item);
+    } else if (action == 'delete') {
+      await _removeStar(item);
+    }
+  }
+
+  /// 拿片名去全网搜：打开搜索页并自动搜，范围默认「全部站点」。
+  void _searchOnline(RecordItem item) {
+    final keyword = item.name.trim();
+    if (keyword.isEmpty) {
+      showToast(context, '这条收藏没有片名，无法搜索', success: false);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SearchPage(initialKeyword: keyword),
       ),
     );
   }
@@ -83,7 +145,7 @@ class _StarPageState extends State<StarPage> {
         emptyMessage: '还没有收藏任何影片',
         emptyIcon: Icons.star_border,
         onTap: _openDetail,
-        onLongPress: _removeStar,
+        onLongPress: _showActions,
       ),
     );
   }

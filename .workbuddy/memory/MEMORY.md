@@ -38,7 +38,7 @@ uni-app ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/�
 - 输入框一律 `TextInputType.text`（url 类型触发国产输入法安全键盘）。
 - 大屏 ≥600 搜索并入 AppBar；播放页宽≥840 且横向时右栏 min(30%,420)≥300；播放页单个「画面」按钮 + `_screenPanelOpen`（别拆回两个），进度条独占行、自绘 `_ProgressSlider`、倍速 0.5~3.0 八档、控制层 4s 隐藏、收藏按钮只在 `!_fullscreen || _landscapeNow`。
 - 设置页六组卡片，桌面限宽 720；导入导出在源管理菜单。
-- **批量写/删库报进度 + 让出事件循环**：Windows 每次 `setString/remove` 整份同步写盘会卡 UI；`removeMany` 带 onProgress（12 条 / 24ms），界面显示「清除中 3/12」+ 2px 条。
+- **批量写/删库报进度 + 让出事件循环**：Windows 每次 `setString/remove` 整份同步写盘会卡 UI；`removeMany` 带 onProgress（12 条 / 24ms），界面显示「清除中 3/12」+ 2px 条；进度 UI 必须用 `ValueNotifier` 局部刷新（1.47.1），别每条 `setState` 重建整个站点列表。
 
 ## 其他坑
 - Flutter 命中测试：触点在父节点外整棵子树不命中。不满一屏翻页靠 `CategoryTabState._maybeContinueLoad()`。详情 `fetchDetail` 只对瞬时错误重试 2 次，EmptyHint 显示原因。

@@ -86,7 +86,7 @@ class _HistoryPageState extends State<HistoryPage> {
         emptyMessage: '还没有播放记录',
         emptyIcon: Icons.history,
         onTap: _play,
-        onLongPress: _removeHistory,
+        onLongPress: (item, _) => _removeHistory(item),
       ),
     );
   }
