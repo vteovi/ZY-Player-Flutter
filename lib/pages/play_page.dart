@@ -122,9 +122,12 @@ class _PlayPageState extends State<PlayPage> {
   late AspectOption _aspect;
   late ScaleOption _scaleMode;
 
-  /// 比例 / 大小选项面板是否展开
-  bool _aspectPanelOpen = false;
-  bool _scalePanelOpen = false;
+  /// 画面（比例 + 大小）面板是否展开。
+  ///
+  /// 这两项以前各占一个按钮、各开一个面板，但它们调的都是「画面怎么摆」，
+  /// 摆出来经常是同一个效果，用户容易以为功能重复。合并成一个「画面」按钮、
+  /// 一个面板里分两段，点开就能一起看到。
+  bool _screenPanelOpen = false;
 
   // ---- 画面手势（竖屏 / 全屏同一套）：左半屏上下滑调亮度，右半屏调音量 ----
 
@@ -925,13 +928,13 @@ class _PlayPageState extends State<PlayPage> {
 
   /// 重新计时：[_controlsAutoHideDelay] 之后把控制层藏起来。
   ///
-  /// 面板（画面比例 / 画面大小）展开时先不藏，过一会儿再试 —— 否则用户刚点开
+  /// 面板（画面 / 倍速）展开时先不藏，过一会儿再试 —— 否则用户刚点开
   /// 面板就被收走，手感很怪。
   void _scheduleHideControls() {
     _hideTimer?.cancel();
     _hideTimer = Timer(_controlsAutoHideDelay, () {
       if (!mounted || !_fullscreen) return;
-      if (_aspectPanelOpen || _scalePanelOpen || _speedPanelOpen) {
+      if (_screenPanelOpen || _speedPanelOpen) {
         _scheduleHideControls();
         return;
       }
@@ -1012,8 +1015,7 @@ class _PlayPageState extends State<PlayPage> {
         // 每次进入/退出全屏都回到「跟随比例」，避免上次的手动旋转粘到下个视频
         _forceLandscape = null;
         // 切换横竖屏后画面区域尺寸会变，收起面板避免遮挡
-        _aspectPanelOpen = false;
-        _scalePanelOpen = false;
+        _screenPanelOpen = false;
         _speedPanelOpen = false;
         // 进全屏先把控制层亮出来，几秒后再自动收
         _controlsVisible = true;
@@ -1065,8 +1067,7 @@ class _PlayPageState extends State<PlayPage> {
     await _applyFullscreenOrientation();
     if (!mounted) return;
     setState(() {
-      _aspectPanelOpen = false;
-      _scalePanelOpen = false;
+      _screenPanelOpen = false;
     });
   }
 
@@ -2615,8 +2616,7 @@ class _PlayPageState extends State<PlayPage> {
           children: [
             _buildProgressRow(),
             _buildButtonRow(),
-            if (_aspectPanelOpen) _buildAspectPanel(),
-            if (_scalePanelOpen) _buildScalePanel(),
+            if (_screenPanelOpen) _buildScreenPanel(),
             if (_speedPanelOpen) _buildSpeedPanel(),
             const Divider(height: 1),
           ],
@@ -2645,8 +2645,7 @@ class _PlayPageState extends State<PlayPage> {
               children: [
                 _buildProgressRow(),
                 _buildButtonRow(),
-                if (_aspectPanelOpen) _buildAspectPanel(),
-                if (_scalePanelOpen) _buildScalePanel(),
+                if (_screenPanelOpen) _buildScreenPanel(),
                 if (_speedPanelOpen) _buildSpeedPanel(),
               ],
             ),
@@ -2718,23 +2717,19 @@ class _PlayPageState extends State<PlayPage> {
               label: '下一集',
               onTap: _playNextEpisode,
             ),
+          // 「画面」：比例 + 大小合并成一个入口。前者决定「画面变成什么形状」，
+          // 后者决定「这个形状怎么塞进画面区域」，是同一件事的两步；拆成两个按钮
+          // 摆出来经常是同一个效果，用户会以为功能重复。设过非默认值时按钮常亮，
+          // 跟倍速按钮一个套路，一眼能看出「现在画面被调过」。
           _controlButton(
             icon: Icons.aspect_ratio_rounded,
-            label: _aspect.label,
-            active: _aspectPanelOpen,
+            label: '画面',
+            active: _screenPanelOpen ||
+                _aspect.ratio != null ||
+                _flip ||
+                _scaleMode.key != PlayerScales.all.first.key,
             onTap: () => setState(() {
-              _aspectPanelOpen = !_aspectPanelOpen;
-              _scalePanelOpen = false;
-              _speedPanelOpen = false;
-            }),
-          ),
-          _controlButton(
-            icon: Icons.fit_screen_rounded,
-            label: _scaleMode.label,
-            active: _scalePanelOpen,
-            onTap: () => setState(() {
-              _scalePanelOpen = !_scalePanelOpen;
-              _aspectPanelOpen = false;
+              _screenPanelOpen = !_screenPanelOpen;
               _speedPanelOpen = false;
             }),
           ),
@@ -2745,8 +2740,7 @@ class _PlayPageState extends State<PlayPage> {
             active: _speedPanelOpen || _speed != 1.0,
             onTap: () => setState(() {
               _speedPanelOpen = !_speedPanelOpen;
-              _aspectPanelOpen = false;
-              _scalePanelOpen = false;
+              _screenPanelOpen = false;
             }),
           ),
           // 收藏按钮的显隐按「屏幕够不够宽」来定：
@@ -2812,47 +2806,55 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
-  Widget _buildAspectPanel() {
-    return _buildPanel(
-      title: _aspect.ratio == null
-          ? '画面比例 · 自适应（跟随视频原始比例）'
-          : '画面比例 · ${_aspect.label}（画面会变成该形状）',
+  /// 画面面板：比例 + 大小两段合在一个面板里。
+  ///
+  /// 以前是两个入口，但它们只是「先把画面裁成某个形状」和「再把这个形状塞进区域」
+  /// 两步，拆开点来点去常常得到同一个观感，所以合并；面板里仍旧分段，
+  /// 免得用户不知道哪几个 chip 是一组。
+  Widget _buildScreenPanel() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        for (final option in PlayerAspects.all)
-          _buildChip(
-            label: option.label,
-            selected: option.key == _aspect.key,
-            onTap: () => _selectAspect(option),
-          ),
-        // 自定义比例：自己填宽高（如 21 : 9），选过一次会被记住
-        _buildChip(
-          label: _aspect.key == PlayerAspects.customKey
-              ? '自定义 ${_aspect.label}'
-              : '自定义…',
-          selected: _aspect.key == PlayerAspects.customKey,
-          onTap: _editCustomAspect,
+        _buildPanel(
+          title: _aspect.ratio == null
+              ? '画面比例 · 自适应（跟随视频原始比例）'
+              : '画面比例 · ${_aspect.label}（画面会变成该形状）',
+          bottom: 6,
+          children: [
+            for (final option in PlayerAspects.all)
+              _buildChip(
+                label: option.label,
+                selected: option.key == _aspect.key,
+                onTap: () => _selectAspect(option),
+              ),
+            // 自定义比例：自己填宽高（如 21 : 9），选过一次会被记住
+            _buildChip(
+              label: _aspect.key == PlayerAspects.customKey
+                  ? '自定义 ${_aspect.label}'
+                  : '自定义…',
+              selected: _aspect.key == PlayerAspects.customKey,
+              onTap: _editCustomAspect,
+            ),
+            // 少数源上报的分辨率方向与实际画面相反（竖屏视频被当成横屏），
+            // 用这个一键把宽高对调；选择会被记住
+            _buildChip(
+              label: '⇄ 交换宽高',
+              selected: _flip,
+              onTap: _toggleFlip,
+            ),
+          ],
         ),
-        // 少数源上报的分辨率方向与实际画面相反（竖屏视频被当成横屏），
-        // 用这个一键把宽高对调；选择会被记住
-        _buildChip(
-          label: '⇄ 交换宽高',
-          selected: _flip,
-          onTap: _toggleFlip,
+        _buildPanel(
+          title: '画面大小 · ${_scaleMode.desc}',
+          children: [
+            for (final option in PlayerScales.all)
+              _buildChip(
+                label: option.label,
+                selected: option.key == _scaleMode.key,
+                onTap: () => _selectScale(option),
+              ),
+          ],
         ),
-      ],
-    );
-  }
-
-  Widget _buildScalePanel() {
-    return _buildPanel(
-      title: '画面大小 · ${_scaleMode.desc}',
-      children: [
-        for (final option in PlayerScales.all)
-          _buildChip(
-            label: option.label,
-            selected: option.key == _scaleMode.key,
-            onTap: () => _selectScale(option),
-          ),
       ],
     );
   }
@@ -2872,9 +2874,13 @@ class _PlayPageState extends State<PlayPage> {
     );
   }
 
-  Widget _buildPanel({required String title, required List<Widget> children}) {
+  Widget _buildPanel({
+    required String title,
+    required List<Widget> children,
+    double bottom = 10,
+  }) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 2, 12, 10),
+      padding: EdgeInsets.fromLTRB(12, 2, 12, bottom),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
