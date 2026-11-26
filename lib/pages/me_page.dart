@@ -1043,28 +1043,36 @@ class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
 
     return AlertDialog(
       title: const Text('外部播放器'),
-      // 宽屏上 Dialog 会跟着屏幕一直撑开，装的应用多时更是又宽又高；
-      // 收到手机附近宽度，超高就让列表在里面滚，不顶到屏幕边缘。
-      constraints: BoxConstraints(
-        maxWidth: 420,
-        maxHeight: MediaQuery.of(context).size.height * 0.8,
-      ),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: _loading
-            ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+      // 宽屏上 Dialog 会跟着屏幕一直撑开，装的应用多时更是又宽又高。
+      // ⚠️ 不能写 AlertDialog(constraints:)：CI 固定 Flutter 3.32.6，
+      // 那个版本的 AlertDialog 没有 constraints 参数（新版才有），
+      // 本地 analyze 过不了这关、CI 直接编译失败。改为在 content 里
+      // 用 ConstrainedBox 限尺寸，3.32.6 及新版都认。
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 420,
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        child: SizedBox(
+          width: double.maxFinite,
+          child: _loading
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: rows,
                   ),
                 ),
-              )
-            : SingleChildScrollView(
-                child: Column(mainAxisSize: MainAxisSize.min, children: rows),
-              ),
+        ),
       ),
       actions: [
         TextButton(
