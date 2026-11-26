@@ -11,7 +11,6 @@ import '../services/http_service.dart';
 import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
 import '../utils/image_prefetch.dart';
-import '../utils/constants.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
 import '../widgets/view_mode_picker.dart';
@@ -144,10 +143,8 @@ class FilmPageState extends State<FilmPage>
   void _applyBootSnapshot() {
     final s = BootSnapshot.site;
     if (s == null || BootSnapshot.classes.isEmpty) return;
-    final visible = BootSnapshot.classes
-        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
-        .where((c) => c.tid != _latestClass.tid)
-        .toList();
+    final visible =
+        BootSnapshot.classes.where((c) => c.tid != _latestClass.tid).toList();
     if (visible.isEmpty) return;
     _usingSnapshot = true;
     _site = s;
@@ -320,14 +317,24 @@ class FilmPageState extends State<FilmPage>
     if (_site == null) return;
     final list = await HttpService.instance.fetchClasses(_site!);
     if (!mounted) return;
-    final visible = list
-        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
-        .toList();
+    // 接口给几个分类就显示几个。以前这里有一张硬编码黑名单（电影 / 电视剧 /
+    // 综艺 / 动漫 …），把采集站最主流的分类全藏了 —— 实测 `ys.cxkjg.cn`
+    // 接口给 9 个，首页只剩 6 栏，其中 4 个还是被藏出来造成的缺口。
     setState(() {
-      _classes = <VideoClass>[_latestClass, ...visible];
+      _classes = <VideoClass>[_latestClass, ..._dedupeClasses(list)];
     });
     _initTabs(_classes.length, force: true);
     _saveBootSnapshot();
+  }
+
+  /// 同一 tid 只留第一条。
+  ///
+  /// 少数镜像站的 `class` 数组没去重（同一个分类出现两遍，名字可能还不同），
+  /// 直接铺到 TabBar 上就是两个内容一模一样的 tab。同 tid 的内容本来就是同一批
+  /// 片单，去掉重复项不会有任何损失。
+  static List<VideoClass> _dedupeClasses(List<VideoClass> list) {
+    final seen = <String>{};
+    return list.where((c) => c.tid.isEmpty || seen.add(c.tid)).toList();
   }
 
   /// 静默向源站对一次分类栏。
@@ -345,10 +352,7 @@ class FilmPageState extends State<FilmPage>
       return;
     }
     if (!mounted) return;
-    final visible = list
-        .where((c) => !AppConstants.hiddenClasses.contains(c.name))
-        .toList();
-    final next = <VideoClass>[_latestClass, ...visible];
+    final next = <VideoClass>[_latestClass, ..._dedupeClasses(list)];
     if (_sameClasses(next, _classes)) {
       _saveBootSnapshot();
       return;
