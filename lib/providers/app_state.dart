@@ -415,6 +415,23 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 指定 Android 外部播放器：package 为空表示回到「系统分享」。
+  /// label 只用于设置页显示，卸载后仍能看出之前选了哪个应用。
+  Future<void> setExternalPlayer(String package, String label) async {
+    final nextPackage = package.trim();
+    final nextLabel = label.trim();
+    if (_config.externalPlayerPackage == nextPackage &&
+        _config.externalPlayerLabel == nextLabel) {
+      return;
+    }
+    _config = _config.copyWith(
+      externalPlayerPackage: nextPackage,
+      externalPlayerLabel: nextLabel,
+    );
+    await ZyDatabase.instance.put(DbNames.setting, _config.toJson());
+    notifyListeners();
+  }
+
   /// 设置版本更新清单地址（留空则回到内置默认地址）。
   Future<void> setUpdateUrl(String url) async {
     final next = url.trim();

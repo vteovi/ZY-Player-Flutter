@@ -310,15 +310,19 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _openExternal(PlayItem item) async {
     // 与内置播放一致，先记一条播放记录
     _addHistory(item);
+    final config = context.read<AppState>().config;
     final status = await SystemControl.openWithExternalPlayer(
       url: item.value,
       title: item.label.isNotEmpty ? item.label : (_detail?.name ?? ''),
-      customPath: context.read<AppState>().config.externalPlayerPath,
+      customPath: config.externalPlayerPath,
+      package: config.externalPlayerPackage,
     );
     if (!mounted) return;
     switch (status) {
       case 'no_app':
         showToast(context, '没找到能播放该地址的播放器', success: false);
+      case 'no_player':
+        showToast(context, '所选播放器打不开该地址，请到设置重新选择', success: false);
       case 'no_url':
         showToast(context, '没有可播放的地址', success: false);
       case 'error':
