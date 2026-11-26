@@ -58,27 +58,32 @@ jobs:
           # 链接指向 tag 本身，而不是本次运行所在的分支
           NOTES_REF: ${{ steps.target.outputs.tag }}
         run: |
-          # 直接打 API 而不是用 gh：HTTP 状态码原样打出来，同时写进 job summary
-          # （summary 在运行页面上能直接看到，排查时不必翻日志）。
+          # 直接打 API 而不是用 gh：HTTP 状态码原样打出来。
+          # 注解里也能看到（日志抓不到时靠它排查），格式：
+          #   probe token=.. anon=.. 各段状态码
           auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          probe() {
+            curl -sS -o /dev/null -w '%{http_code}' "$@"
+          }
+          p_repo=$(probe "${auth[@]}" "https://api.github.com/repos/$REPO")
+          p_rel=$(probe "${auth[@]}" "https://api.github.com/repos/$REPO/releases?per_page=1")
+          p_tag=$(probe "${auth[@]}" "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          p_anon=$(probe "https://api.github.com/repos/$REPO/releases/tags/$TAG")
+          DIAG="repo=$p_repo releases=$p_rel tag=$p_tag anon_tag=$p_anon tokenlen=${#GH_TOKEN}"
+          echo "诊断: $DIAG"
           {
-            echo "### 诊断（token 长度 ${#GH_TOKEN}）"
-            echo "| 请求 | 带 token | 匿名 |"
-            echo "| --- | --- | --- |"
-            for probe in "repos/$REPO" "repos/$REPO/releases?per_page=3" "repos/$REPO/releases/tags/$TAG"; do
-              c1=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "https://api.github.com/$probe")
-              c2=$(curl -sS -o /dev/null -w '%{http_code}' "https://api.github.com/$probe")
-              echo "| \`$probe\` | $c1 | $c2 |"
-            done
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "### 诊断"
+            echo "\`$DIAG\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           API="https://api.github.com/repos/$REPO/releases/tags/$TAG"
-          code=$(curl -sS -o rel.json -w '%{http_code}' "${auth[@]}" "$API")
+          code=$p_tag
+          curl -sS -o rel.json "${auth[@]}" "$API" || true
           echo "GET $TAG -> HTTP $code"
           if [ "$code" != "200" ]; then
             head -c 400 rel.json || true
             echo
-            echo "::error::读不到 Release $TAG（HTTP $code）"
+            echo "::error::读不到 Release $TAG（HTTP $code）｜$DIAG"
             exit 1
           fi
 
