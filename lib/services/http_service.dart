@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 import 'package:xml/xml.dart' as xml;
@@ -788,27 +789,44 @@ class HttpService {
   /// - 接口能连通但没有片单 → [SiteHealth.warn]
   ///   （域名还在、接口已改成网页，是采集站最常见的死法）
   /// - 连接层就失败，或返回内容不是采集接口 → [SiteHealth.fail]
-  Future<SiteCheckResult> checkSite(Site site) async {
-    final api = site.api.trim();
-    if (api.isEmpty) {
+  ///
+  /// ⚠️ **失败会自动重试一次**：批量检测是 8 路并发，采集站对这种突发流量
+  /// 很敏感（限流 / 5xx / 瞬时超时 / CDN 临时回源失败都是常态）。早期只测
+  /// 一次就判 fail，而批量检测结束会把 fail 源自动停用 —— 用户看到的就是
+  /// 「明明能用的源，检测一下就没了，再测一次又好了」。重试只对失败项发生，
+  /// 成功 / 存疑一次就返回，所以整体速度几乎不受影响。
+  Future<SiteCheckResult> checkSite(Site site, {bool retry = true}) async {
+    if (site.api.trim().isEmpty) {
       return const SiteCheckResult(SiteHealth.fail, '接口地址为空', 0);
     }
     final sw = Stopwatch()..start();
+    var result = await _checkSiteOnce(site, _checkTimeout);
+    if (retry && result.health == SiteHealth.fail) {
+      // 错峰重试：一批失败请求同时回重试会再次撞上限流，散开 300~700ms。
+      // 第二次给更长的超时，慢站 / 冷启动的 CDN 才有机会回包。
+      await Future<void>.delayed(
+        Duration(milliseconds: 300 + math.Random().nextInt(400)),
+      );
+      final second = await _checkSiteOnce(site, const Duration(seconds: 9));
+      if (second.health != SiteHealth.fail) result = second;
+    }
+    sw.stop();
+    // 耗时按用户实际等待计入（含重试），显示出来才是真实体感
+    return SiteCheckResult(result.health, result.message, sw.elapsedMilliseconds);
+  }
 
+  /// 单次探测：只负责发请求 + 分类判定，是否重试由 [checkSite] 决定。
+  Future<SiteCheckResult> _checkSiteOnce(Site site, Duration timeout) async {
+    final api = site.api.trim();
     final _Payload payload;
     try {
       payload = await _load(
         _apiUrl(site, {'ac': 'list'}),
-        timeout: _checkTimeout,
+        timeout: timeout,
       );
     } catch (e) {
-      sw.stop();
       // 连接层就失败，换裸地址也是同样的错，不必再等一次超时
-      return SiteCheckResult(
-        SiteHealth.fail,
-        describeRequestError(e),
-        sw.elapsedMilliseconds,
-      );
+      return SiteCheckResult(SiteHealth.fail, describeRequestError(e), 0);
     }
 
     var classes = _classesFromJson(payload.json);
@@ -821,7 +839,7 @@ class HttpService {
     // 接口改成了网站页）。
     if (classes.isEmpty && videos.isEmpty && !payload.looksLikeHtml) {
       try {
-        final bare = await _load(api, timeout: _checkTimeout);
+        final bare = await _load(api, timeout: timeout);
         classes = _classesFromJson(bare.json);
         if (classes.isEmpty) classes = _classesFromXml(bare.xmlDoc);
         videos = _videosFrom(bare, site);
@@ -829,22 +847,20 @@ class HttpService {
         // 裸地址失败不影响已有结论
       }
     }
-    sw.stop();
-    final ms = sw.elapsedMilliseconds;
 
     if (classes.isNotEmpty) {
-      return SiteCheckResult(SiteHealth.ok, '可用 · ${classes.length} 个分类', ms);
+      return SiteCheckResult(SiteHealth.ok, '可用 · ${classes.length} 个分类', 0);
     }
     if (videos.isNotEmpty) {
-      return SiteCheckResult(SiteHealth.ok, '可用 · ${videos.length} 条资源', ms);
+      return SiteCheckResult(SiteHealth.ok, '可用 · ${videos.length} 条资源', 0);
     }
     if (payload.json != null || payload.xmlDoc != null) {
-      return SiteCheckResult(SiteHealth.warn, '接口能连通，但没返回片单', ms);
+      return SiteCheckResult(SiteHealth.warn, '接口能连通，但没返回片单', 0);
     }
     if (payload.looksLikeHtml) {
-      return SiteCheckResult(SiteHealth.fail, '返回的是网页，接口已变更', ms);
+      return const SiteCheckResult(SiteHealth.fail, '返回的是网页，接口已变更', 0);
     }
-    return SiteCheckResult(SiteHealth.fail, '返回内容不是采集接口', ms);
+    return const SiteCheckResult(SiteHealth.fail, '返回内容不是采集接口', 0);
   }
 
   /// 获取视频列表
