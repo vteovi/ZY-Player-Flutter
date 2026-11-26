@@ -559,16 +559,39 @@ class HttpService {
     );
   }
 
-  /// 多播放源用 $$$ 分隔，集数用 # 分隔，每集为「名称$地址」
-  static List<String> _mapPlayList(Map<dynamic, dynamic> v) {
+  /// 多播放线路：`vod_play_from` 与 `vod_play_url` 都是 `$$$` 分隔、按序号对应。
+  ///
+  /// ⚠️ 老实现只 `firstWhere(含 m3u8)` 取一段就返回，聚合站的其余线路被直接丢弃：
+  /// 实测 `ys.cxkjg.cn` 同一部剧有 11 条线路（金鹰/闪电/非凡/量子/WS/速博/HD(SN)/
+  /// 红牛/U酷/光速/樱花），App 里永远只看到第一条的 19 集，量子那条的 20、21 集
+  /// 根本点不到，第一条失效时也没有替补。
+  static List<PlayLine> _mapPlayLines(Map<dynamic, dynamic> v) {
     final groups = (v['vod_play_url'] ?? '').toString().split('\$\$\$');
-    final nonEmpty = groups.where((x) => x.isNotEmpty).toList();
-    final group = nonEmpty.firstWhere(
-      (x) => x.toLowerCase().contains('m3u8'),
-      orElse: () => nonEmpty.isNotEmpty ? nonEmpty.first : '',
-    );
-    if (group.isEmpty) return <String>[];
-    return group.split('#').where((x) => x.isNotEmpty).toList();
+    final names = (v['vod_play_from'] ?? '').toString().split('\$\$\$');
+    final lines = <PlayLine>[];
+    for (var i = 0; i < groups.length; i++) {
+      final items = groups[i]
+          .split('#')
+          .map((x) => x.trim())
+          .where((x) => x.isNotEmpty)
+          .toList();
+      if (items.isEmpty) continue;
+      final raw = i < names.length ? names[i].trim() : '';
+      // 名字缺失时给个可读的序号，UI 上至少能区分「线路1 / 线路2」
+      lines.add(PlayLine(raw.isEmpty ? '线路${lines.length + 1}' : raw, items));
+    }
+    // 含 m3u8 的线路排前面：个别站会先给一段网页地址（需专用客户端），
+    // 让内置播放器优先吃到能播的那条，原来的「优先 m3u8」策略保留下来。
+    if (lines.length > 1) {
+      final playable = <PlayLine>[];
+      final others = <PlayLine>[];
+      for (final line in lines) {
+        final hit = line.items.any((x) => x.toLowerCase().contains('m3u8'));
+        (hit ? playable : others).add(line);
+      }
+      return [...playable, ...others];
+    }
+    return lines;
   }
 
   static List<Video> _mapVideoList(dynamic list) {
@@ -1068,7 +1091,7 @@ class HttpService {
     if (arr.isEmpty) return null;
     return VideoDetail.fromVideo(
       _mapVideo(arr.first),
-      m3u8List: _mapPlayList(arr.first),
+      lines: _mapPlayLines(arr.first),
     );
   }
 
@@ -1076,19 +1099,23 @@ class HttpService {
     final videoNode = _firstElement(doc, 'video');
     if (videoNode == null) return null;
     final detail = VideoDetail.fromVideo(_videoFromXml(videoNode));
-    final ddList = videoNode.findAllElements('dd').toList();
-    final m3u8List = <String>[];
-    if (ddList.length == 1) {
-      m3u8List.addAll(ddList.first.innerText.split('#'));
-    } else {
-      for (final dd in ddList) {
-        if ((dd.getAttribute('flag') ?? '').contains('m3u8')) {
-          m3u8List.addAll(dd.innerText.split('#'));
-          break;
-        }
-      }
+    // 多个 <dd> 就是多条线路，flag 属性是线路名（`m3u8` / `ffm3u8` / `bfzym3u8`…）。
+    // 以前只采第一个带 m3u8 的 dd 就 break，与 json 侧的丢数据问题一样。
+    final lines = <PlayLine>[];
+    for (final dd in videoNode.findAllElements('dd')) {
+      final items = dd.innerText
+          .split('#')
+          .map((x) => x.trim())
+          .where((x) => x.isNotEmpty)
+          .toList();
+      if (items.isEmpty) continue;
+      final flag = (dd.getAttribute('flag') ?? '').trim();
+      lines.add(PlayLine(
+        flag.isEmpty ? '线路${lines.length + 1}' : flag,
+        items,
+      ));
     }
-    return VideoDetail.fromVideo(detail, m3u8List: m3u8List);
+    return VideoDetail.fromVideo(detail, lines: lines);
   }
 
   // --------------------------------------------------------------------------

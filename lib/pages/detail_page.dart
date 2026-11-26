@@ -33,6 +33,11 @@ class _DetailPageState extends State<DetailPage> {
   String? _error;
   List<PlayItem> _playList = <PlayItem>[];
 
+  /// 全部播放线路与当前选中项。聚合站（如 `ys.cxkjg.cn`）一部片子会有十几条
+  /// 线路，集数与清晰度都不一样，得让用户自己挑。
+  List<PlayLine> _lines = <PlayLine>[];
+  int _lineIndex = 0;
+
   @override
   void initState() {
     super.initState();
@@ -62,6 +67,8 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted) return;
       setState(() {
         _detail = detail;
+        _lines = detail?.lines ?? <PlayLine>[];
+        _lineIndex = _lines.isEmpty ? 0 : _lineIndex.clamp(0, _lines.length - 1);
         _playList = detail == null
             ? <PlayItem>[]
             : _buildPlayList(detail, widget.siteKey, widget.videoId);
@@ -78,16 +85,19 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  /// 把 m3u8List 里的「名称$地址」解析成可播放项
+  /// 把当前线路的选集（「名称$地址」）解析成可播放项
   List<PlayItem> _buildPlayList(VideoDetail detail, String siteKey, String id) {
+    final items = (_lineIndex >= 0 && _lineIndex < _lines.length)
+        ? _lines[_lineIndex].items
+        : detail.m3u8List;
     final result = <PlayItem>[];
     var num = 1;
-    for (final raw in detail.m3u8List) {
+    for (final raw in items) {
       final parts = raw.split('\$');
       // 源站集名优先：综艺按日期 / 期数上下集分集时（`261021偏爱日记`
       // `第1期上`），按序号重生成会把这类信息全抹掉。
       // 单片（只有一项）不显示集名，直接用影片名。
-      final label = detail.m3u8List.length > 1
+      final label = items.length > 1
           ? PlayItem.labelFrom(parts.length > 1 ? parts.first : '', num)
           : detail.name;
       String pick;
@@ -118,6 +128,17 @@ class _DetailPageState extends State<DetailPage> {
       num++;
     }
     return result;
+  }
+
+  /// 切换线路：只换选集列表，不重新请求（一次详情就把所有线路给全了）
+  void _selectLine(int index) {
+    final detail = _detail;
+    if (detail == null || index == _lineIndex) return;
+    if (index < 0 || index >= _lines.length) return;
+    setState(() {
+      _lineIndex = index;
+      _playList = _buildPlayList(detail, widget.siteKey, widget.videoId);
+    });
   }
 
   Future<void> _toggleStar() async {
@@ -190,6 +211,7 @@ class _DetailPageState extends State<DetailPage> {
           videoId: item.videoId,
           title: item.label,
           url: item.value,
+          initialLine: _lineIndex,
         ),
       ),
     );
@@ -549,6 +571,10 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ),
           const SizedBox(height: 16),
+          if (_lines.length > 1) ...[
+            _buildLineBar(),
+            const SizedBox(height: 12),
+          ],
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
@@ -569,6 +595,69 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 线路选择条：横滑一排「金鹰 19集 / 闪电 16集 / …」
+  ///
+  /// 只在多于一条线路时出现。早期实现只把 `vod_play_url` 的第一段当全集，
+  /// 聚合站的其余线路（集数、清晰度、可用性都不同）全被丢弃，用户既看不到
+  /// 也不知道有替补。
+  Widget _buildLineBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final line = _lines[_lineIndex];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '播放线路 · ${line.name}（${_playList.length} 集）',
+          style: TextStyle(
+            fontSize: 12,
+            color: isDark ? Colors.white70 : const Color(0xFF606266),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (var i = 0; i < _lines.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                _buildLineChip(i),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLineChip(int index) {
+    final line = _lines[index];
+    final selected = index == _lineIndex;
+    final accent = Theme.of(context).colorScheme.primary;
+    return InkWell(
+      // 当前线路再点一次没有意义，只是空转重建列表
+      onTap: selected ? null : () => _selectLine(index),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? accent : Colors.transparent,
+          border: Border.all(
+            color: selected ? accent : Theme.of(context).dividerColor,
+          ),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          '${line.name} ${line.length}集',
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? Colors.white : null,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
       ),
     );
   }

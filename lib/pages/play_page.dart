@@ -24,6 +24,10 @@ class PlayPage extends StatefulWidget {
   final String url;
   final double initialTime;
 
+  /// 从详情页带过来的线路序号（聚合站一部片有十几条线路）。
+  /// 直接进（历史 / 收藏）时为 0，进页面后从详情接口拿到全部线路再按序选用。
+  final int initialLine;
+
   const PlayPage({
     super.key,
     required this.siteKey,
@@ -31,6 +35,7 @@ class PlayPage extends StatefulWidget {
     required this.title,
     required this.url,
     this.initialTime = 0,
+    this.initialLine = 0,
   });
 
   @override
@@ -263,6 +268,11 @@ class _PlayPageState extends State<PlayPage> {
 
   List<PlayItem> _playList = <PlayItem>[];
   String _title = '';
+
+  /// 全部线路与当前线路（聚合站一部片会有十几条线路，集数各不相同）。
+  /// 只影响选集的取用范围，播放器本身不需要知道线路的存在。
+  List<PlayLine> _lines = <PlayLine>[];
+  int _lineIndex = 0;
 
   /// 当前正在播放的地址（切集后会变化，用于写入历史）。
   ///
@@ -509,13 +519,64 @@ class _PlayPageState extends State<PlayPage> {
       setState(() => _detailLoading = false);
       return;
     }
+    // 详情接口一次就把所有线路给全了，这里只决定默认用哪条
+    final lines = detail.lines;
+    var lineIndex =
+        lines.isEmpty ? 0 : widget.initialLine.clamp(0, lines.length - 1);
+    // 从历史 / 收藏直接进来时带着上次播的具体地址：按地址反查它属于哪条线路。
+    // 否则默认停在第一条，选集里一个都不高亮，看着像串台了。
+    if (widget.url.isNotEmpty) {
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].items.any((raw) => raw.contains(widget.url))) {
+          lineIndex = i;
+          break;
+        }
+      }
+    }
+    final list = _buildPlayList(
+      detail,
+      lines.isEmpty ? detail.m3u8List : lines[lineIndex].items,
+    );
+    setState(() {
+      _detail = detail;
+      _lines = lines;
+      _lineIndex = lineIndex;
+      _playList = list;
+      _detailLoading = false;
+    });
+
+    // 不论是详情页进来还是从其他地方（如历史分栏）直接进来，开始播放都刷新历史 ts
+    final state = context.read<AppState>();
+    await state.touchHistory(RecordItem(
+      key: _recordKey,
+      label: _title.isEmpty ? detail.name : _title,
+      url: _currentUrl,
+      id: detail.id,
+      tid: detail.tid,
+      name: detail.name,
+      type: detail.type,
+      pic: detail.pic,
+      lang: detail.lang,
+      area: detail.area,
+      year: detail.year,
+      note: detail.note,
+      actor: detail.actor,
+      director: detail.director,
+      des: detail.des,
+      last: detail.last,
+    ));
+  }
+
+  /// 把一条线路的选集（每项「集名$地址」）解析成可播放项。
+  ///
+  /// 与详情页同一套规则：优先用源站集名（综艺常是日期 / `第1期上`），
+  /// 只有单片时才退回影片名。
+  List<PlayItem> _buildPlayList(VideoDetail detail, List<String> items) {
     final list = <PlayItem>[];
     var num = 1;
-    for (final raw in detail.m3u8List) {
+    for (final raw in items) {
       final parts = raw.split('\$');
-      // 与详情页同一套规则：优先用源站集名（综艺常是日期 / `第1期上`），
-      // 只有单片时才退回影片名。
-      final label = detail.m3u8List.length > 1
+      final label = items.length > 1
           ? PlayItem.labelFrom(parts.length > 1 ? parts.first : '', num)
           : detail.name;
       String pick;
@@ -543,32 +604,7 @@ class _PlayPageState extends State<PlayPage> {
       ));
       num++;
     }
-    setState(() {
-      _detail = detail;
-      _playList = list;
-      _detailLoading = false;
-    });
-
-    // 不论是详情页进来还是从其他地方（如历史分栏）直接进来，开始播放都刷新历史 ts
-    final state = context.read<AppState>();
-    await state.touchHistory(RecordItem(
-      key: _recordKey,
-      label: _title.isEmpty ? detail.name : _title,
-      url: _currentUrl,
-      id: detail.id,
-      tid: detail.tid,
-      name: detail.name,
-      type: detail.type,
-      pic: detail.pic,
-      lang: detail.lang,
-      area: detail.area,
-      year: detail.year,
-      note: detail.note,
-      actor: detail.actor,
-      director: detail.director,
-      des: detail.des,
-      last: detail.last,
-    ));
+    return list;
   }
 
   Future<void> _toggleStar() async {
@@ -833,6 +869,40 @@ class _PlayPageState extends State<PlayPage> {
     await _updateHistory();
   }
 
+  /// 切换播放线路：尽量停在同一集，名字对不上就按原位置就近取。
+  ///
+  /// 不做同集对齐的话体验很别扭：从「量子 第20集」切到只有 19 集的线路会直接
+  /// 掉回第 1 集；按集名对齐能命中绝大多数同构线路，剩下的按位置兜底。
+  Future<void> _switchLine(int index) async {
+    final detail = _detail;
+    if (detail == null || index == _lineIndex) return;
+    if (index < 0 || index >= _lines.length) return;
+    final list = _buildPlayList(detail, _lines[index].items);
+    if (list.isEmpty) {
+      showToast(context, '这条线路没有可播放的地址', success: false);
+      return;
+    }
+    final oldLabel = _title;
+    final oldPos = _playList.indexWhere((e) => e.value == _currentUrl);
+    PlayItem? target;
+    if (oldLabel.isNotEmpty) {
+      for (final item in list) {
+        if (item.label == oldLabel) {
+          target = item;
+          break;
+        }
+      }
+    }
+    target ??= list[oldPos < 0 ? 0 : oldPos.clamp(0, list.length - 1)];
+    final lineName = _lines[index].name;
+    setState(() {
+      _lineIndex = index;
+      _playList = list;
+    });
+    showToast(context, '已切到「$lineName」');
+    await _switchEpisode(target);
+  }
+
   /// 内置播放失败时的一键兜底：把当前地址交给外部播放器（与外部播放入口同一逻辑）。
   ///
   /// 优先给**解析后**的地址：解析成功却播放失败时，外部播放器拿直链还有救；
@@ -857,59 +927,147 @@ class _PlayPageState extends State<PlayPage> {
   }
 
   void _showEpisodePicker() {
-    // 同详情页：只有综艺那种长集名才需要两行高度
-    final hasLongLabel = _playList.any((e) => e.label.runes.length > 5);
+    // 弹窗自己维护一份「正在看哪条线路」，切线路时只重建弹窗里的网格，
+    // 不必先把面板关掉再打开（那样看着像闪了一下）
+    var lineIdx = _lineIndex;
+    var list = _playList;
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
       builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: Text('选择集数',
-                    style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              ),
-              const Divider(height: 1),
-              Flexible(
-                child: GridView.builder(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 4,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                    childAspectRatio: hasLongLabel ? 1.7 : 2,
+        return StatefulBuilder(
+          builder: (context, setSheet) {
+            // 同详情页：只有综艺那种长集名才需要两行高度
+            final hasLongLabel = list.any((e) => e.label.runes.length > 5);
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text('选择集数',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600)),
                   ),
-                  itemCount: _playList.length,
-                  itemBuilder: (context, index) {
-                    final item = _playList[index];
-                    return OutlinedButton(
-                      onPressed: () {
-                        Navigator.of(context).pop();
-                        _switchEpisode(item);
+                  if (_lines.length > 1)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                      child: _buildLineWrap(
+                        current: lineIdx,
+                        onTap: (i) => setSheet(() {
+                          lineIdx = i;
+                          list = _buildPlayList(_detail!, _lines[i].items);
+                        }),
+                      ),
+                    ),
+                  const Divider(height: 1),
+                  Flexible(
+                    child: GridView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.all(12),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 4,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8,
+                        childAspectRatio: hasLongLabel ? 1.7 : 2,
+                      ),
+                      itemCount: list.length,
+                      itemBuilder: (context, index) {
+                        final item = list[index];
+                        return OutlinedButton(
+                          onPressed: () {
+                            Navigator.of(context).pop();
+                            _pickEpisode(item, lineIdx);
+                          },
+                          style: OutlinedButton.styleFrom(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 4),
+                          ),
+                          child: Text(
+                            item.label,
+                            maxLines: hasLongLabel ? 2 : 1,
+                            textAlign: TextAlign.center,
+                            overflow: TextOverflow.ellipsis,
+                            style:
+                                const TextStyle(fontSize: 11.5, height: 1.2),
+                          ),
+                        );
                       },
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                      ),
-                      child: Text(
-                        item.label,
-                        maxLines: hasLongLabel ? 2 : 1,
-                        textAlign: TextAlign.center,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11.5, height: 1.2),
-                      ),
-                    );
-                  },
-                ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
+    );
+  }
+
+  /// 弹窗里挑完集（可能同时换了线路）：先把线路落到页面状态，再走普通切集
+  void _pickEpisode(PlayItem item, int lineIdx) {
+    final detail = _detail;
+    if (detail != null &&
+        lineIdx != _lineIndex &&
+        lineIdx >= 0 &&
+        lineIdx < _lines.length) {
+      setState(() {
+        _lineIndex = lineIdx;
+        _playList = _buildPlayList(detail, _lines[lineIdx].items);
+      });
+    }
+    _switchEpisode(item);
+  }
+
+  /// 线路选择条（右栏 / 选集弹窗共用）：一行可换行的 chip。
+  Widget _buildLineWrap({
+    required int current,
+    required ValueChanged<int> onTap,
+  }) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (var i = 0; i < _lines.length; i++)
+          _buildLineChip(
+            index: i,
+            selected: i == current,
+            onTap: () => onTap(i),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLineChip({
+    required int index,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final line = _lines[index];
+    return InkWell(
+      onTap: selected ? null : onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 44, maxWidth: 140),
+        height: 32,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? _accent : Colors.transparent,
+          border: Border.all(color: selected ? _accent : _borderColor),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          '${line.name} ${line.length}集',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? Colors.white : _fg,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1437,6 +1595,16 @@ class _PlayPageState extends State<PlayPage> {
                             height: 1.65,
                             color: _fgDim,
                           ),
+                        ),
+                      ],
+                      if (_lines.length > 1) ...[
+                        const SizedBox(height: 18),
+                        _buildSideSectionTitle(
+                            '线路 · ${_lines[_lineIndex].name}'),
+                        const SizedBox(height: 10),
+                        _buildLineWrap(
+                          current: _lineIndex,
+                          onTap: _switchLine,
                         ),
                       ],
                       if (_playList.length > 1) ...[
@@ -2765,7 +2933,8 @@ class _PlayPageState extends State<PlayPage> {
             label: '画中画',
             onTap: _enterPip,
           ),
-          if (_playList.length > 1)
+          // 单集也可能有多条线路（聚合站常见），所以线路多于一条时也要给入口
+          if (_playList.length > 1 || _lines.length > 1)
             _controlButton(
               icon: Icons.playlist_play_rounded,
               label: '选集',
