@@ -61,6 +61,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - 详情 `fetchDetail` 只对**瞬时错误**重试 2 次（300/600ms）；详情页 `EmptyHint` 显示原因 + 重试。
 - 原生通道 `com.zy.player/system`（`/pip`、`/window`）：`system_control.dart` 与 `MainActivity.kt` 两端同步改。
 - 备份 `data_backup.dart`：`saveFile`（bytes 必填）/ `pickFiles`。青少年模式已整体移除，别写回。
+- **批量写/删库必须报进度 + 让出事件循环**（1.44.1）：`SharedPreferences` 无批量接口，每次 `setString`/`remove` 在 Windows 端都是「整份偏好序列化 + 同步写盘」，连着几十次会把 UI 线程按住几秒 = 点了没反应。`removeMany` 现带 `onProgress`，30 条内每条 `Future.delayed(Duration.zero)`，更多按 12 条 / 24ms 预算；界面侧按钮显示「清除中 3/12」+ 2px 进度条。
 
 ## Windows 原生窗口（勿回退）
 - **C++ 只写英文注释**（MSVC 按 GBK 读 UTF-8 中文 → C4819 → 失败）。

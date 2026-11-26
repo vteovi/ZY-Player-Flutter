@@ -133,3 +133,6 @@ app.*.symbols
 !**/ios/**/default.perspectivev3
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
 !/dev/ci/**/Gemfile.lock
+
+# CI 生成的 Release 正文（tools/release-notes.sh 输出，不入库）
+release-notes.md

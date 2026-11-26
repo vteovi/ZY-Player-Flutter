@@ -270,7 +270,22 @@ class ZyDatabase {
   ///
   /// 与循环调用 [remove] 的区别：key 列表只重写一次（[remove] 每删一条就写一次），
   /// 删几十条死站时少掉大量磁盘写入。顺序不受影响 —— 剩下的 key 原样保留。
-  Future<int> removeMany(String db, Iterable<String> targets) async {
+  ///
+  /// 条目本身仍然只能一条一条删（`SharedPreferences` 没有批量接口），而每次
+  /// `remove` 在 Windows 端都是「整份偏好重新序列化 + 同步写盘」，几十条连着
+  /// 删能把 UI 线程按住好几秒 —— 表现就是点了「清除死站」整个页面像卡死。
+  /// 所以这里照 [importRaw] 的做法：报进度，并按条数 / 时间预算主动让出事件
+  /// 循环，界面能一直画进度、按钮也能点。
+  ///
+  /// [onProgress] 参数是（已删, 总数）；[isCancelled] 每条之间查一次，
+  /// 返回 true 就停下（key 列表已经先删掉了，剩下的条目变成不可见孤儿，
+  /// 再删一次或再写入即被覆盖，不会留下坏数据）。
+  Future<int> removeMany(
+    String db,
+    Iterable<String> targets, {
+    void Function(int done, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     final drop = targets.toSet();
     if (drop.isEmpty) return 0;
     final keys = await getAllKeys(db);
@@ -278,12 +293,37 @@ class ZyDatabase {
     final kept = keys.where((k) => !drop.contains(k)).toList();
     final removed = keys.length - kept.length;
     if (removed == 0) return 0;
+    // 先落 key 列表：即使后面中断，索引里也不会留下指向已删条目的 key
     await _saveKeys(db, kept);
     final store = await _store;
-    for (final key in keys) {
-      if (drop.contains(key)) await store.remove(_itemKey(db, key));
+    final victims = keys.where(drop.contains).toList();
+    final total = victims.length;
+
+    // 让出一次事件循环，先让界面把进度条画出来再开始逐条写盘
+    onProgress?.call(0, total);
+    await Future<void>.delayed(Duration.zero);
+
+    var done = 0;
+    var lastYield = DateTime.now();
+    // 小批量（大多数情况）逐条报进度，界面上数字才会一直动；几十条以上时
+    // 每 5 条报一次，省掉一堆无意义的重建
+    final reportEvery = total > 40 ? 5 : 1;
+    // 条数不多时每条都让出一次：一次 timer 的代价可以忽略，换来界面每删一条
+    // 就刷一帧，数字一直在走
+    final yieldEvery = total <= 30 ? 1 : _yieldEvery;
+    for (final key in victims) {
+      if (isCancelled?.call() ?? false) break;
+      await store.remove(_itemKey(db, key));
+      done++;
+      if (done % reportEvery == 0 || done == total) onProgress?.call(done, total);
+      final now = DateTime.now();
+      if (done % yieldEvery == 0 ||
+          now.difference(lastYield).inMilliseconds >= _yieldBudgetMs) {
+        lastYield = now;
+        await Future<void>.delayed(Duration.zero);
+      }
     }
-    return removed;
+    return done;
   }
 
   /// 清空整个库（库为空时返回 false，与 uni-app 版保持一致）

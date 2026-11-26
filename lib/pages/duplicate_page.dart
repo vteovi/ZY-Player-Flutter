@@ -33,6 +33,10 @@ class _DuplicatePageState extends State<DuplicatePage> {
   final Set<String> _skipped = <String>{};
 
   bool _busy = false;
+
+  /// 删除进度（几 / 共几）。逐条删是同步写盘，只放个转圈看不出在动。
+  int _done = 0;
+  int _total = 0;
   bool _seeded = false;
 
   List<DuplicateGroup> get _groups =>
@@ -102,8 +106,21 @@ class _DuplicatePageState extends State<DuplicatePage> {
     );
     if (confirmed != true || !mounted) return;
 
-    setState(() => _busy = true);
-    final removed = await context.read<AppState>().removeSites(targets);
+    setState(() {
+      _busy = true;
+      _done = 0;
+      _total = targets.length;
+    });
+    final removed = await context.read<AppState>().removeSites(
+      targets,
+      onProgress: (done, total) {
+        if (!mounted) return;
+        setState(() {
+          _done = done;
+          _total = total;
+        });
+      },
+    );
     if (!mounted) return;
     showToast(context, '已清理 $removed 个重复源');
     Navigator.of(context).pop(true);
@@ -140,6 +157,11 @@ class _DuplicatePageState extends State<DuplicatePage> {
           : Column(
               children: [
                 _buildHint(isDark, compact),
+                if (_busy)
+                  LinearProgressIndicator(
+                    value: _total == 0 ? null : _done / _total,
+                    minHeight: 2,
+                  ),
                 const Divider(height: 1),
                 Expanded(
                   child: Center(
@@ -516,10 +538,9 @@ class _DuplicatePageState extends State<DuplicatePage> {
                         ? null
                         : () => _apply(groups),
                     child: _busy
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                        ? Text(
+                            _total == 0 ? '清理中…' : '清理中 $_done/$_total',
+                            style: const TextStyle(fontSize: 13),
                           )
                         : Text(deleteCount > 0 ? '清理 $deleteCount 个' : '清理'),
                   ),
