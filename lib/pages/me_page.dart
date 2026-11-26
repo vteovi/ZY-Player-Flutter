@@ -1044,6 +1044,12 @@ class _ExternalPlayerPickerState extends State<_ExternalPlayerPicker> {
 
     return AlertDialog(
       title: const Text('外部播放器'),
+      // 宽屏上 Dialog 会跟着屏幕一直撑开，装的应用多时更是又宽又高；
+      // 收到手机附近宽度，超高就让列表在里面滚，不顶到屏幕边缘。
+      constraints: BoxConstraints(
+        maxWidth: 420,
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
       content: SizedBox(
         width: double.maxFinite,
         child: _loading

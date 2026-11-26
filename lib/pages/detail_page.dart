@@ -404,9 +404,9 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Future<void> _onShare() async {
+  Future<void> _onCopyUrl() async {
     if (_playList.isEmpty) {
-      showToast(context, '没有可分享的地址', success: false);
+      showToast(context, '没有可复制的地址', success: false);
       return;
     }
     await Clipboard.setData(ClipboardData(text: _playList.first.value));
@@ -449,7 +449,6 @@ class _DetailPageState extends State<DetailPage> {
                       icon: Icons.arrow_back,
                       onTap: () => Navigator.of(context).maybePop(),
                     ),
-                    _circleButton(icon: Icons.more_vert, onTap: _onShare),
                   ],
                 ),
               ),
@@ -680,6 +679,17 @@ class _DetailPageState extends State<DetailPage> {
               onPressed: _onExternalPlayTap,
               icon: const Icon(Icons.open_in_new, size: 18),
               label: const Text('外部播放'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // 复制地址以前藏在右上角那个「 ⋮ 」里，点一下没任何视觉反馈，
+          // 很多人以为那是菜单。挪到底部和播放并排，意图一眼就明白。
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _onCopyUrl,
+              icon: const Icon(Icons.copy_all_outlined, size: 18),
+              label: const Text('复制播放地址'),
             ),
           ),
         ],
