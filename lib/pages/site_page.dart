@@ -56,12 +56,17 @@ class _SitePageState extends State<SitePage> {
   /// （同步阻塞 UI 线程）—— 几十个源能把界面按住好几秒。没有「正在删」的
   /// 提示时，用户只会看到一个点了没反应的页面，以为软件卡死了。
   bool _clearing = false;
-  int _clearDone = 0;
-  int _clearTotal = 0;
+
+  /// 批量删源的进度：只驱动进度条和按钮文字做局部刷新。
+  /// 早先每删一条就 setState 把整个站点列表重建一遍，22 个源就是 22 次
+  /// 整页重建 —— 进度能看了，删除本身反而被拖慢。
+  final ValueNotifier<_ClearProgress> _clearProgress =
+      ValueNotifier<_ClearProgress>(const _ClearProgress());
 
   @override
   void dispose() {
     _urlController.dispose();
+    _clearProgress.dispose();
     super.dispose();
   }
 
@@ -647,30 +652,23 @@ class _SitePageState extends State<SitePage> {
   /// 2px 进度条，其余按钮同时禁用 —— 用户点完「删除」立刻能看到东西在动，
   /// 不会盯着没变化的列表怀疑卡死。
   Future<int> _removeWithProgress(List<Site> targets) async {
-    setState(() {
-      _clearing = true;
-      _clearDone = 0;
-      _clearTotal = targets.length;
-    });
+    // 只有开始/结束各重建一次页面（切换按钮禁用态）；中间每条只更新
+    // ValueNotifier，进度条和按钮文字自己刷新，站点列表不再跟着重建。
+    setState(() => _clearing = true);
+    _clearProgress.value = _ClearProgress(total: targets.length);
     try {
       return await context.read<AppState>().removeSites(
             targets,
             onProgress: (done, total) {
               if (!mounted) return;
-              setState(() {
-                _clearDone = done;
-                _clearTotal = total;
-              });
+              _clearProgress.value = _ClearProgress(done: done, total: total);
             },
           );
     } finally {
       // 无论如何都要复位，否则一次异常就让整页停在「清除中」
       if (mounted) {
-        setState(() {
-          _clearing = false;
-          _clearDone = 0;
-          _clearTotal = 0;
-        });
+        setState(() => _clearing = false);
+        _clearProgress.value = const _ClearProgress();
       }
     }
   }
@@ -799,11 +797,14 @@ class _SitePageState extends State<SitePage> {
         children: [
           _buildToolbar(state),
           if (_batchRunning || _clearing)
-            LinearProgressIndicator(
-              value: _batchRunning
-                  ? (_total == 0 ? null : _done / _total)
-                  : (_clearTotal == 0 ? null : _clearDone / _clearTotal),
-              minHeight: 2,
+            ValueListenableBuilder<_ClearProgress>(
+              valueListenable: _clearProgress,
+              builder: (context, clear, _) => LinearProgressIndicator(
+                value: _batchRunning
+                    ? (_total == 0 ? null : _done / _total)
+                    : (clear.total == 0 ? null : clear.done / clear.total),
+                minHeight: 2,
+              ),
             ),
           const Divider(height: 1),
           Expanded(
@@ -928,16 +929,26 @@ class _SitePageState extends State<SitePage> {
         label: dup > 0 ? '清理重复 ($dup)' : '清理重复',
         onPressed: idle || dup == 0 ? null : _openDedupe,
       ),
-      _toolButton(
-        icon: Icons.delete_outline,
-        // 删的过程中把「删到第几个」写在按钮上：列表要等全部删完才刷新，
-        // 光有进度条容易被当成卡住，数字在走最直观
-        label: _clearing
-            ? '清除中 $_clearDone/$_clearTotal'
-            : (dead > 0 ? '清除死站 ($dead)' : '清除死站'),
-        onPressed: idle || dead == 0 ? null : _clearDead,
-        color: danger,
-      ),
+      // 删的过程中把「删到第几个」写在按钮上：列表要等全部删完才刷新，
+      // 光有进度条容易被当成卡住，数字在走最直观。这里单独包一层
+      // ValueListenableBuilder，只重建这一个按钮，不带累整个站点列表。
+      if (_clearing)
+        ValueListenableBuilder<_ClearProgress>(
+          valueListenable: _clearProgress,
+          builder: (context, clear, _) => _toolButton(
+            icon: Icons.delete_outline,
+            label: '清除中 ${clear.done}/${clear.total}',
+            onPressed: null,
+            color: danger,
+          ),
+        )
+      else
+        _toolButton(
+          icon: Icons.delete_outline,
+          label: dead > 0 ? '清除死站 ($dead)' : '清除死站',
+          onPressed: idle || dead == 0 ? null : _clearDead,
+          color: danger,
+        ),
     ];
 
     return Padding(
@@ -1576,6 +1587,14 @@ class _ImportProgressDialog extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 批量删源进度的不可变快照，供 ValueNotifier 局部刷新用。
+class _ClearProgress {
+  final int done;
+  final int total;
+
+  const _ClearProgress({this.done = 0, this.total = 0});
 }
 
 class _EmptySites extends StatelessWidget {
