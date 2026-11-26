@@ -243,11 +243,21 @@ class AppState extends ChangeNotifier {
   ///
   /// 同名 key 的源会被更新，其余追加；需要插件的 spider 源自动跳过。
   /// 返回导入结果摘要（新增 / 更新 / 跳过数量、识别到的格式）。
-  Future<ImportSummary> importSitesFromContent(String content) async {
+  ///
+  /// [onProgress] 回报（已写, 总数）。Windows 端每次 `put` 都要把整份偏好
+  /// 序列化后同步写盘，几十条连着写会把 UI 线程按住几秒 —— 界面上必须能
+  /// 看到数字在走，否则用户只会以为「点了没反应」。
+  Future<ImportSummary> importSitesFromContent(
+    String content, {
+    void Function(int done, int total)? onProgress,
+  }) async {
     final parsed = SourceImport.parse(content);
     if (parsed.sites.isEmpty) return parsed; // 携带 message 说明失败原因
     var added = 0;
     var updated = 0;
+    final total = parsed.sites.length;
+    onProgress?.call(0, total);
+    var done = 0;
     for (final site in parsed.sites) {
       final existed =
           await ZyDatabase.instance.containsKey(DbNames.site, site.key);
@@ -256,6 +266,13 @@ class AppState extends ChangeNotifier {
         updated++;
       } else {
         added++;
+      }
+      done++;
+      onProgress?.call(done, total);
+      // 让出事件循环给进度条刷新：12 条以内每条都让，再多按 12 条一让，
+      // 避免一条一个 microtask 把整批导入拖太久。
+      if (done % 12 == 0 || done == total) {
+        await Future<void>.delayed(const Duration(milliseconds: 16));
       }
     }
     await loadSites();

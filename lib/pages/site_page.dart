@@ -113,6 +113,10 @@ class _SitePageState extends State<SitePage> {
   ///
   /// 与工具栏的「导入视频源」（填一个接口地址）是两件事，所以入口放在
   /// 右上角菜单里并配副标题说明，避免两个「导入」互相混淆。
+  ///
+  /// 全流程用同一个进度框兜住：读文件 → 解析 → 逐条写库（带数字）→
+  /// 结果摘要淡入。以前这四步全在后台静默完成，选完文件像没点过，
+  /// 完事列表又「啪」地多出一批，两头都没有交代。
   Future<void> _importFromFile() async {
     FilePickerResult? result;
     try {
@@ -124,48 +128,85 @@ class _SitePageState extends State<SitePage> {
       return;
     }
     if (result == null || result.files.isEmpty) return; // 用户取消
+    if (!mounted) return;
+    // 在 await 之前先取到 AppState，后面的写库流程就不必再跨异步间隙用 context
+    final appState = context.read<AppState>();
 
-    // 优先用选择器直接返回的字节，取不到再按路径读（老系统上更稳）。
-    Uint8List? raw = result.files.single.bytes;
-    if (raw == null) {
-      final path = result.files.single.path;
-      if (path == null) {
-        if (!mounted) return;
-        showToast(context, '文件无效', success: false);
-        return;
-      }
-      try {
+    // 选完文件立刻立起进度框。barrierDismissible + PopScope 都关掉：
+    // 写库到一半被关掉，进度回调就找不到对话框了。
+    final progress = ValueNotifier<_ImportUiState>(
+      const _ImportUiState(stage: '正在读取文件…'),
+    );
+    var dialogClosed = false;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PopScope(
+        canPop: false,
+        child: _ImportProgressDialog(
+          progress: progress,
+          onDone: () => dialogClosed = true,
+        ),
+      ),
+    );
+
+    try {
+      // 优先用选择器直接返回的字节，取不到再按路径读（老系统上更稳）。
+      Uint8List? raw = result.files.single.bytes;
+      if (raw == null) {
+        final path = result.files.single.path;
+        if (path == null) throw const FormatException('文件无效');
         raw = await File(path).readAsBytes();
-      } catch (e) {
-        if (!mounted) return;
-        showToast(context, '读取文件失败：$e', success: false);
-        return;
       }
-    }
-    // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
-    final content = utf8.decode(raw, allowMalformed: true);
+      // 容错解码：源清单可能是 GBK 等非 UTF-8 编码，个别坏字节不该让整份文件读不进来
+      final content = utf8.decode(raw, allowMalformed: true);
 
-    // 上面有 await（读文件），先确认还挂在树上再用 context
-    if (!mounted) return;
-    final summary =
-        await context.read<AppState>().importSitesFromContent(content);
-    if (!mounted) return;
+      progress.value = const _ImportUiState(stage: '正在解析配置…');
+      // 解析是同步的，先让出一帧把上面的阶段文字画出来
+      await Future<void>.delayed(Duration.zero);
 
-    if (!summary.ok) {
-      showToast(context, '导入失败：${summary.message}', success: false);
-      return;
+      final summary = await appState.importSitesFromContent(
+        content,
+        onProgress: (done, total) => progress.value = _ImportUiState(
+          stage: '正在写入源库…',
+          done: done,
+          total: total,
+        ),
+      );
+      if (!summary.ok) {
+        progress.value = _ImportUiState.failure(
+          summary.message.isEmpty ? '文件里没有找到可用的视频源' : summary.message,
+        );
+      } else {
+        final fmt = summary.format == 'zyfun'
+            ? 'ZYFun'
+            : summary.format == 'tvbox'
+                ? 'TVBox'
+                : '配置';
+        final parts = ['新增 ${summary.added} 个'];
+        if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
+        if (summary.skipped > 0) {
+          parts.add('跳过 ${summary.skipped} 个需插件的源');
+        }
+        progress.value = _ImportUiState.success(
+          '已导入 $fmt 配置，${parts.join('，')}。',
+        );
+      }
+    } catch (e) {
+      progress.value = _ImportUiState.failure('导入失败：$e');
     }
-    final fmt = summary.format == 'zyfun'
-        ? 'ZYFun'
-        : summary.format == 'tvbox'
-            ? 'TVBox'
-            : '配置';
-    final parts = ['导入$fmt 成功：新增 ${summary.added} 个'];
-    if (summary.updated > 0) parts.add('更新 ${summary.updated} 个');
-    if (summary.skipped > 0) {
-      parts.add('跳过 ${summary.skipped} 个需插件的源');
+
+    // 结果页停留一会儿，让「新增 / 更新」看得清再自动关。列表此时已经
+    // 刷新完毕，用户看到的不是半成品，而是稳定的结果。
+    if (!mounted) return;
+    await Future<void>.delayed(
+      Duration(milliseconds: progress.value.ok ? 1500 : 2400),
+    );
+    if (!mounted) return;
+    // 用户可能在这段时间里已经点了「完成」，别把下一个页面误关掉
+    if (!dialogClosed) {
+      Navigator.of(context, rootNavigator: true).pop();
     }
-    showToast(context, parts.join('，'), success: true);
   }
 
   // ---------------------------------------------------------------------------
@@ -1375,6 +1416,164 @@ class _ExportChoice {
   final bool onlyActive;
 
   const _ExportChoice(this.format, this.onlyActive);
+}
+
+/// 配置文件导入的界面状态。阶段文字和写库数字共用一个 ValueNotifier，
+/// 这样进度框只需要在构造时拿一次引用，后面由后台流程持续推进。
+class _ImportUiState {
+  final String stage;
+  final int done;
+  final int total;
+  final bool finished;
+  final bool ok;
+  final String detail;
+
+  const _ImportUiState({
+    required this.stage,
+    this.done = 0,
+    this.total = 0,
+    this.finished = false,
+    this.ok = false,
+    this.detail = '',
+  });
+
+  factory _ImportUiState.success(String detail) => _ImportUiState(
+        stage: '导入完成',
+        finished: true,
+        ok: true,
+        detail: detail,
+      );
+
+  factory _ImportUiState.failure(String detail) => _ImportUiState(
+        stage: '导入未完成',
+        finished: true,
+        detail: detail,
+      );
+
+  /// 有总数时走确定进度条；读文件 / 解析阶段只有转圈。
+  bool get determinate => !finished && total > 0;
+}
+
+/// 导入配置文件用的进度 / 结果对话框。
+///
+/// 结果不是直接替换文字，而是带一个淡入 + 轻微上移的切换动画 ——
+/// 以前导完列表「猛地一下」全变了，现在数字是在眼前慢慢落定的。
+class _ImportProgressDialog extends StatelessWidget {
+  final ValueNotifier<_ImportUiState> progress;
+
+  /// 用户主动点「完成」时回传，避免自动收尾时把下一个页面误关掉
+  final VoidCallback onDone;
+
+  const _ImportProgressDialog({
+    required this.progress,
+    required this.onDone,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<_ImportUiState>(
+      valueListenable: progress,
+      builder: (context, value, _) {
+        return AlertDialog(
+          title: Text(
+            value.finished ? (value.ok ? '导入完成' : '导入失败') : '正在导入配置',
+          ),
+          content: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 280),
+            switchInCurve: Curves.easeOut,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.06),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            child: value.finished
+                ? _buildResult(context, value)
+                : _buildProgress(context, value),
+          ),
+          actions: value.finished
+              ? [
+                  FilledButton(
+                    onPressed: () {
+                      onDone();
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text('完成'),
+                  ),
+                ]
+              : null,
+        );
+      },
+    );
+  }
+
+  Widget _buildProgress(BuildContext context, _ImportUiState value) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      key: const ValueKey('progress'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(value.stage, style: const TextStyle(fontSize: 13)),
+        const SizedBox(height: 10),
+        LinearProgressIndicator(
+          value: value.determinate ? value.done / value.total : null,
+          minHeight: 4,
+        ),
+        if (value.determinate) ...[
+          const SizedBox(height: 8),
+          Text(
+            '${value.done} / ${value.total}',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildResult(BuildContext context, _ImportUiState value) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      key: ValueKey('result-${value.ok}'),
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              value.ok ? Icons.check_circle : Icons.error_outline,
+              size: 20,
+              color: value.ok ? Colors.green : Colors.orange,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                value.stage,
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          value.detail,
+          style: TextStyle(
+            fontSize: 12.5,
+            height: 1.4,
+            color: isDark ? AppColors.darkSubText : AppColors.lightSubText,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _EmptySites extends StatelessWidget {
