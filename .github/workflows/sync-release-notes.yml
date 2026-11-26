@@ -58,14 +58,19 @@ jobs:
           # 链接指向 tag 本身，而不是本次运行所在的分支
           NOTES_REF: ${{ steps.target.outputs.tag }}
         run: |
-          # 直接打 API 而不是用 gh：HTTP 状态码原样打出来，
-          # 权限不足（403/404）和 tag 拼错（404）靠下面几行诊断区分。
+          # 直接打 API 而不是用 gh：HTTP 状态码原样打出来，同时写进 job summary
+          # （summary 在运行页面上能直接看到，排查时不必翻日志）。
           auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
-          for probe in "repos/$REPO" "repos/$REPO/releases?per_page=3"; do
-            c=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "https://api.github.com/$probe")
-            echo "探针 $probe -> HTTP $c"
-          done
-          echo "token 长度: ${#GH_TOKEN}"
+          {
+            echo "### 诊断（token 长度 ${#GH_TOKEN}）"
+            echo "| 请求 | 带 token | 匿名 |"
+            echo "| --- | --- | --- |"
+            for probe in "repos/$REPO" "repos/$REPO/releases?per_page=3" "repos/$REPO/releases/tags/$TAG"; do
+              c1=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "https://api.github.com/$probe")
+              c2=$(curl -sS -o /dev/null -w '%{http_code}' "https://api.github.com/$probe")
+              echo "| \`$probe\` | $c1 | $c2 |"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
           API="https://api.github.com/repos/$REPO/releases/tags/$TAG"
           code=$(curl -sS -o rel.json -w '%{http_code}' "${auth[@]}" "$API")
