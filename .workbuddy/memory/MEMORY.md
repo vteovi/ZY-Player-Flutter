@@ -21,6 +21,9 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 ## 构建与发版
 - **出包**：Actions → `Build APK + Windows` → 选分支 + `variant`（split 推荐）。手动跑**不发 Release**，产物在 Artifacts（留 30 天）。
 - **发版顺序（勿乱）**：改 pubspec → 打 tag → push → CI 产 Release（含固定名 `ZY-Player-arm64-latest.apk`）→ **Release 存在后**才改 `update.json`（5 条左右用户能感知的说明）→ push → 清 CDN → 验镜像 → 切 dev `git checkout main -- update.json` 同步。
+- **Release 正文自动取自 `更新记录.MD`**：`tools/release-notes.sh` 按行首 `## v<版本>` 截取当前版本那节，末尾附「下载哪个包」表 + 安装须知，并给出 `更新记录.MD` 的**可点击链接**（指向 tag 而非 main，中文名用 `%E6%9B%B4...` 编码）。两个 job 都跑它，`gh release create/edit --notes-file`。补写已发布 Release 用 `.github/workflows/sync-release-notes.yml`（`workflow_dispatch` 填 tag，或改 `.release-sync` 一行再 push）。
+- **Release 404 ≠ 权限问题**：`GET /releases/tags/<tag>` 返 404 时先查 `releases?per_page=3` 列表 —— 用户可能手动删过 Release（2026-11-26 踩过，白排查 6 次）。`repos/<repo>` 与列表都 200 就说明 token 没问题。
+- **APK 直连 `releases/download` 本机常年 000**，验下载能力看镜像 Range 206 即可，别当成发布失败。
 - **版本号两处**：`pubspec.yaml`（`1.37.0+235`）+ `android/local.properties`（gitignore）。设置页副标题走原生 `PackageManager`。
 - **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 68MB；arm64 单独 18MB 必须 split。首包 ~26 分钟，缓存命中 3~5 分钟。
 - **签名（勿回退）**：库在仓库外 `C:\Users\Administrator\keystores\zy-player-release.jks`（alias `zyplayer`，口令见 `android/key.properties`）。`build.gradle.kts` 有则 release、无则退化 debug；CI 用 Secret `KEYSTORE_BASE64` + `KEYSTORE_PASSWORD` 现场生成。**keystore 绝不能入库**（仓库 public）。⚠️ 换签名后老用户须卸载重装 —— 写进每次更新说明末尾。
@@ -40,6 +43,7 @@ uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历�
 - **TVBox 加密配置（勿回退）**：`box.iqinu.com` 类站只在 `okhttp/*` UA 下给真配置，正文 `$#key#$` + AES-128-CBC + 13 字节 IV。`_fetchConfig` 按 okhttp/3.15→3.12→浏览器试；`utils/tvbox_crypto.dart` 纯 Dart 解密（**不引 pointycastle**；GF 求逆用 `x^254`）。spider 兜底要严：`.js/.json/.txt`、逗号多域名一律不导。
 - 地址一律 `HttpService._apiUrl()`；type 不可信，按首字符判 JSON/XML；先 GET 仅 4xx 回退 POST；`Site.id` 只是装饰，身份用 `key`。CDN 常按 UA 拦 ExoPlayer → `_kPlayerHeaders` 用浏览器 UA。
 - **多线路（1.44.0，勿回退）**：`vod_play_from` / `vod_play_url` 都是 `$$$` 分段且按序对应，聚合站一部片可达 11 条（`ys.cxkjg.cn` 实测，集数 15~21 不等）。`VideoDetail.lines` 是唯一真源（`m3u8List` 只是 `lines.first.items` 的 getter）；`_mapPlayLines()` 逐段配对、缺名补「线路N」、含 m3u8 的排前。详情页 `_selectLine` 只换选集不重请求；播放页 `_switchLine` 按集名对齐同集、对不上按原位置；进播放页用 `widget.url` 反查线路，历史/收藏不串台。**绝不要再退回「firstWhere 取第一段」**。
+- **详情页滑动切线路（1.45.0）**：内容区包 `GestureDetector(onHorizontalDrag*)`，阈值 48px 或 320px/s，向左滑=下一条；`_lines.length<2` 不挂手势。线路 chip 各挂 `GlobalKey`，切换后 postFrame `Scrollable.ensureVisible(alignment:0.5)` 让它自动居中——**同时管横向与纵向**，页面滚到底也能拉回视口。线路条自身横向滚动在竞技场更深会优先吃手势（有意：否则后面线路选不到）。
 
 ## UI 约定（勿回退）
 - **加载态一律骨架屏**，禁灰黑遮罩（`LoadingMask` 已删）；刷新不抹内容，顶部 2px `LinearProgressIndicator`；换源不重置 `_classes`。
