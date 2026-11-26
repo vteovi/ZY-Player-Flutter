@@ -134,11 +134,19 @@ jobs:
           path: dist/*.apk
           retention-days: 30
 
+      # Release 正文取自仓库里的 更新记录.MD（当前 tag 对应的那一节）：
+      # 用户点进 Release 就能看到这版改了什么，不用再去翻源码仓库。
+      # 抓取失败时脚本写一段兜底说明，不会让发布步骤变红。
+      - name: 生成 Release 正文（取自 更新记录.MD）
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: bash tools/release-notes.sh "${GITHUB_REF_NAME#v}" release-notes.md .
+
       - name: 发布到 GitHub Release（仅 tag 推送时）
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          NOTES="release-notes.md"
           # 额外放一份固定文件名的 arm64 包：应用内更新的 update.json 里
           # apkUrl 指向 releases/latest/download/ZY-Player-arm64-latest.apk，
           # 这样每次发版都不必再改清单里的下载地址。
@@ -149,11 +157,13 @@ jobs:
           fi
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             # 另一个 job（Windows 版）也在往同一个 tag 发东西，可能同时发现
-            # Release 还不存在 —— 谁先谁后都行，创建失败就交给 upload 处理。
+            # Release 还不存在 —— 谁先谁后都行，创建失败就交给下面处理。
             gh release create "$GITHUB_REF_NAME" \
               --title "ZY Player $GITHUB_REF_NAME" \
-              --generate-notes || true
+              --notes-file "$NOTES" || true
           fi
+          # 已存在（重跑 / Windows job 先建）也统一刷一次正文，保证带上更新记录
+          gh release edit "$GITHUB_REF_NAME" --notes-file "$NOTES" || true
           gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
 
   # ---------------------------------------------------------------- #
@@ -210,15 +220,24 @@ jobs:
           path: dist/*.zip
           retention-days: 30
 
+      # 与 APK job 同一份正文（更新记录.MD 当前版本那节）。两边都带，
+      # 谁先建 Release 都不会出现只有英文提交列表的情况。
+      - name: 生成 Release 正文（取自 更新记录.MD）
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: bash tools/release-notes.sh "${GITHUB_REF_NAME#v}" release-notes.md .
+
       - name: 发布到 GitHub Release（仅 tag 推送时）
         if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          NOTES="release-notes.md"
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" \
               --title "ZY Player $GITHUB_REF_NAME" \
-              --generate-notes || true
+              --notes-file "$NOTES" || true
           fi
+          gh release edit "$GITHUB_REF_NAME" --notes-file "$NOTES" || true
           gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
