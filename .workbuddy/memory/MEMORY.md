@@ -1,86 +1,47 @@
 # 项目长期记忆：ZY Player Flutter
-
-uni-app 版 ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/源管理/设置），引擎只认 maccms json/xml 采集站。provider + ChangeNotifier（全局 `AppState`）；shared_preferences 存储（键 `ZY-{db}-DB`）；包名 `com.zy.player`、minSdk 24、targetSdk 35。细节见同目录日记。
+uni-app ZY-Player-APP 的 Flutter 重写（首页/详情/播放/收藏/历史/源管理/设置），只认 maccms json/xml 采集站。provider + ChangeNotifier（全局 `AppState`）；shared_preferences（键 `ZY-{db}-DB`）；包名 `com.zy.player`，minSdk 24 / targetSdk 35。历史细节见同目录日记。
 
 ## ⚠️ 协作纪律（勿破）
-1. **构建走 GitHub Actions**，本机无常规 Flutter 环境（2026-11-07 用户删了 `C:\flutter`）。交付 = 改动清单 + push `dev` + 让用户去 Actions 跑「Build APK + Windows」。
-2. **默认只 commit，push 需用户明确要求**（说「你来帮我推」「发布」才推）。提交前 `git status --porcelain` 必须为空。
-3. **push 前必须 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`**：环境挂着 `http_proxy=127.0.0.1:64622`，走代理访问 github.com 返 502/000，直连才通。模板 `git -c http.version=HTTP/1.1 push origin <ref>`。
-   - 403/认证失败 → **先 `git remote -v`** 看是否被 `~/.gitconfig` 的 `[url ...gh-proxy.com...] insteadOf` 改写成只读镜像（2026-11-17，已删）。
-   - **⭐ 主站不通走 SSH 443（两次实锤）**：`curl https://github.com` 000 而 `api.github.com` 200 即信号。**别用 API 推 ref**，`PATCH /git/refs/heads/main` 对服务端没有的 commit 必 422。正解：
-     `git -c core.sshCommand="ssh -p 443 -o StrictHostKeyChecking=no" push ssh://git@ssh.github.com:443/vteovi/ZY-Player-Flutter.git main v1.37.0`
-     **fetch 也要带同一 sshCommand**，否则 `origin/*` 不更新、`status -sb` 假报 ahead。
-   - push 成功 ≠ Release 下载快，两条线路。查 CI/Release 用 `curl api.github.com`（免认证，`gh` 未装）。
-4. 跑 git 前 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
-5. **改完必须静态校验 + bump 版本号**（feat→MINOR / fix→PATCH，versionCode +1）。便携 toolchain（存在才有）：
-   `export PATH="/c/Users/Administrator/Doubao/chats/2026-11-21/new-chat/.toolchain/flutter/bin:$PATH"; flutter analyze --no-fatal-infos --no-fatal-warnings lib`
-   跑完 `git checkout -- analysis_options.yaml`（flutter 会加 exclude）。基线 **0 error / 0 warning / ~32 info**（`material.dart` deprecated）。
-6. 每次发版维护 `更新记录.MD`：版本倒序，「日期 + 新增/优化/修复 + 一句人话」，不写实现细节与 chore/docs；头部「当前版本」同步。
-7. **分支**：`main` 稳定线、`dev` 开发线，新功能只在 `dev`。合回：`git checkout main && git fetch && git reset --hard origin/main && git merge --no-ff dev`。push `dev` 只跑 analyze，**只有 `v*` tag 才打包发 Release**。
+1. 本机无常规 Flutter（`C:\flutter` 已删），构建走 GitHub Actions。默认只 commit；**push / 发布必须用户明确要求**。git 前 `export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"`。
+2. push 前 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`（代理会 502/000）。主站不通走 SSH 443，fetch 也要带同一 sshCommand：
+   `git -c core.sshCommand="ssh -p 443 -o StrictHostKeyChecking=no" push ssh://git@ssh.github.com:443/vteovi/ZY-Player-Flutter.git main vX.Y.Z`
+   403 先 `git remote -v` 查 `~/.gitconfig` 的 insteadOf 镜像改写；**别用 API 推 ref**（422）。
+3. 改完必须静态校验：便携 toolchain `/c/Users/Administrator/Doubao/chats/2026-11-21/new-chat/.toolchain/flutter/bin`，`flutter analyze --no-fatal-infos --no-fatal-warnings lib`，跑完 `git checkout -- analysis_options.yaml`（pub get/build 还会改 gradle.properties）。基线 **0 error / 0 warning / 31 info**。不要跑 `dart format`（Dart 3.8 tall style 会把 diff 炸开）。
+4. 每个进 APK 的提交都升版本：feat→MINOR、fix→PATCH，versionCode +1；同步 `pubspec.yaml` + `android/local.properties`（gitignore）+ `更新记录.MD`（倒序、一句人话、头部当前版本）+ 发版后 `update.json`。
+5. 分支：`main` 稳定、`dev` 开发，新功能只在 dev。合回 `git checkout main && git fetch && git reset --hard origin/main && git merge --no-ff dev`。只有 `v*` tag 发 Release。中文 commit 消息写 `.git/commitmsg.txt` + `git commit -F`。
 
 ## 构建与发版
-- **出包**：Actions → `Build APK + Windows` → 选分支 + `variant`（split 推荐）。手动跑**不发 Release**，产物在 Artifacts（留 30 天）。
-- **发版顺序（勿乱）**：改 pubspec → 打 tag → push → CI 产 Release（含固定名 `ZY-Player-arm64-latest.apk`）→ **Release 存在后**才改 `update.json`（5 条左右用户能感知的说明）→ push → 清 CDN → 验镜像 → 切 dev `git checkout main -- update.json` 同步。
-- **Release 正文自动取自 `更新记录.MD`**：`tools/release-notes.sh` 按行首 `## v<版本>` 截取当前版本那节，末尾附「下载哪个包」表 + 安装须知，并给出 `更新记录.MD` 的**可点击链接**（指向 tag 而非 main，中文名用 `%E6%9B%B4...` 编码）。两个 job 都跑它，`gh release create/edit --notes-file`。补写已发布 Release 用 `.github/workflows/sync-release-notes.yml`（`workflow_dispatch` 填 tag，或改 `.release-sync` 一行再 push）。
-- **Release 404 ≠ 权限问题**：`GET /releases/tags/<tag>` 返 404 时先查 `releases?per_page=3` 列表 —— 用户可能手动删过 Release（2026-11-26 踩过，白排查 6 次）。`repos/<repo>` 与列表都 200 就说明 token 没问题。
-- **APK 直连 `releases/download` 本机常年 000**，验下载能力看镜像 Range 206 即可，别当成发布失败。
-- **版本号两处**：`pubspec.yaml`（`1.37.0+235`）+ `android/local.properties`（gitignore）。设置页副标题走原生 `PackageManager`。
-- **ABI**：不加 `--split-per-abi` 时 `--target-platform` 被忽略 → fat 68MB；arm64 单独 18MB 必须 split。首包 ~26 分钟，缓存命中 3~5 分钟。
-- **签名（勿回退）**：库在仓库外 `C:\Users\Administrator\keystores\zy-player-release.jks`（alias `zyplayer`，口令见 `android/key.properties`）。`build.gradle.kts` 有则 release、无则退化 debug；CI 用 Secret `KEYSTORE_BASE64` + `KEYSTORE_PASSWORD` 现场生成。**keystore 绝不能入库**（仓库 public）。⚠️ 换签名后老用户须卸载重装 —— 写进每次更新说明末尾。
-- CI：`runs-on: ubuntu-24.04` 固定；checkout@v7 / setup-java@v6 / cache@v6 / upload-artifact@v7；产物收集 `tools/ci-collect-apk.sh`（两批各调一次，放最后被覆盖）。**CI 配置不升版本号。**
-- Windows 本地构建基本不用：NDK 固定 `27.0.12077973`（AGP 校验 `source.properties`，软链接骗不过）。
+- Actions `Build APK + Windows`：tag 触发出 Release，手动跑只出 Artifacts。顺序：tag → CI 出 Release → **Release 存在后**才改 `update.json` → push → 清 CDN → 验镜像 → 切 dev `git checkout main -- update.json`。
+- Release 正文由 `tools/release-notes.sh <版本> <输出> [根目录]` 从 `更新记录.MD` 截取 + 下载表 + 可点击链接（指向 tag）；补写用 `.github/workflows/sync-release-notes.yml`。**Release 404 先查 `releases?per_page=3`**，可能是用户手动删了（踩过 6 次白排查）。
+- ABI 必须 `--split-per-abi`（arm64 约 18MB）；签名库在仓库外 `C:\Users\Administrator\keystores\zy-player-release.jks`（alias zyplayer），CI 用 Secret；**keystore 绝不能入库**（仓库 public），换签名后老用户须卸载重装，写进每次更新说明。
+- CI ubuntu-24.04，checkout@v7 / setup-java@v6 / cache@v6 / upload-artifact@v7，产物收集 `tools/ci-collect-apk.sh`。Windows 本地 NDK 27.0.12077973。APK 直连本机常年 000，验镜像 Range 206。
 
-## 应用内版本更新（勿回退）
-- 流程：拉远端 `update.json` → 用**已安装包** versionCode（`PackageManager`）比较 → 弹窗含说明 → 应用内下载 → `FileProvider` 交安装器。分层：`utils/version.dart` 纯逻辑、`services/update_service.dart` 只做网络。只比 versionCode，退化按版本名逐段数字比（**不能比字符串**）。
-- **大陆网络必挂**：默认多镜像**并发竞速**（raw / ghproxy.net / gh-proxy.com / ghfast.top / cdn.jsdelivr.net）；用户自定义地址只试那一个。装包下载直连失败自动加 `gh-proxy.com/`、`ghproxy.net/` 前缀（支持 Range，206）。必须 catch `http.ClientException`。
-- **不能「第一个 200 胜出」**：jsDelivr `@main` 小时级缓存会返 200 旧内容。现收齐所有 200 后**取最大 versionCode**。发版后 purge 并**必须复查** —— 返回 `providers:true` 不代表刷新，常要连清 3~4 次，可能仍落后一两版（取最大值兜住）。
-- 安装要件：`REQUEST_INSTALL_PACKAGES` + 显式 `androidx.core:core` + manifest `<provider ${applicationId}.fileprovider>` + `res/xml/file_paths.xml`。**必须 `content://`**。对话框 `PopScope(canPop:false)`；取消下载只置标记，由调用方 pop。
+## 应用内更新（勿回退）
+- 拉 `update.json` → 用**已装包** versionCode（PackageManager）比对 → 弹窗 → 下载 → FileProvider 安装。只比数字，退化按版本名逐段比（不能比字符串）。安装要件：`REQUEST_INSTALL_PACKAGES` + `androidx.core:core` + `<provider ${applicationId}.fileprovider>` + `file_paths.xml`，必须 `content://`；对话框 `PopScope(canPop:false)`。
+- 多镜像并发竞速（raw / ghproxy.net / gh-proxy.com / ghfast.top / jsDelivr），**收齐所有 200 后取最大 versionCode**（jsDelivr 会返 200 旧内容）；purge 后必须复查，常要 3~7 次。清 jsDelivr 缓存要带代理，其余 git 操作要 unset 代理。
 
-## 视频源
-- **手动添加接口（1.37.0）**：`lib/pages/site_edit_page.dart`（地址必填、名称可空回退域名、启用开关、测试连接走 `checkSite`）；入口在源管理页三点菜单；**长按源卡片**弹菜单（编辑/复制地址/删除单条）。`AppState.saveSite()` upsert，**编辑沿用原 key**（收藏/记录不断），删源不删记录。
-- `Site.api` 须真实 URL；`_mapType` 0=xml / 1=json；`SourceImport.inferType(api)` 按地址猜（`at/xml`→xml）。type 3/4/7/15（SpiderJS/drpy）先从 ext.url 提真实端点，无端点跳过。默认源 `assets/data/init_site.json`（22 个），仅源库为空时种子。按 `key` upsert，不清空已有。
-- 配置导入：`importSites` 返 `ImportSummary`；支持 `config_url.dart` 规范化（无协议头/中文域名）、JSONP、多仓 `{"urls":[...]}`（≤5）、导航页找 tvbox 链接（≤6、总 25s）、直接粘接口、按 api/key 去重。
-- **TVBox 加密配置（勿回退）**：`box.iqinu.com` 类站只在 `okhttp/*` UA 下给真配置，正文 `$#key#$` + AES-128-CBC + 13 字节 IV。`_fetchConfig` 按 okhttp/3.15→3.12→浏览器试；`utils/tvbox_crypto.dart` 纯 Dart 解密（**不引 pointycastle**；GF 求逆用 `x^254`）。spider 兜底要严：`.js/.json/.txt`、逗号多域名一律不导。
-- 地址一律 `HttpService._apiUrl()`；type 不可信，按首字符判 JSON/XML；先 GET 仅 4xx 回退 POST；`Site.id` 只是装饰，身份用 `key`。CDN 常按 UA 拦 ExoPlayer → `_kPlayerHeaders` 用浏览器 UA。
-- **多线路（1.44.0，勿回退）**：`vod_play_from` / `vod_play_url` 都是 `$$$` 分段且按序对应，聚合站一部片可达 11 条（`ys.cxkjg.cn` 实测，集数 15~21 不等）。`VideoDetail.lines` 是唯一真源（`m3u8List` 只是 `lines.first.items` 的 getter）；`_mapPlayLines()` 逐段配对、缺名补「线路N」、含 m3u8 的排前。详情页 `_selectLine` 只换选集不重请求；播放页 `_switchLine` 按集名对齐同集、对不上按原位置；进播放页用 `widget.url` 反查线路，历史/收藏不串台。**绝不要再退回「firstWhere 取第一段」**。
-- **详情页滑动切线路（1.45.0）**：内容区包 `GestureDetector(onHorizontalDrag*)`，阈值 48px 或 320px/s，向左滑=下一条；`_lines.length<2` 不挂手势。线路 chip 各挂 `GlobalKey`，切换后 postFrame `Scrollable.ensureVisible(alignment:0.5)` 让它自动居中——**同时管横向与纵向**，页面滚到底也能拉回视口。线路条自身横向滚动在竞技场更深会优先吃手势（有意：否则后面线路选不到）。
+## 视频源（勿回退）
+- `Site.api` 须真实 URL；身份用 `key`（`Site.id` 只是装饰）；`_mapType` 0=xml / 1=json；type 3/4/7/15 从 ext.url 提真实端点，无端点跳过；默认源 `assets/data/init_site.json`（22 个）仅空库种子，按 key upsert。地址一律 `HttpService._apiUrl()`；按首字符判 JSON/XML；先 GET 仅 4xx 回退 POST；播放器 UA 用 `_kPlayerHeaders`。
+- 配置导入支持 JSONP / `{"urls":[...]}`（≤5）/ 导航页 tvbox 链接（≤6、总 25s）/ 直接接口，api+key 去重。TVBox 加密配置只在 okhttp UA 下给真配置，`$#key#$` + AES-128-CBC + 13B IV，`utils/tvbox_crypto.dart` 纯 Dart 解密（不引 pointycastle）。
+- **多线路**：`vod_play_from` / `vod_play_url` 按 `$$$` 顺序配对（`_mapPlayLines`），`VideoDetail.lines` 唯一真源，`m3u8List` 是 `lines.first.items` getter；详情页 `_selectLine` 不重请求，播放页 `_switchLine` 按集名对齐、用 `widget.url` 反查线路。绝不退回 firstWhere。
+- 详情页滑动切线路：内容区 `GestureDetector(onHorizontalDrag*)`，48px 或 320px/s，左滑下一条；chip 挂 GlobalKey，切换后 postFrame `Scrollable.ensureVisible(alignment:.5)` 横纵都拉回；<2 条不挂手势。
+- 手动添加/编辑：`site_edit_page.dart`，长按源卡片菜单；编辑沿用原 key，删源不删记录。
+- **checkSite 防误判**：`checkSite(site,{retry:true})` 拆出 `_checkSiteOnce`，fail 自动重试一次（错峰 300~700ms、二次 9s），ok/warn 一次返回。批量 8 并发下瞬超时/5xx/限流常见，旧逻辑一次 fail 就停用有效源。检测中途只更新 chip，结尾统一启停重排。
+- **导入要有始有终**：选完文件立刻 `showDialog`（不可取消）→ `_ImportProgressDialog`（读文件→解析→写库 N/M→结果淡入），1.5/2.4s 自动关；`importSitesFromContent` 带 onProgress + 每 12 条 16ms 让出事件循环。
 
-## UI 约定（勿回退）
-- **加载态一律骨架屏**，禁灰黑遮罩（`LoadingMask` 已删）；刷新不抹内容，顶部 2px `LinearProgressIndicator`；换源不重置 `_classes`。
-- **深色 = 纯黑 OLED**：`#000000` / surface `#0D0D0D`，层级靠 1px `0x24FFFFFF` 描边，不提亮底色；`main.dart` 把 `colorScheme.surface` 压纯黑（M3 Dialog/Sheet 默认取它）。`bottomNavigationBarTheme.type: fixed`（否则 4 项变 shifting）。
-- **卡片模式 = 单枚举 `ViewMode {portrait, landscape, waterfall}`**（1.36.1 起，别拆回散装布尔）。`parse` 兼容老存档（按 瀑布流>横向 反推），`toJson` 仍写 `landscapeCard`/`waterfall` 派生值。入口：设置页 + 首页顶栏（**点按循环 竖→横→瀑布，长按弹底部菜单**，共用 `widgets/view_mode_picker.dart`；`IconButton` 无 onLongPress，须 `Tooltip(triggerMode: manual)+InkResponse`）。瀑布流下按钮也要显示，否则切进去出不来。
-- 瀑布流 `widgets/waterfall_grid.dart`：用 `SliverMasonryGrid` 主构造（`.count` 无 `addAutomaticKeepAlives`）。列数 `<600→2`，否则 `(w/190).floor().clamp(2,8)`。比例来自 `utils/poster_ratio.dart`：**只读图片头 64KB**（JPEG 找 SOF 排除 C4/C8/CC、PNG IHDR、GIF、WebP），三级缓存（内存→`poster_ratio.json`→解析），缺省 `2/3` 占位。
-- **首页分类栏不做任何名字屏蔽**（1.44.2 起）：接口给几个就显示几个，只按 tid 去重（`FilmPageState._dedupeClasses`）。别再写「电影/电视剧/综艺/动漫」这类黑名单 —— 那是把采集站最主流的分类整块藏掉，实测某站 9 个分类只剩 6 栏。
-- 首页片单缓存 `list_cache.dart` 先读缓存秒出再静默刷新；封面预取并发 6，网格 `memCacheWidth:480`、详情 600。`PosterCover` 自定义 `imageBuilder` 会丢淡入，用 `frameBuilder + AnimatedOpacity` 补。
-- **收藏/历史**：`mergeRecords` 开关 —— 关（默认）导航 4 项（首页/收藏/历史/设置），`StarPage`+`HistoryPage`，共用 `widgets/record_grid.dart`；开则 3 项（首页/我的/设置）+ `RecordsPage` TabBar 两栏。角标 `RecordCountTag`。`MainPage` 用**逻辑槽位 + `_slotOf()/_indexOf()`**，别用物理下标（会越界/弹回首页）。
-- 记录 key = `{siteKey}-{videoId}`，siteKey 含连字符，**绝不用 `split('-')[0]`**，用 `resolveRecordKey()`。
-- **输入框别用 `TextInputType.url`**（2026-11-25 实锤）：映射成 `TYPE_TEXT_VARIATION_URI`，配 `autocorrect:false`/`enableSuggestions:false` 的 `NO_SUGGESTIONS`，国产输入法会判成敏感输入并切「安全键盘」，用户调不出常用输入法与粘贴板。网址/接口地址框一律 `TextInputType.text`。
-- 源检测 `checkSite`（`?ac=list` 超时 8s）→ ok/warn/fail；中途只更新 chip，结尾统一启停+重排；结果只放内存。**`PopupMenuButton` 别整个 `enabled:false`**，会连非破坏项一起禁掉。
-- **大屏（≥600）**：首页搜索框并入 AppBar 第一排 [站点 ≤260 | 搜索 | 共 N]，toolbarHeight 60；NavigationRail `trailing` 放大屏入口。播放页分栏：宽≥840 且 宽>高，右栏 min(30%,420) 且 ≥300。
-- **播放页**：进度条独占一行 + 等宽按钮行；比例/大小底层是独立两维（`_stageAreaSize` + 双层 FittedBox），但 UI 已合并成**单个「画面」按钮 + 单个 `_screenPanelOpen` 面板**（1.43.0，面板内分「画面比例」「画面大小」两段，别再拆回两个按钮）；左亮右音量、双击暂停；自绘 `_ProgressSlider`；`PopScope` 先退全屏再退页；控制层 4s 隐藏；倍速 0.5~3.0 八档；**收藏按钮只在 `!_fullscreen || _landscapeNow` 显示**。
-- 设置页：六组卡片（内容与数据/播放/外观与布局/备份与恢复/清理与重置/关于），`_SettingsSection`+`_SettingsTile`+`_SwitchTile`，桌面限宽 720 居中。导入导出已并入源管理菜单，**设置页不再有「播放记录」「导入配置源」**。
+## UI（勿回退）
+- 加载一律骨架屏，禁灰黑遮罩；刷新不抹内容，顶部 2px 进度；换源不重置 `_classes`。
+- 深色纯黑 OLED `#000000` / `#0D0D0D`，层级靠 1px `0x24FFFFFF` 描边；`colorScheme.surface` 压纯黑；`bottomNavigationBarTheme.type: fixed`。
+- 卡片模式单枚举 `ViewMode{portrait,landscape,waterfall}`（parse 兼容老存档）；入口设置页 + 首页顶栏（点按循环、长按菜单，共用 `widgets/view_mode_picker.dart`）。瀑布流 `SliverMasonryGrid`，列数 `<600→2` 否则 `(w/190).floor().clamp(2,8)`；比例 `utils/poster_ratio.dart` 只读图片头 64KB，三级缓存，缺省 2/3。
+- 首页分类不屏蔽名字，只按 tid 去重；片单 `list_cache.dart` 缓存秒出 + 静默刷新；封面预取 6，memCacheWidth 480 / 600。
+- 收藏/历史：`mergeRecords` 决定 4 项或 3 项 + TabBar；`MainPage` 用逻辑槽位 `_slotOf()/_indexOf()`；记录 key `{siteKey}-{videoId}` 用 `resolveRecordKey()`，绝不 split('-')。
+- 输入框一律 `TextInputType.text`（url 类型触发国产输入法安全键盘）。
+- 大屏 ≥600 搜索并入 AppBar；播放页宽≥840 且横向时右栏 min(30%,420)≥300；播放页单个「画面」按钮 + `_screenPanelOpen`（别拆回两个），进度条独占行、自绘 `_ProgressSlider`、倍速 0.5~3.0 八档、控制层 4s 隐藏、收藏按钮只在 `!_fullscreen || _landscapeNow`。
+- 设置页六组卡片，桌面限宽 720；导入导出在源管理菜单。
+- **批量写/删库报进度 + 让出事件循环**：Windows 每次 `setString/remove` 整份同步写盘会卡 UI；`removeMany` 带 onProgress（12 条 / 24ms），界面显示「清除中 3/12」+ 2px 条。
 
-## 其他坑（勿回退）
-- Flutter 命中测试：触点在父节点外整棵子树不命中 —— 要露在外面先给父节点留空间。
-- 「不满一屏触发不了翻页」死局：`CategoryTabState._maybeContinueLoad()` 每帧查 `maxScrollExtent<=0` 或贴底主动续拉，配 `didChangeMetrics` + `_noGrowStreak`。
-- 详情 `fetchDetail` 只对**瞬时错误**重试 2 次（300/600ms）；详情页 `EmptyHint` 显示原因 + 重试。
-- 原生通道 `com.zy.player/system`（`/pip`、`/window`）：`system_control.dart` 与 `MainActivity.kt` 两端同步改。
-- 备份 `data_backup.dart`：`saveFile`（bytes 必填）/ `pickFiles`。青少年模式已整体移除，别写回。
-- **批量写/删库必须报进度 + 让出事件循环**（1.44.1）：`SharedPreferences` 无批量接口，每次 `setString`/`remove` 在 Windows 端都是「整份偏好序列化 + 同步写盘」，连着几十次会把 UI 线程按住几秒 = 点了没反应。`removeMany` 现带 `onProgress`，30 条内每条 `Future.delayed(Duration.zero)`，更多按 12 条 / 24ms 预算；界面侧按钮显示「清除中 3/12」+ 2px 进度条。`importSitesFromContent` 同样带 `onProgress` + 每 12 条 16ms 让出（1.46.0）。
-- **源检测防误判（1.46.0，勿回退）**：`checkSite(site,{retry=true})` 拆出 `_checkSiteOnce`；fail 自动重试一次，错峰 300~700ms、第二次超时 9s（首次 6s）；ok/warn 一次即返回。根因是批量 8 路并发下采集站瞬超时/5xx/限流常见，旧逻辑一次 fail 就判死且批量结束**自动停用 fail 源**，用户看到「有效源检测后消失、再测又好了」。**别把重试删回去**。
-- **配置文件导入要有始有终（1.46.0）**：选完文件立刻 `showDialog`（`barrierDismissible:false` + `PopScope(canPop:false)`）→ `_ImportProgressDialog`（读文件→解析→写库 N/M→结果 `AnimatedSwitcher` 淡入）；结果停留 1.5s/2.4s 自动关，用户点「完成」用 `dialogClosed` 标记防重复 pop。别退回「静默导入 + 列表一次性 rebuild」。
-
-## Windows 原生窗口（勿回退）
-- **C++ 只写英文注释**（MSVC 按 GBK 读 UTF-8 中文 → C4819 → 失败）。
-- **窗口形状变更必须由 Dart 发起**：原生 `WM_CLOSE` 只回传 `onPipExitRequested`/`onFullscreenExitRequested`。
-- **改窗口前后必须摘视频纹理**：fvp 用 D3D11 共享纹理，出帧时改尺寸互等 → UI 线程死锁。`_withVideoDetached()`：换黑盒 → 等两帧 + 60ms → 调原生 → 250ms → 挂回。
-- 单次 `SetWindowPos(... SWP_FRAMECHANGED|SWP_NOOWNERZORDER)`；日志 `zy_player_debug.log`。三模式：填满 / 原生全屏 / 画中画（`WS_POPUP`，拦 `WM_NCCALCSIZE`，别用 `WS_CAPTION`）。
-- 无边框拖动/缩放走 `WM_NCLBUTTONDOWN`（**lParam 传真实屏幕坐标**）；热区须 `opaque`；最小 200x120。
-
-## 工具环境坑
-- Bash 里 `\` 会被转成 `/`（heredoc 也不行）：含反斜杠的脚本用 Write 落文件再 `python file.py`。
-- Git Bash 把 `/S`、`/MIR` 当路径：加 `MSYS_NO_PATHCONV=1`。
-- **Write 新建 `.bat`/`.ps1` 会存 UTF-16**，cmd 读不了：用 Python `encoding='gbk', newline=''`。
-- `flutter pub get` 改 `analysis_options.yaml`、`flutter build` 改 `android/gradle.properties` —— 跑完都 `git checkout --`。
-- **改完不要跑 `dart format`**（2026-11-25 实锤）：toolchain 的 Dart 3.8 新格式化器（pubspec `sdk: ^3.8.0`）按 tall style 重排整个文件，一次 format 能把 86 行改动炸成 360 行噪音 diff。手写代码照现有风格即可，`flutter analyze` 不查格式。
-- Bash commit message 里带 `(...)` 走 `$(printf ...)` 会报 syntax error：**写 `.git/commitmsg.txt` 用 `git commit -F`**。
+## 其他坑
+- Flutter 命中测试：触点在父节点外整棵子树不命中。不满一屏翻页靠 `CategoryTabState._maybeContinueLoad()`。详情 `fetchDetail` 只对瞬时错误重试 2 次，EmptyHint 显示原因。
+- 原生通道 `com.zy.player/system`（`/pip`、`/window`）两端同步改；备份 `data_backup.dart`（saveFile bytes 必填）；青少年模式已移除。
+- Windows：C++ 只写英文注释（MSVC GBK 读 UTF-8 → C4819）；窗口形状变更由 Dart 发起，改窗口前后 `_withVideoDetached()` 摘 fvp D3D11 纹理否则死锁；三模式填满/原生全屏/PiP（`WS_POPUP` + 拦 `WM_NCCALCSIZE`）；拖动 `WM_NCLBUTTONDOWN` lParam 传屏幕坐标；最小 200x120。
+- Bash heredoc 中反斜杠会被转义：脚本用 Write 落文件；Git Bash `/S` 加 `MSYS_NO_PATHCONV=1`；`.bat/.ps1` 用 Python gbk 写。
