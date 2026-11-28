@@ -16,16 +16,21 @@ import 'list_cache.dart';
 /// 异步链路全部走完（读偏好 → 网络问分类 → 再读片单缓存）才长出内容。冷启动
 /// 那一两秒的空白就是这么来的。
 ///
-/// 这里在 `runApp()` **之前**把这份快照读进内存（纯本地小文件 + 一次
-/// shared_preferences 内存读取），首页第一帧就能直接画出站点名、分类栏、片单和
-/// 封面；随后正常的异步链路照常跑，拿到新数据后静默替换，用户看不到等待。
+/// 这里在 `runApp()` **之前**把这份快照读进内存（纯本地小文件），首页第一帧就能
+/// 直接画出站点名、分类栏、片单和封面；随后正常的异步链路照常跑，拿到新数据后
+/// 静默替换，用户看不到等待。
 ///
-/// 只存「结构」（站点 + 分类 + 上次停留的分类），片单仍然从 [ListCache] 读 ——
-/// 同一份数据只存一处，不会出现两份内容打架。
+/// v2 起片单（最多 [_maxVideos] 条）**内联**在快照文件里：老版本只存结构、
+/// 片单要去 [ListCache] 读，而那次读会触发 shared_preferences 首次初始化
+/// （收藏 / 历史特别多时要几百毫秒，还带 500ms 超时兜底），超时就变成
+/// 「冷启动先空一会儿、甚至只剩一个刷新按钮」。内联之后首帧内容与偏好库无关。
 class BootSnapshot {
   BootSnapshot._();
 
   static const String _fileName = 'boot_screen.json';
+
+  /// 快照里最多内联多少条片单：够铺满一屏多一点，文件也还只有几十 KB。
+  static const int _maxVideos = 30;
 
   /// 落盘防抖：切分类会连续触发，攒一下再写
   static const Duration _flushDelay = Duration(milliseconds: 600);
@@ -39,7 +44,7 @@ class BootSnapshot {
   /// 上次停留的分类 tid
   static String activeTid = '';
 
-  /// [activeTid] 的第一页片单，来自 [ListCache]
+  /// [activeTid] 的第一页片单（v2 起内联在快照文件里）
   static List<Video> videos = const <Video>[];
 
   /// [activeTid] 的资源总数（顶部「共 N 资源」用）
@@ -90,23 +95,38 @@ class BootSnapshot {
       final savedTid = (decoded['tid'] ?? '').toString();
       final tid = cls.any((c) => c.tid == savedTid) ? savedTid : cls.first.tid;
 
-      // 片单与资源数从 ListCache 取（和首页正常路径同一份数据）。
-      // 读失败只当没有片单：分类栏照样能先画出来。
-      //
-      // 加超时是因为这一步会触发 shared_preferences 首次初始化（整份偏好一次
-      // 读进内存），收藏 / 历史特别多时可能要几百毫秒 —— 宁可先只给结构，
-      // 也不能把首帧一直卡在这儿。
+      // v2 起片单内联在快照里：一次 json 解析就拿到内容，不碰 shared_preferences，
+      // 冷启动第一帧就能铺满封面。v1 的老文件没有 `videos` 字段，退回读
+      // [ListCache]（加超时：那一步会触发偏好库首次初始化，宁可只给结构，
+      // 也不能把首帧一直卡在这儿）。
       List<Video> firstPage = const <Video>[];
       var count = 0;
-      try {
-        const budget = Duration(milliseconds: 500);
-        firstPage =
-            await ListCache.getPage(s.key, tid, 1).timeout(budget) ??
-                const <Video>[];
-        final meta = await ListCache.getMeta(s.key, tid).timeout(budget);
-        count = meta?.recordcount ?? 0;
-      } catch (_) {
-        // 超时 / 读坏：没有片单就不注入，交给 CategoryTab 自己加载
+      final rawVideos = decoded['videos'];
+      if (rawVideos is List) {
+        final list = <Video>[];
+        for (final e in rawVideos) {
+          if (e is! Map) continue;
+          try {
+            list.add(Video.fromJson(e));
+          } catch (_) {
+            // 单条坏了就跳过，剩下的照常显示
+          }
+          if (list.length >= _maxVideos) break;
+        }
+        final rawCount = decoded['count'];
+        count = rawCount is int ? rawCount : 0;
+        firstPage = list;
+      } else {
+        try {
+          const budget = Duration(milliseconds: 500);
+          firstPage =
+              await ListCache.getPage(s.key, tid, 1).timeout(budget) ??
+                  const <Video>[];
+          final meta = await ListCache.getMeta(s.key, tid).timeout(budget);
+          count = meta?.recordcount ?? 0;
+        } catch (_) {
+          // 超时 / 读坏：没有片单就不注入，交给 CategoryTab 自己加载
+        }
       }
 
       site = s;
@@ -119,14 +139,24 @@ class BootSnapshot {
     }
   }
 
-  /// 首页站点 / 分类 / 停留位置变化后调用；内容没变则一次写盘都不做。
-  static void save(Site s, List<VideoClass> cls, String tid) {
+  /// 首页站点 / 分类 / 停留位置 / 当前分类首屏片单变化后调用；
+  /// 内容没变则一次写盘都不做。
+  ///
+  /// [videos] 是当前可见分类手上的片单，只取前 [_maxVideos] 条内联，下次冷启动
+  /// 直接用它铺首屏；[recordCount] 一并存下，顶部「共 X 资源」也不用等到网络。
+  static void save(
+    Site s,
+    List<VideoClass> cls,
+    String tid, {
+    List<Video>? videos,
+    int recordCount = 0,
+  }) {
     if (s.key.isEmpty || cls.isEmpty) return;
     final tidOk = cls.any((c) => c.tid == tid) ? tid : cls.first.tid;
     // ts 每次都不同，所以「是否变化」只比对去掉 ts 的那部分，
     // 否则内容没变的分类切换也会一直重写整个文件。
     final body = <String, dynamic>{
-      'v': 1,
+      'v': 2,
       'site': s.toJson(),
       'classes': [
         for (final c in cls)
@@ -134,6 +164,11 @@ class BootSnapshot {
             <String, String>{'tid': c.tid, 'name': c.name},
       ],
       'tid': tidOk,
+      'count': recordCount,
+      'videos': [
+        for (final v in (videos ?? const <Video>[]).take(_maxVideos))
+          v.toJson(),
+      ],
     };
     final encoded = jsonEncode(body);
     if (encoded == _lastWritten) return;
