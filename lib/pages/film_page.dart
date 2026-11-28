@@ -168,17 +168,21 @@ class FilmPageState extends State<FilmPage>
     final tid = BootSnapshot.activeTid;
     final i = _classes.indexWhere((c) => c.tid == tid);
     _initialIndex = i < 0 ? 0 : i;
-    if (tid.isNotEmpty) {
-      // 快照里没记到资源数（缓存没有元信息）就留空，别在顶栏显示「· 0 资源」
-      if (BootSnapshot.recordCount > 0) {
-        _recordCounts[tid] = BootSnapshot.recordCount;
-      }
-      if (BootSnapshot.videos.isNotEmpty) {
-        _bootVideos = <String, List<Video>>{tid: BootSnapshot.videos};
+    // 快照里每栏的头部片单各自归位：切到哪一栏都有内容，也不会画到别的栏下。
+    // 每个栏的 key 就是它自己的 tid，不做任何改写。
+    _bootVideos = <String, List<Video>>{};
+    _pageSnapshots.clear();
+    for (final c in _classes) {
+      final list = BootSnapshot.videosOf(c.tid);
+      if (list.isNotEmpty) {
+        _bootVideos[c.tid] = list;
         // 同一批数据也放进「可回写」的槽位：不然冷启动后什么都没动就退出，
         // 下次快照里反而把片单弄丢了。
-        _pageSnapshots[tid] = BootSnapshot.videos;
+        _pageSnapshots[c.tid] = list;
       }
+      // 快照里没记到资源数就留空，别在顶栏显示「· 0 资源」
+      final n = BootSnapshot.countOf(c.tid);
+      if (n > 0) _recordCounts[c.tid] = n;
     }
     // 有内容了，不要再挂骨架屏
     _loading = false;
@@ -326,6 +330,9 @@ class FilmPageState extends State<FilmPage>
         _site = null;
         _classes = <VideoClass>[_latestClass];
         _recordCounts.clear();
+        _pageSnapshots.clear();
+        _bootVideos.clear();
+        _bootSiteKey = null;
         _loading = false;
       });
       _initTabs(_classes.length, force: true);
@@ -334,10 +341,19 @@ class FilmPageState extends State<FilmPage>
     // 换源期间**保留旧的分类栏**，等新分类拉回来再整体替换。
     // 原来这里立刻把 _classes 重置成 [最新]，分类栏会先塌成 1 个再变回来，
     // 白白闪一下。
+    final nextSite = sites.first;
+    // 换源必须把上一站的片单从内存里清掉：分类 tid 就那么几个数字（0/1/2…），
+    // 留着的话旧站的海报会直接被画到新站的分类栏下面。
+    final siteChanged = _site?.key != nextSite.key;
     setState(() {
       _loading = true;
-      _site = sites.first;
+      _site = nextSite;
       _recordCounts.clear();
+      if (siteChanged) {
+        _pageSnapshots.clear();
+        _bootVideos.clear();
+        _bootSiteKey = null;
+      }
     });
     await _loadClasses();
     if (mounted) setState(() => _loading = false);
@@ -402,24 +418,21 @@ class FilmPageState extends State<FilmPage>
     return true;
   }
 
-  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏 / 那一栏的头部片单）记下来，
+  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏 / 各栏头部片单）记下来，
   /// 供下次冷启动秒开。
   void _saveBootSnapshot() {
     final site = _site;
     if (site == null || _classes.length <= 1) return;
     final cls = _classes.where((c) => c.tid != _latestClass.tid).toList();
     if (cls.isEmpty) return;
-    final tid = _activeClass.tid;
-    // 刚切到还没加载的那一栏时 `_pageSnapshots` 里没有它：这时沿用快照文件里
-    // 已有的那份（只可能是同一个分类），别把刚存好的片单写空。
-    final sameAsFile = BootSnapshot.activeTid == tid;
+    // 存**所有已知栏**的片单，不只当前栏：回来切到哪一栏都能立刻有内容。
+    // 每栏的片单只认自己的 tid，所以不会出现「A 栏的海报挂到 B 栏下面」。
     BootSnapshot.save(
       site,
       cls,
-      tid,
-      videos: _pageSnapshots[tid] ?? (sameAsFile ? BootSnapshot.videos : null),
-      recordCount: _recordCounts[tid] ??
-          (sameAsFile ? BootSnapshot.recordCount : 0),
+      _activeClass.tid,
+      pages: _pageSnapshots,
+      counts: _recordCounts,
     );
   }
 
