@@ -12,21 +12,46 @@ import 'poster_ratio.dart';
 /// 后台跑，与用户浏览视线错位，不打断操作。
 ///
 /// 限制并发（[maxConcurrent]）避免一次性对源站发起几十条请求把连接挤爆、反而更慢。
+/// 首页十几个分栏同时起来时会各发一次预取，所以还加了一条**全局队列**：
+/// 同一时刻只跑一批，否则 6 张 × N 栏 = 几十条并发，接口请求全被挤慢。
 class ImagePrefetch {
   ImagePrefetch._();
 
+  /// 全局同时在下的图张数（跨分栏共享，见 [_queue]）
   static const int maxConcurrent = 6;
 
   /// 已在途的 URL（去重，避免同一张图被重复拉取）
   static final Set<String> _inflight = {};
 
+  /// 串行队列：本次预取排在上一次后面，保证全局并发不炸
+  static Future<void> _queue = Future<void>.value();
+
+  /// 队列里还有几个任务（用来判断「是不是冷启动的第一批」）
+  static int _queued = 0;
+
   /// 抢先下载一批封面。本方法是“尽力而为”的后台任务：失败静默忽略，
   /// 调用方用 [unawaited] 触发即可，无需 await。
+  ///
+  /// [delay] 给一个起跑延迟：冷启动时首页十几个分类的**接口请求**才是关键路径，
+  /// 一上来就并发拉二三十张封面会跟它们抢带宽 / 抢源站连接，接口更容易超时，
+  /// 表现就是「打开先空白、然后弹重试」。让接口先走，图片晚几百毫秒再追。
+  /// 只有队列空闲时的第一批才等这个延迟 —— 不然每栏都等一遍，后面的封面会越拖越晚。
   ///
   /// 每张图落盘后都会把「URL → 真实文件路径」记进 [CoverCache]：下次冷启动
   /// 卡片就能同步拿到文件、第一帧直接出海报，不用再走异步查缓存的流程。
   /// 已在磁盘上的图走 [CacheManager.getSingleFile] 是零网络的，等于顺手补齐索引。
-  static Future<void> prefetch(List<String> urls) async {
+  static Future<void> prefetch(List<String> urls, {Duration? delay}) {
+    final wait = (delay != null && _queued == 0) ? delay : null;
+    _queued++;
+    final task = _queue.then((_) => _run(urls, wait));
+    // 队列本身不能被一次失败打断：吞掉错误，只把结果交给调用方
+    _queue = task
+        .then<void>((_) {}, onError: (Object _) {})
+        .whenComplete(() => _queued--);
+    return task;
+  }
+
+  static Future<void> _run(List<String> urls, Duration? delay) async {
     final cm = AppImageCache.instance;
     // 已经有本地文件、能在第一帧直接画出来的，就不用再碰一次缓存查询 ——
     // 冷启动时这一步能把绝大多数「其实早就存过」的图直接排除掉。
@@ -39,6 +64,9 @@ class ImagePrefetch {
     if (todo.isEmpty) return;
     _inflight.addAll(todo);
     try {
+      if (delay != null && delay > Duration.zero) {
+        await Future<void>.delayed(delay);
+      }
       for (var i = 0; i < todo.length; i += maxConcurrent) {
         final batch = todo.skip(i).take(maxConcurrent).toList();
         await Future.wait(

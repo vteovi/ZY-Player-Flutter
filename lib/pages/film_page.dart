@@ -10,6 +10,7 @@ import '../services/boot_snapshot.dart';
 import '../services/http_service.dart';
 import '../services/list_cache.dart';
 import '../utils/app_colors.dart';
+import '../utils/cover_cache.dart';
 import '../utils/image_prefetch.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/video_grid.dart';
@@ -33,6 +34,10 @@ const double _kSearchFabLift = _kBackTopFabSize + 12;
 /// 网格底部额外留白：从底往上依次是 回到顶部(40) + 间距 + 搜索按钮(56)，
 /// 让最后一排（含右下角那张卡）能完整滚到按钮上方，不被压住。
 const double _kSearchFabInset = _kSearchFabSize + _kSearchFabLift;
+
+/// 封面预取的起跑延迟：首页十几个分栏几乎同时起来，接口请求才是关键路径，
+/// 一上来就并发拉几十张封面会跟它们抢带宽，接口更容易超时（→ 打开就报加载失败）。
+const Duration _kPrefetchDelay = Duration(milliseconds: 800);
 
 /// 首页：搜索 + 站点切换（顶部）+ 分类左右滑动分栏 + 资源瀑布流
 class FilmPage extends StatefulWidget {
@@ -88,6 +93,16 @@ class FilmPageState extends State<FilmPage>
   /// 那就把 A 站的片单画到 B 站上了。
   Map<String, List<Video>> _bootVideos = <String, List<Video>>{};
   String? _bootSiteKey;
+
+  /// 各分类「最近一次拿到的片单」头部（最多 [_kSnapshotVideos] 条）。
+  ///
+  /// 用途：退出前把**当前可见分类**的这一小批数据内联进 [BootSnapshot]，
+  /// 下次冷启动第一帧就有内容可画，不再依赖异步读片单缓存。
+  /// 每个分栏加载完都会回写一份，所以随便切到哪一栏退出都能记住。
+  final Map<String, List<Video>> _pageSnapshots = <String, List<Video>>{};
+
+  /// 内联进快照的片单条数上限（与 [BootSnapshot] 内部上限保持一致）
+  static const int _kSnapshotVideos = 30;
 
   /// 快照恢复后要选中第几个分类
   int _initialIndex = 0;
@@ -160,6 +175,9 @@ class FilmPageState extends State<FilmPage>
       }
       if (BootSnapshot.videos.isNotEmpty) {
         _bootVideos = <String, List<Video>>{tid: BootSnapshot.videos};
+        // 同一批数据也放进「可回写」的槽位：不然冷启动后什么都没动就退出，
+        // 下次快照里反而把片单弄丢了。
+        _pageSnapshots[tid] = BootSnapshot.videos;
       }
     }
     // 有内容了，不要再挂骨架屏
@@ -178,7 +196,19 @@ class FilmPageState extends State<FilmPage>
   /// App 从后台回到前台：片单可能已经放了一整夜没动过，静默刷一次头部页面。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) refreshIfStale();
+    if (state == AppLifecycleState.resumed) {
+      refreshIfStale();
+      return;
+    }
+    // 退到后台 / 被划走之前立刻落盘：首屏快照和封面索引都是防抖写（600/800ms），
+    // 用户切到后台马上清掉 App 时定时器还没到，这批内容就白写了 ——
+    // 下次冷启动又得空等网络，正是「有时候打开没内容」的来源之一。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      unawaited(BootSnapshot.flush());
+      unawaited(CoverCache.flush());
+    }
   }
 
   /// 内容放了超过 [_staleAfter] 就刷新当前可见分类；否则什么都不做。
@@ -372,13 +402,57 @@ class FilmPageState extends State<FilmPage>
     return true;
   }
 
-  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏）记下来，供下次冷启动秒开。
+  /// 把当前首屏结构（站点 / 分类 / 停在哪一栏 / 那一栏的头部片单）记下来，
+  /// 供下次冷启动秒开。
   void _saveBootSnapshot() {
     final site = _site;
     if (site == null || _classes.length <= 1) return;
     final cls = _classes.where((c) => c.tid != _latestClass.tid).toList();
     if (cls.isEmpty) return;
-    BootSnapshot.save(site, cls, _activeClass.tid);
+    final tid = _activeClass.tid;
+    // 刚切到还没加载的那一栏时 `_pageSnapshots` 里没有它：这时沿用快照文件里
+    // 已有的那份（只可能是同一个分类），别把刚存好的片单写空。
+    final sameAsFile = BootSnapshot.activeTid == tid;
+    BootSnapshot.save(
+      site,
+      cls,
+      tid,
+      videos: _pageSnapshots[tid] ?? (sameAsFile ? BootSnapshot.videos : null),
+      recordCount: _recordCounts[tid] ??
+          (sameAsFile ? BootSnapshot.recordCount : 0),
+    );
+  }
+
+  /// 某个分类拿到了片单（冷启动快照 / 本地缓存 / 源站刷新）后回写一份头部数据。
+  ///
+  /// 只留前 [_kSnapshotVideos] 条：快照文件要保持「小到能同步读完」，几十条足够
+  /// 铺满首屏；内容没变就不写盘，避免滚动加载时反复落盘。
+  void _onFirstPage(String tid, List<Video> videos) {
+    if (tid.isEmpty || videos.isEmpty) return;
+    final head = videos.length > _kSnapshotVideos
+        ? videos.sublist(0, _kSnapshotVideos)
+        : List<Video>.of(videos);
+    final old = _pageSnapshots[tid];
+    if (old != null && _sameVideos(old, head)) return;
+    _pageSnapshots[tid] = head;
+    // 只留最近几个分类，常驻内存别无限长；正在看的这一栏永远保留
+    while (_pageSnapshots.length > 8) {
+      final drop = _pageSnapshots.keys
+          .where((k) => k != _activeClass.tid)
+          .toList();
+      if (drop.isEmpty) break;
+      _pageSnapshots.remove(drop.first);
+    }
+    _saveBootSnapshot();
+  }
+
+  /// 只比 id 序列：片名 / 封面等字段不会单独变，id 一致就认为还是同一批。
+  bool _sameVideos(List<Video> a, List<Video> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
   }
 
   /// 子分类页面加载完某一分类的资源数后，回写到顶部的统计
@@ -780,6 +854,7 @@ class FilmPageState extends State<FilmPage>
               site: _site!,
               videoClass: c,
               onRecordCount: _onRecordCount,
+              onFirstPage: _onFirstPage,
               onTapVideo: _openDetail,
               onLongPressVideo: _searchVideo,
               refreshTick: _refreshTicks[c.tid] ?? 0,
@@ -800,6 +875,9 @@ class CategoryTab extends StatefulWidget {
   final Site site;
   final VideoClass videoClass;
   final void Function(String tid, int count) onRecordCount;
+
+  /// 片单就绪（快照 / 缓存 / 网络任一来源）后回写头部数据，供退出时写进首屏快照。
+  final void Function(String tid, List<Video> videos)? onFirstPage;
   final void Function(Video video) onTapVideo;
 
   /// 长按影片：带片名进搜索页（首页专属）
@@ -820,6 +898,7 @@ class CategoryTab extends StatefulWidget {
     required this.site,
     required this.videoClass,
     required this.onRecordCount,
+    this.onFirstPage,
     required this.onTapVideo,
     required this.onLongPressVideo,
     this.refreshTick = 0,
@@ -883,8 +962,16 @@ class CategoryTabState extends State<CategoryTab>
       _videos.addAll(boot);
       _loadedPages.add(1);
       _seededFromSnapshot = true;
-      // 首帧就要出图，先把这批封面的磁盘缓存排上（命中索引的直接本地读）
-      unawaited(ImagePrefetch.prefetch(boot.map((v) => v.pic).toList()));
+      // 首帧就要出图，先把这批封面的磁盘缓存排上（命中索引的直接本地读）；
+      // 没命中过的晚几百毫秒再下载，别和接口请求抢带宽
+      unawaited(ImagePrefetch.prefetch(
+        boot.map((v) => v.pic).toList(),
+        delay: _kPrefetchDelay,
+      ));
+      // 快照内容也要回写一份：否则这次什么都没变就退出，下次快照里片单会被清空
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onFirstPage?.call(widget.videoClass.tid, _videos);
+      });
     }
     _load();
   }
@@ -994,7 +1081,13 @@ class CategoryTabState extends State<CategoryTab>
         });
         if (restored.isNotEmpty) {
           // 抢先预取这些封面的磁盘缓存：本次滚动、下次打开直接读本地不再转圈
-          unawaited(ImagePrefetch.prefetch(restored.map((v) => v.pic).toList()));
+          unawaited(ImagePrefetch.prefetch(
+            restored.map((v) => v.pic).toList(),
+            delay: _kPrefetchDelay,
+          ));
+          // 缓存恢复出来的这批也记进首屏快照：源站这次就算刷不动，下次冷启动
+          // 依然是「打开就有内容」，而不是只剩一个刷新按钮。
+          widget.onFirstPage?.call(tid, List<Video>.of(_videos));
         }
       }
     } else if (mounted) {
@@ -1018,12 +1111,48 @@ class CategoryTabState extends State<CategoryTab>
     }
   }
 
-  /// 静默刷新入口：防重入后转给 [_doRefresh]
+  /// 静默刷新入口：防重入，失败时自动退避重试，重试用尽才把失败交给界面。
+  ///
+  /// 为什么要自动重试：刚打开 App 那一两秒，系统的网络栈常常还没热起来
+  /// （Wi-Fi 刚连上、DNS 首查、源站对突发请求限流），一次请求打空就立刻挂出
+  /// 「重试」按钮，用户看到的是「打开就一个刷新按钮」，其实再点一下就好了。
+  /// 这里对**快速失败**（4 秒内）自动重试 2 次（1.2s / 2.5s），期间保持骨架屏，
+  /// 绝大多数抖动都能自己扛过去。
+  ///
+  /// 真超时（>4s）就不再自动重试 —— 那个场景用户已经等了十几秒，一次一次地
+  /// 悄悄重试只会让他多等半分钟，直接给按钮更诚实。
   Future<void> _refresh() async {
     if (_refreshing) return;
     _refreshing = true;
     try {
-      await _doRefresh();
+      const maxAttempts = 3;
+      for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        final started = DateTime.now();
+        bool needsRetry;
+        try {
+          needsRetry = await _doRefresh();
+        } catch (_) {
+          // 意外异常也当作「没取到」参与重试，别直接黑掉这一栏
+          needsRetry = _videos.isEmpty;
+        }
+        if (!mounted) return;
+        if (!needsRetry) return;
+        final spent = DateTime.now().difference(started);
+        if (spent > const Duration(seconds: 4)) break;
+        if (attempt == maxAttempts - 1) break;
+        await Future<void>.delayed(
+          attempt == 0
+              ? const Duration(milliseconds: 1200)
+              : const Duration(milliseconds: 2500),
+        );
+        if (!mounted) return;
+      }
+      if (!mounted) return;
+      // 重试用尽：手上还是没内容，才把「重试」按钮亮出来
+      setState(() {
+        _loading = false;
+        _loadFailed = _videos.isEmpty;
+      });
     } finally {
       _refreshing = false;
     }
@@ -1031,26 +1160,32 @@ class CategoryTabState extends State<CategoryTab>
 
   /// 向源站重新拉取片单并写回缓存，最后用最新数据**合并**进显示。
   ///
+  /// 返回 `true` 表示「这次没取到、手上也没有旧内容」，由 [_refresh] 决定是继续
+  /// 自动重试还是最终亮出重试按钮；返回 `false` 表示这次处理完了（成功，或虽然
+  /// 失败但已有旧内容可显示）。
+  ///
   /// 取数顺序：从 `pg=1`（最新）往后翻，凑够至少 6 条，单趟不重复取页。
   /// ⚠️ 关键：刷新只替换「最新的头部页面」，必须保留用户已经下滑加载出来的后续页面——
   /// 否则后台刷新一返回就把已加载内容整段抹除（表现为「滑一下闪一下、内容少了一截」，
   /// 再滑又刷出来）。做法：fresh 作前缀，再把当前列表里 id 不在 fresh 中的旧条目
   /// 按原顺序接在后面（相同 id 用 fresh 的新数据覆盖）。
-  Future<void> _doRefresh() async {
-    if (!mounted) return;
+  Future<bool> _doRefresh() async {
+    if (!mounted) return false;
     final site = widget.site;
     final tid = widget.videoClass.tid;
     final info = await HttpService.instance.fetchPage(site, tid: tid);
-    if (!mounted) return;
+    if (!mounted) return false;
     if (!info.ok) {
       // 连总页数都没问到：**不写缓存、不动分页边界**，保留已显示的内容。
       // 早先这里会把 pagecount=1 当成真的只有一页写进缓存，之后这个分类就
-      // 再也翻不动了。手上一条数据都没有时给个可重试的提示。
+      // 再也翻不动了。
+      // 手上一条数据都没有时保持骨架屏，交回上层自动重试（别先闪一下重试按钮）。
+      if (_videos.isEmpty) return true;
       setState(() {
         _loading = false;
-        _loadFailed = _videos.isEmpty;
+        _loadFailed = false;
       });
-      return;
+      return false;
     }
     _recordCount = info.recordcount;
     _totalPages = info.pagecount;
@@ -1088,7 +1223,13 @@ class CategoryTabState extends State<CategoryTab>
       page++;
       tries++;
     }
-    if (!mounted) return;
+    if (!mounted) return false;
+    if (fresh.isEmpty && _videos.isEmpty && !anyOk) {
+      // 一页都没取到，且手上没有旧内容：这是「没取到」不是「没资源」。
+      // 不在这里定论 —— 交回 [_refresh] 决定是自动重试还是最终给重试按钮，
+      // 期间保持骨架屏，用户不会先看到一个「刷新按钮」再变回内容。
+      return true;
+    }
     setState(() {
       if (fresh.isNotEmpty) {
         // 合并而非清空：保留更早的已加载页，避免刷新把内容抹掉
@@ -1103,12 +1244,8 @@ class CategoryTabState extends State<CategoryTab>
           ..clear()
           ..addAll(fresh)
           ..addAll(kept);
-      } else if (_videos.isEmpty && !anyOk) {
-        // 一页都没取到，且手上没有旧内容：这是「没取到」不是「没资源」。
-        // 以前这里静默留空，界面就显示「该分类下暂无资源」，把网络问题
-        // 伪装成源站没内容，用户只能干看着。现在给一个能点的重试。
-        _loadFailed = true;
       }
+      _loadFailed = false;
       _loading = false;
     });
     // 已加载的最后一页：接下来 loadMore 从这里继续往后翻，不重复取已加载的页
@@ -1117,6 +1254,8 @@ class CategoryTabState extends State<CategoryTab>
         : _loadedPages.reduce((a, b) => a > b ? a : b) + 1;
     // 刷新拿到的新片单同样抢先预取封面，保持「打开即秒显」的体感
     unawaited(ImagePrefetch.prefetch(fresh.map((v) => v.pic).toList()));
+    // 顺手把头部片单回写给首屏快照：下次冷启动第一帧就有内容，不必等网络
+    widget.onFirstPage?.call(tid, List<Video>.of(_videos));
     // 横屏 / 大屏列多时这几页可能整屏放得下 —— 没有滚动事件就等于「加载更多」永不
     // 触发，这里主动检查并续拉，修掉「打开就已经到底、上滑没反应」。
     _noGrowStreak = 0;
@@ -1127,6 +1266,7 @@ class CategoryTabState extends State<CategoryTab>
     unawaited(Future<void>.delayed(const Duration(milliseconds: 700), () {
       if (mounted) unawaited(_warmUp(1));
     }));
+    return false;
   }
 
   /// 首屏内容出现后，后台**再补几页**，把「滑几个就撞上等网络」的空档填掉。
